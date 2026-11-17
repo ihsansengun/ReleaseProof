@@ -1,0 +1,11 @@
+{
+  "name": "releaseproof",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "shop:build": "npm run build -w apps/shop",
+    "shop:start": "npm run start -w apps/shop",
+    "test": "npm test -w packages/agent",
+    "typecheck": "npm run typecheck -w packages/agent && npm run typecheck -w apps/shop"
+  }
+}

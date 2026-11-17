@@ -1,0 +1,22 @@
+{
+  "name": "@releaseproof/agent",
+  "private": true,
+  "type": "module",
+  "bin": { "releaseproof": "./src/cli.ts" },
+  "scripts": {
+    "cli": "tsx src/cli.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.10.0",
+    "playwright": "1.63.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9"
+  }
+}

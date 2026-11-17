@@ -1,0 +1,10 @@
+# Environment manifest: what ReleaseProof may assume about the test target.
+# The agent verifies these at run time; it does not discover them.
+baseUrl: http://localhost:3000
+version:
+  path: /api/version
+fixtures:
+  customer:
+    description: A customer with no orders and no loyalty history. Returns id, email, password and name.
+    method: POST
+    path: /api/test/customers
