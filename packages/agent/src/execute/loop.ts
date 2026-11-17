@@ -97,7 +97,7 @@ export async function runAgentLoop(
       break;
     }
 
-    // Browser actions are order-dependent, so calls run one after another.
+    // Browser actions depend on sequence, so calls run one after another.
     const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
     for (const call of calls) {
       if (session.outcome || toolCalls >= options.maxToolCalls) {

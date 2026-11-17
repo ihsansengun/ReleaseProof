@@ -36,7 +36,7 @@ const PageTarget = z.object({
 const ApiTarget = z.object({
   source: z.literal("api"),
   responseId: z.string().describe("Id returned by api_request."),
-  jsonPath: z.string().describe('Dot path into the JSON body, e.g. "orders.0.status".'),
+  jsonPath: z.string().describe('Dot path into the JSON body, e.g. "items.0.status".'),
 });
 const Target = z.discriminatedUnion("source", [PageTarget, ApiTarget]);
 type Target = z.infer<typeof Target>;
@@ -48,7 +48,7 @@ const ElementRef = z.object({
 });
 
 const schemas = {
-  navigate: z.object({ path: z.string().describe('Path on the application under test, e.g. "/login".') }),
+  navigate: z.object({ path: z.string().describe('Path on the application under test, e.g. "/settings".') }),
   click: z.object({ element: ElementRef }),
   fill: z.object({ element: ElementRef, text: z.string() }),
   api_request: z.object({

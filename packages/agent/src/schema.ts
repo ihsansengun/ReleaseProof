@@ -36,7 +36,17 @@ export const Manifest = z.object({
   fixtures: z
     .record(
       z.string(),
-      z.object({ description: z.string(), method: z.string().default("POST"), path: z.string() }),
+      z.object({
+        description: z.string(),
+        method: z.string().default("POST"),
+        path: z.string(),
+        /**
+         * Request body in whatever shape the application expects. The string
+         * "{{key}}" anywhere inside it is replaced with a key that is unique
+         * to the scenario and alias, and the same on every run.
+         */
+        body: z.unknown().optional(),
+      }),
     )
     .default({}),
 });

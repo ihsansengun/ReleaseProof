@@ -8,8 +8,9 @@ Product brief: [project_instructions.md](project_instructions.md).
 
 ## What exists today (week-1 slice)
 
-- `apps/shop` — the demo store under test (Next.js, SQLite), with test fixtures
-  behind `TEST_MODE=1` and its commit exposed at `/api/version`.
+- `apps/shop` — the first demonstration app (Next.js, SQLite), with test fixtures
+  behind `TEST_MODE=1`, its commit exposed at `/api/version`, and its own
+  `releaseproof.yml` manifest. The engine knows nothing about it.
 - `packages/agent` — the scenario executor: a bounded tool loop over Playwright,
   assertions compared in code against expectations fixed in the plan, a
   verdict computed from those comparisons, and deterministic replay of
@@ -17,7 +18,8 @@ Product brief: [project_instructions.md](project_instructions.md).
 - `eval/` — a hand-written scenario, the ticket it traces to, and a recorded
   step list for it.
 
-Not built yet: Jira and GitHub ingestion, requirement analysis, scenario
+Not built yet: the second demonstration app, Jira and GitHub ingestion,
+discovery, requirement analysis, scenario
 generation, GitHub Actions, reporting. See the plan for the order.
 
 ## Run it
@@ -33,10 +35,12 @@ In a second terminal:
 ```bash
 # Deterministic: replay recorded steps, no model needed
 npx tsx packages/agent/src/cli.ts replay eval/scenarios/SC-001-second-order.json \
+  --manifest apps/shop/releaseproof.yml \
   --steps eval/steps/SC-001.steps.json
 
 # Autonomous: the agent drives the browser itself (needs ANTHROPIC_API_KEY)
-npx tsx packages/agent/src/cli.ts run-scenario eval/scenarios/SC-001-second-order.json --confirm
+npx tsx packages/agent/src/cli.ts run-scenario eval/scenarios/SC-001-second-order.json \
+  --manifest apps/shop/releaseproof.yml --confirm
 ```
 
 Each run writes `result.json`, a Playwright `trace.zip` and one screenshot per

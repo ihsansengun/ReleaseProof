@@ -17,6 +17,16 @@ export async function deployedSha(request: APIRequestContext, manifest: Manifest
   return typeof body?.sha === "string" ? body.sha : undefined;
 }
 
+/** Substitutes "{{key}}" in every string of a JSON-like value. */
+export function fillTemplate(value: unknown, key: string): unknown {
+  if (typeof value === "string") return value.replaceAll("{{key}}", key);
+  if (Array.isArray(value)) return value.map((v) => fillTemplate(v, key));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fillTemplate(v, key)]));
+  }
+  return value;
+}
+
 /**
  * Creates the scenario's fixtures through the endpoints the manifest declares.
  * The key is derived from scenario and alias only, so a later replay gets the
@@ -34,7 +44,7 @@ export async function createFixtures(
     if (!fixture) throw new Error(`The environment manifest declares no "${type}" fixture.`);
     const response = await request.fetch(new URL(fixture.path, manifest.baseUrl).toString(), {
       method: fixture.method,
-      data: { key: `${scenarioId}-${alias}` },
+      data: fillTemplate(fixture.body, `${scenarioId}-${alias}`.toLowerCase()) as object | undefined,
     });
     if (!response.ok()) {
       throw new Error(`Fixture "${type}" failed with HTTP ${response.status()} at ${fixture.path}.`);

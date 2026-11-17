@@ -8,3 +8,5 @@ fixtures:
     description: A customer with no orders and no loyalty history. Returns id, email, password and name.
     method: POST
     path: /api/test/customers
+    body:
+      key: "{{key}}"
