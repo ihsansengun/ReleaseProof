@@ -133,11 +133,44 @@ Four features across two domains: two used while building, two never seen by the
 - **Measured**: per app and per feature — detection rate, false positives, requirement coverage, run time, human interventions, over repeated runs.
 - **Full decision log**: every tool call, check and trace is in the report.
 
+## Safety and isolation
+
+Four kinds of input are untrusted: Jira content, PR descriptions and diffs, repository files (including the PR's own manifest), and everything the application under test shows or returns.
+
+### Implemented
+
+- **Verdicts cannot be talked into passing.** Expected values are fixed before execution and compared in code; an assertion can be checked once; a pass needs every assertion compared and matched. Injected text can at worst cause a wrong element to be compared, which the screenshot evidence shows.
+- **The model has no general capabilities.** Its only tools drive one browser context and send HTTP requests to the application's own origin. Requests to any other origin are aborted at the network layer. It has no shell, file, GitHub or Jira access.
+- **Read-only mode** for discovery: every request that is not GET or HEAD is aborted at the network layer, and the API tool refuses other methods. Verified: with it on, recorded form posts were blocked and the app's database stayed empty.
+- **Formulas cannot execute code.** The evaluator accepts numbers, names, arithmetic and six functions.
+- **Page and API text is declared as data** in the driver's instructions.
+- **No real secrets reach the model.** It sees per-run synthetic test accounts only.
+
+### Proposed (with the CI work in week 3)
+
+- **Untrusted PR code runs in a container with no secrets.** The workflow builds and starts the application inside Docker with no `GITHUB_TOKEN`, no model key, no Jira token and no host mounts. The agent runs on the host and reaches the app only over a published port.
+- **The agent and the workflow come from the base branch**, never from the PR, so a PR cannot change what tests it. The PR's manifest is read as data: its base URL must be localhost and its start commands run only inside the container.
+- **Read and write are split.** The job that touches PR code has `contents: read` only. A separate `workflow_run` job holds `pull-requests: write` and `checks: write`; it consumes only the result artifact, validates it against the schema and renders it with escaping.
+- **Fork PRs get no secrets**, so they do not run until a maintainer approves.
+- **Quoted sources are verified in code.** Every requirement must carry a quote that appears verbatim in the ticket; anything else is marked inferred and cannot supply an expected value. This stops PR text or repo files from planting expectations.
+- **Discovery is link-following only**: navigation and GET requests, under read-only mode, with a page budget. No form submission, no button clicks.
+- **Secret redaction** of logs, reports and traces before upload.
+
+## Revised priorities (after the first model-driven runs)
+
+1. Done: real model-driven execution on App A, then App B with the same engine.
+2. Week 2 is requirements intelligence and nothing else: ingest ticket and PR, discover, analyse, raise ambiguities, plan scenarios with fixed expectations, then execute them with the engine that already works. The hand-written scenarios used so far become the reference the generated plans are compared against.
+3. Week 3: CI with the isolation above, reporting, failure investigation, retest.
+4. Week 4: agent frozen, held-out features, measurement.
+
 ## Status
 
-Built and verified by execution:
-- App A, with fixtures and a version endpoint
-- Tool layer, recording and replay, verdict computation, formula evaluator, SHA guard
-- Replay of a hand-written scenario: passed on the clean build, failed on a locally seeded bug (expected 136, got 236), blocked on a commit mismatch
+Verified by execution (see `eval/results/`):
+- App A and App B, each with a manifest, fixtures and a version endpoint
+- Tool layer, recording and replay, verdict computation, formula evaluator, commit guard, read-only guard
+- Model-driven execution through the HTTP bridge on both apps, clean and seeded-bug builds, with correct verdicts in every run so far
+- Model-free replay reproducing the model-found failures
 
-Built but not yet run: the agent loop (`execute/loop.ts`). It typechecks; no model credential was available where it was written.
+Built but not yet run: the built-in loop that calls the model API directly (`execute/loop.ts`). The model-driven runs used the bridge, which serves the same instructions, briefing and tools and shares everything that decides the verdict. What the bridge runs do not exercise is the API request itself (message format, token accounting, refusal handling).
+
+Not built: ingestion, discovery, analysis, planning, CI, PR reporting.

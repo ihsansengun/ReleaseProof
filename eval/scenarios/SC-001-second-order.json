@@ -2,22 +2,32 @@
   "id": "SC-001",
   "title": "Welcome points are granted on the first order only",
   "basis": "requirement",
-  "requirementIds": ["REQ-1", "REQ-2", "REQ-6"],
-  "intent": "Sign in as the prepared customer, who has never ordered. Buy any one product and pay with card 4242 4242 4242 4242, noting the order total shown at checkout. Look at the loyalty balance on the account overview. Then buy one more product the same way, again noting the order total at checkout, and look at the loyalty balance again.",
-  "fixtures": { "customer": "customer" },
+  "requirementIds": [
+    "REQ-1",
+    "REQ-2",
+    "REQ-6"
+  ],
+  "intent": "Verify that a customer who has never ordered is credited the welcome bonus when their first order is paid, and is not credited it again when their second order is paid. Note each order's total when it is shown before payment.",
+  "fixtures": {
+    "customer": "customer"
+  },
   "assertions": [
     {
       "id": "A1",
       "description": "Loyalty balance on the account overview after the first paid order",
       "kind": "number_equals",
-      "expected": { "formula": "100 + floor(firstOrderTotal)" },
+      "expected": {
+        "formula": "100 + floor(firstOrderTotal)"
+      },
       "requirementId": "REQ-1"
     },
     {
       "id": "A2",
       "description": "Loyalty balance on the account overview after the second paid order",
       "kind": "number_equals",
-      "expected": { "formula": "100 + floor(firstOrderTotal) + floor(secondOrderTotal)" },
+      "expected": {
+        "formula": "100 + floor(firstOrderTotal) + floor(secondOrderTotal)"
+      },
       "requirementId": "REQ-1"
     }
   ]

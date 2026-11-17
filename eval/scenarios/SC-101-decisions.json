@@ -1,0 +1,31 @@
+{
+  "id": "SC-101",
+  "title": "Approved leave is deducted from the balance; pending and rejected leave is not",
+  "basis": "requirement",
+  "requirementIds": ["REQ-2", "REQ-3", "REQ-4"],
+  "intent": "As the employee, note the remaining leave days, then submit one request covering three consecutive days and a second request covering two consecutive days in a different week. As the manager, approve the three-day request and reject the two-day request. Check the employee's remaining days at each stage the assertions describe.",
+  "fixtures": { "employee": "employee", "manager": "manager" },
+  "assertions": [
+    {
+      "id": "A1",
+      "description": "Employee's remaining days while both requests are still pending",
+      "kind": "number_equals",
+      "expected": { "formula": "startingDays" },
+      "requirementId": "REQ-2"
+    },
+    {
+      "id": "A2",
+      "description": "Employee's remaining days after the three-day request is approved and before the other request is decided",
+      "kind": "number_equals",
+      "expected": { "formula": "startingDays - 3" },
+      "requirementId": "REQ-3"
+    },
+    {
+      "id": "A3",
+      "description": "Employee's remaining days after the two-day request is rejected",
+      "kind": "number_equals",
+      "expected": { "formula": "startingDays - 3" },
+      "requirementId": "REQ-4"
+    }
+  ]
+}

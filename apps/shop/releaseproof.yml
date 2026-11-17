@@ -10,3 +10,7 @@ fixtures:
     path: /api/test/customers
     body:
       key: "{{key}}"
+integrations:
+  payments:
+    mode: simulated
+    notes: Card number 4242 4242 4242 4242 is accepted. Any other card number is declined.

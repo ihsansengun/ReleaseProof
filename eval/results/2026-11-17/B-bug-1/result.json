@@ -1,0 +1,581 @@
+{
+  "scenarioId": "SC-101",
+  "title": "Approved leave is deducted from the balance; pending and rejected leave is not",
+  "mode": "agent",
+  "driver": "Claude subagent (Opus) via HTTP bridge",
+  "verdict": "failed",
+  "reason": "A3: expected 17, got 15",
+  "environment": {
+    "baseUrl": "http://localhost:3101",
+    "deployedSha": "seeded-bug"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": 20,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Days remaining:",
+        "pattern": "Days remaining:\\s*(\\d+)"
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 17,
+      "actual": 17,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Days remaining:",
+        "pattern": "Days remaining:\\s*(\\d+)"
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": 17,
+      "actual": 15,
+      "pass": false,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Days remaining:",
+        "pattern": "Days remaining:\\s*(\\d+)"
+      },
+      "screenshot": "check-A3.png"
+    }
+  ],
+  "observations": {
+    "startingDays": 20
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "See the app entry page to find login."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "See the app entry page to find login."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "sc-101-employee",
+        "rationale": "Log in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Log in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "pw-sc-101-employee",
+        "rationale": "Log in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Log in as employee."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit login."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit login."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "startingDays",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Record starting balance before any requests."
+      },
+      "ok": true,
+      "summary": "Recorded startingDays = 20",
+      "rationale": "Record starting balance before any requests."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "First day"
+        },
+        "text": "2026-11-23",
+        "rationale": "Three-day request start."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Three-day request start."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Last day"
+        },
+        "text": "2026-11-25",
+        "rationale": "Three-day request end."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Three-day request end."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Reason"
+        },
+        "text": "Three-day trip",
+        "rationale": "Reason for request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Reason for request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Submit request"
+        },
+        "rationale": "Submit three-day request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit three-day request."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "First day"
+        },
+        "text": "2026-12-01",
+        "rationale": "Two-day request start in another week."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Two-day request start in another week."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Last day"
+        },
+        "text": "2026-12-02",
+        "rationale": "Two-day request end."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Two-day request end."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Reason"
+        },
+        "text": "Two-day break",
+        "rationale": "Reason for request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Reason for request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Submit request"
+        },
+        "rationale": "Submit two-day request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit two-day request."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Reload employee page to see current balance with both requests pending."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Reload employee page to see current balance with both requests pending."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Both requests pending; balance should be unchanged."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected 20, actual 20 -> match. This result is final.",
+      "rationale": "Both requests pending; balance should be unchanged."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch to manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch to manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "sc-101-manager",
+        "rationale": "Log in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Log in as manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "pw-sc-101-manager",
+        "rationale": "Log in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Log in as manager."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit manager login."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit manager login."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Approve request 1 from Employee sc-101-employee"
+        },
+        "rationale": "Approve the three-day request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Approve the three-day request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch to employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch to employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "sc-101-employee",
+        "rationale": "Log in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Log in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "pw-sc-101-employee",
+        "rationale": "Log in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Log in as employee."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit employee login."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit employee login."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Three-day approved, two-day still pending."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 17, actual 17 -> match. This result is final.",
+      "rationale": "Three-day approved, two-day still pending."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch to manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch to manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "sc-101-manager",
+        "rationale": "Log in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Log in as manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "pw-sc-101-manager",
+        "rationale": "Log in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Log in as manager."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit manager login."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit manager login."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Reject request 2 from Employee sc-101-employee"
+        },
+        "rationale": "Reject the two-day request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Reject the two-day request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch to employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch to employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "sc-101-employee",
+        "rationale": "Log in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Log in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "pw-sc-101-employee",
+        "rationale": "Log in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Log in as employee."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit employee login."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit employee login."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Two-day request rejected; read employee balance."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected 17, actual 15 -> MISMATCH. This result is final.",
+      "rationale": "Two-day request rejected; read employee balance."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All three assertions checked at the scenario-defined states.",
+        "rationale": "Every assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "B-bug-1/SC-101"
+  },
+  "startedAt": "2026-11-17T23:49:25.797Z",
+  "durationMs": 75584
+}

@@ -49,6 +49,13 @@ export const Manifest = z.object({
       }),
     )
     .default({}),
+  /** External systems the application talks to, and how they behave here. */
+  integrations: z
+    .record(
+      z.string(),
+      z.object({ mode: z.enum(["real", "simulated", "unavailable"]), notes: z.string().optional() }),
+    )
+    .default({}),
 });
 export type Manifest = z.infer<typeof Manifest>;
 
@@ -58,6 +65,8 @@ export const Step = z.object({
   input: z.unknown(),
   ok: z.boolean(),
   summary: z.string(),
+  /** The executor's stated reason for the step. Informational only. */
+  rationale: z.string().optional(),
 });
 export type Step = z.infer<typeof Step>;
 
@@ -84,6 +93,8 @@ export type ScenarioResult = {
   scenarioId: string;
   title: string;
   mode: "agent" | "replay";
+  /** What chose the steps: a model id, or how an external model was attached. */
+  driver?: string;
   verdict: Verdict;
   reason: string;
   environment: { baseUrl: string; deployedSha?: string; expectedSha?: string };

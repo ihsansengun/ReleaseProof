@@ -5,3 +5,4 @@ node_modules/
 runs/
 next-env.d.ts
 *.tsbuildinfo
+.next-*/

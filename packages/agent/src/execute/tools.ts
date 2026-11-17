@@ -16,6 +16,8 @@ export type Session = {
   assertionResults: AssertionResult[];
   steps: Step[];
   outcome?: Outcome;
+  /** When set, nothing that could change application state is allowed. */
+  readOnly?: boolean;
 };
 
 const ROLES = [
@@ -27,11 +29,15 @@ const PageTarget = z.object({
   source: z.literal("page"),
   by: z.enum(["role", "label", "text", "testid"]),
   role: z.enum(ROLES).optional().describe("Required when by=role."),
-  value: z.string().describe("Accessible name (role/label), visible text, or test id."),
+  value: z
+    .string()
+    .describe(
+      "Accessible name (role/label), visible text, or test id. by=text selects the smallest element containing the text; by=role needs an element that has an accessible name, which plain text containers often lack.",
+    ),
   pattern: z
     .string()
     .optional()
-    .describe("Regex with one capture group, to pick a value out of longer text."),
+    .describe("Regex with one capture group, applied to the selected element's full text, to pick one value out of it."),
 });
 const ApiTarget = z.object({
   source: z.literal("api"),
@@ -82,10 +88,15 @@ const descriptions: Record<ToolName, string> = {
     'End the scenario. Use "blocked" with a specific reason if something outside your control prevented a check. You do not decide pass or fail.',
 };
 
+const RATIONALE = z.string().describe("One sentence: why you are taking this step now.");
+
 export const toolDefinitions = (Object.keys(schemas) as ToolName[]).map((name) => ({
   name,
   description: descriptions[name],
-  input_schema: z.toJSONSchema(schemas[name]) as { type: "object"; [k: string]: unknown },
+  input_schema: z.toJSONSchema(schemas[name].extend({ rationale: RATIONALE })) as {
+    type: "object";
+    [k: string]: unknown;
+  },
 }));
 
 // ---- helpers --------------------------------------------------------------
@@ -93,6 +104,7 @@ export const toolDefinitions = (Object.keys(schemas) as ToolName[]).map((name) =
 const SNAPSHOT_LIMIT = 20_000;
 const LOCATE_TIMEOUT_MS = 3_000;
 const SETTLE_TIMEOUT_MS = 10_000;
+const STABLE_TIMEOUT_MS = 5_000;
 
 async function describePage(page: Page): Promise<string> {
   const url = new URL(page.url());
@@ -128,11 +140,23 @@ async function locate(page: Page, ref: z.infer<typeof ElementRef>): Promise<Loca
 }
 
 /**
- * Waits for the page to go quiet after an action. A click may trigger a
- * client-side navigation that the "load" event never reports.
+ * Waits until the page has stopped changing after an action. A click may
+ * start a client-side transition that neither the "load" event nor network
+ * idleness reports reliably, so after the network goes quiet the URL and the
+ * accessibility tree must also read the same twice in a row.
  */
 async function settle(page: Page): Promise<void> {
+  await page.waitForTimeout(150);
   await page.waitForLoadState("networkidle", { timeout: SETTLE_TIMEOUT_MS }).catch(() => {});
+  const read = async () => `${page.url()}\n${await page.locator("body").ariaSnapshot().catch(() => "")}`;
+  const deadline = Date.now() + STABLE_TIMEOUT_MS;
+  let previous = await read();
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(250);
+    const current = await read();
+    if (current === previous) return;
+    previous = current;
+  }
 }
 
 function parseNumber(text: string): number {
@@ -220,6 +244,7 @@ const handlers: Handlers = {
 
   async api_request(s, { method, path: p, body }) {
     if (!p.startsWith("/") || p.startsWith("//")) throw new Error('path must start with a single "/".');
+    if (s.readOnly && method !== "GET") throw new Error("This session is read-only; only GET is allowed.");
     const response = await s.context.request.fetch(new URL(p, s.baseUrl).toString(), {
       method,
       data: body === undefined ? undefined : (body as object),
@@ -307,6 +332,13 @@ export async function runTool(
     ok = false;
     output = `Error: ${(error as Error).message.split("\n")[0]}`;
   }
-  session.steps.push({ tool: name, input, ok, summary: output.split("\n")[0]!.slice(0, 300) });
+  const rationale = (input as { rationale?: unknown } | null)?.rationale;
+  session.steps.push({
+    tool: name,
+    input,
+    ok,
+    summary: output.split("\n")[0]!.slice(0, 300),
+    ...(typeof rationale === "string" ? { rationale } : {}),
+  });
   return { ok, output };
 }

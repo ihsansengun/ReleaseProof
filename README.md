@@ -6,21 +6,23 @@ in a real browser and reports what it did and did not verify.
 Design, scope decisions and the four-week plan: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Product brief: [project_instructions.md](project_instructions.md).
 
-## What exists today (week-1 slice)
+## What exists today
 
-- `apps/shop` — the first demonstration app (Next.js, SQLite), with test fixtures
-  behind `TEST_MODE=1`, its commit exposed at `/api/version`, and its own
-  `releaseproof.yml` manifest. The engine knows nothing about it.
-- `packages/agent` — the scenario executor: a bounded tool loop over Playwright,
-  assertions compared in code against expectations fixed in the plan, a
-  verdict computed from those comparisons, and deterministic replay of
-  recorded steps.
-- `eval/` — a hand-written scenario, the ticket it traces to, and a recorded
-  step list for it.
+- `packages/agent` — the engine. Generic browser and API tools over
+  Playwright, assertions compared in code against expectations fixed in the
+  plan, a verdict computed from those comparisons, recording and replay, and
+  an HTTP bridge for attaching a model from outside the process. It contains
+  no knowledge of any application; a test enforces that.
+- `apps/shop` — demonstration app A (retail; Next.js, server-rendered, SQLite).
+- `apps/timeoff` — demonstration app B (time-off requests; plain Node, JSON
+  API, rendered in the browser).
+- Each app has its own `releaseproof.yml` manifest.
+- `eval/` — tickets, scenarios, recorded steps, the
+  [results of the first model-driven runs](eval/results/2026-11-17/README.md)
+  and the [intervention log](eval/INTERVENTIONS.md).
 
-Not built yet: the second demonstration app, Jira and GitHub ingestion,
-discovery, requirement analysis, scenario
-generation, GitHub Actions, reporting. See the plan for the order.
+Not built yet: Jira and GitHub ingestion, discovery, requirement analysis,
+scenario generation, GitHub Actions, PR reporting. See the plan for the order.
 
 ## Run it
 
@@ -43,7 +45,18 @@ npx tsx packages/agent/src/cli.ts run-scenario eval/scenarios/SC-001-second-orde
   --manifest apps/shop/releaseproof.yml --confirm
 ```
 
-Each run writes `result.json`, a Playwright `trace.zip` and one screenshot per
+To attach a model over HTTP instead (any client that can read
+`GET /briefing` and `POST /tool`):
+
+```bash
+npx tsx packages/agent/src/cli.ts serve-scenario eval/scenarios/SC-001-second-order.json \
+  --manifest apps/shop/releaseproof.yml
+```
+
+App B starts with `TEST_MODE=1 npm start -w apps/timeoff` (port 3100) and uses
+`eval/scenarios/SC-101-decisions.json` with `--manifest apps/timeoff/releaseproof.yml`.
+
+Each run writes `result.json`, `report.md`, a Playwright `trace.zip` and one screenshot per
 check under `runs/`. Exit code is 0 only for a `passed` verdict.
 
 ```bash
