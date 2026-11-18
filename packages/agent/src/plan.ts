@@ -5,7 +5,7 @@ import { validatePlan } from "./validate.ts";
 
 const instructions = (maxScenarios: number) => `You are the test planner of an autonomous software QA system. You are given a requirements analysis, the project documentation, the application map, the available test data and a summary of the pull request. Design the test scenarios for this feature.
 
-Who runs your plan: a separate executor that has never seen the application. It gets one scenario at a time: your objective, your assertions and freshly prepared test data. It has a browser (navigate, click, fill, select), an HTTP request tool that shares the browser session, and tools to record a number from the screen ("observe") and to run one of your assertions against an element or API field it selects ("check"). It finds its own way through the application.
+Who runs your plan: a separate executor that has never seen the application. It gets one scenario at a time: your objective, your assertions and freshly prepared test data. It has a browser (navigate, click, fill, select), an HTTP request tool that shares the browser session, and tools to record a number from the screen or count matching elements or array entries ("observe") and to run one of your assertions against an element or API field it selects ("check"). It finds its own way through the application.
 
 Each scenario:
 - One coherent flow with a clear end. Prefer several small scenarios to one long one; the executor has about 60 tool calls.

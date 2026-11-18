@@ -13,10 +13,20 @@ type Job = { id: string; name: string; claimed: boolean; done: boolean; briefing
       resolve: (value: unknown) => void;
       reject: (error: Error) => void;
     }
-  | { kind: "session"; session: Session; job: SessionJob; calls: number; chain: Promise<unknown>; resolve: () => void }
+  | {
+      kind: "session";
+      session: Session;
+      job: SessionJob;
+      calls: number;
+      chain: Promise<unknown>;
+      idle?: NodeJS.Timeout;
+      resolve: () => void;
+    }
 );
 
 const MAX_TASK_ATTEMPTS = 3;
+/** A claimed session whose driver goes silent for this long is ended. */
+const SESSION_IDLE_MS = 5 * 60_000;
 
 /**
  * Lets a model outside this process do the work. Each task or session becomes
@@ -116,6 +126,18 @@ export class BridgeDriver implements Driver {
     return new Promise((resolve) => this.server.close(() => resolve()));
   }
 
+  /** (Re)starts the idle timer of a claimed session, so an abandoned one cannot hang the run. */
+  private watch(job: Job) {
+    if (job.kind !== "session") return;
+    clearTimeout(job.idle);
+    job.idle = setTimeout(() => {
+      if (job.done) return;
+      job.session.outcome ??= { kind: "stopped", reason: "The model driving this session stopped responding." };
+      job.done = true;
+      job.resolve();
+    }, SESSION_IDLE_MS);
+  }
+
   private handle(req: IncomingMessage, res: ServerResponse) {
     const reply = (status: number, body: unknown, type = "application/json") => {
       res.writeHead(status, { "content-type": type });
@@ -134,6 +156,7 @@ export class BridgeDriver implements Driver {
       const job = this.jobs.find((j) => !j.claimed && !j.done);
       if (!job) return reply(200, { none: true });
       job.claimed = true;
+      this.watch(job);
       return reply(200, { id: job.id, briefing: `${this.base}/jobs/${job.id}` });
     }
 
@@ -174,6 +197,7 @@ export class BridgeDriver implements Driver {
         const call = body as { name?: unknown; input?: unknown };
         const run = async () => {
           if (job.session.outcome) return reply(200, { ok: false, output: "Error: this session has ended." });
+          this.watch(job);
           job.calls++;
           const result = await runTool(job.session, String(call.name), call.input, job.job.tools);
           if (!job.session.outcome && job.calls >= job.job.maxToolCalls) {
@@ -184,6 +208,7 @@ export class BridgeDriver implements Driver {
           }
           reply(200, result);
           if (job.session.outcome) {
+            clearTimeout(job.idle);
             job.done = true;
             job.resolve();
           }

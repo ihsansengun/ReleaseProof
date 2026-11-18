@@ -50,6 +50,10 @@ const PageTarget = z.object({
     .describe(
       "Accessible name (role/label), visible text, or test id. by=text selects the smallest element containing the text; by=role needs an element that has an accessible name, which plain text containers often lack.",
     ),
+  count: z
+    .boolean()
+    .default(false)
+    .describe("Read how many elements match, instead of one element's text. Use for rows, items, entries."),
   pattern: z
     .string()
     .optional()
@@ -60,6 +64,7 @@ const ApiTarget = z.object({
   responseId: z.string().describe("Id returned by api_request."),
   field: z.enum(["body", "status"]).default("body").describe('"status" reads the HTTP status code.'),
   jsonPath: z.string().default("").describe('For field=body: dot path into the JSON body, e.g. "items.0.status".'),
+  count: z.boolean().default(false).describe("Read the length of the array at jsonPath instead of a value."),
 });
 const Target = z.discriminatedUnion("source", [PageTarget, ApiTarget]);
 type Target = z.infer<typeof Target>;
@@ -215,12 +220,17 @@ async function readTarget(session: Session, target: Target): Promise<{ text: str
       }
       value = (value as Record<string, unknown>)[key];
     }
+    if (target.count) {
+      if (!Array.isArray(value)) throw new Error(`Path "${target.jsonPath}" is not an array, so it cannot be counted.`);
+      return { text: String(value.length) };
+    }
     if (value === null || typeof value === "object") {
       throw new Error(`Path "${target.jsonPath}" is not a scalar value.`);
     }
     return { text: String(value) };
   }
 
+  if (target.count) return { text: String(await buildLocator(session.page, target).count()) };
   const locator = await locate(session.page, target);
   let text = squash(await locator.innerText());
   if (target.pattern) {
