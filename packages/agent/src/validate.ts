@@ -25,8 +25,11 @@ export function validatePlan(
       problems.push(`Scenario id "${d.id}" is duplicated or not a simple identifier; the scenario was dropped.`);
       continue;
     }
-    if (scenarios.length >= maxScenarios) {
-      problems.push(`Scenario ${d.id} was dropped: the plan is limited to ${maxScenarios} scenarios.`);
+    // The limit is on what gets executed. Blocked scenarios cost nothing to
+    // keep and are results in their own right, so they have their own allowance.
+    const sameStatus = scenarios.filter((s) => s.status === d.status).length;
+    if (sameStatus >= maxScenarios) {
+      problems.push(`Scenario ${d.id} was dropped: the plan is limited to ${maxScenarios} ${d.status} scenarios.`);
       continue;
     }
     seen.add(d.id);
@@ -78,7 +81,7 @@ export function validatePlan(
 
       let expected: Assertion["expected"];
       let fault: string | undefined;
-      if (a.kind === "number_equals") {
+      if (a.kind === "number_equals" || a.kind === "number_at_least" || a.kind === "number_at_most") {
         if ((a.expectedNumber === null) === (a.expectedFormula === null)) {
           fault = "needs exactly one of expectedNumber and expectedFormula";
         } else if (a.expectedNumber !== null) {

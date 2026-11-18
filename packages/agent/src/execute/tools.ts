@@ -360,6 +360,10 @@ const handlers: Handlers = {
       if (assertion.kind === "number_equals") {
         actual = parseNumber(read.text);
         pass = Math.abs(actual - Number(expected)) < 1e-9;
+      } else if (assertion.kind === "number_at_least" || assertion.kind === "number_at_most") {
+        actual = parseNumber(read.text);
+        const difference = actual - Number(expected);
+        pass = assertion.kind === "number_at_least" ? difference > -1e-9 : difference < 1e-9;
       } else if (assertion.kind === "text_equals") {
         actual = read.text;
         pass = actual === squash(String(expected));

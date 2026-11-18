@@ -7,14 +7,14 @@ import { BridgeDriver } from "./drivers/bridge.ts";
 import { ApiDriver, type Driver } from "./drivers/driver.ts";
 import { loadManifest } from "./env.ts";
 import { runScenario } from "./execute/run.ts";
-import { loadPullRequest } from "./ingest/github.ts";
+import { loadPullRequest, loadPullRequestFile } from "./ingest/github.ts";
 import { loadTicket } from "./ingest/jira.ts";
 import { retest, runPipeline } from "./pipeline.ts";
 import { coverage } from "./report/run.ts";
 import { Scenario, Step, type RunReport, type ScenarioResult } from "./schema.ts";
 
 const USAGE = `Usage:
-  releaseproof run --ticket <file|key> --repo <owner/name> --pr <n> --manifest <file>
+  releaseproof run --ticket <file|key> (--repo <owner/name> --pr <n> | --pr-file <json>) --manifest <file>
         ticket + pull request -> discovery, analysis, plan, execution, report
   releaseproof retest --run <run.json> --manifest <file>
         re-run a previous run's scenarios against the current build
@@ -65,6 +65,7 @@ async function main(): Promise<number> {
       ticket: { type: "string" },
       repo: { type: "string" },
       pr: { type: "string" },
+      "pr-file": { type: "string" },
       run: { type: "string" },
       "max-scenarios": { type: "string", default: "10" },
       concurrency: { type: "string", default: "3" },
@@ -88,12 +89,14 @@ async function main(): Promise<number> {
   };
 
   if (command === "run") {
-    if (!values.ticket || !values.repo || !values.pr) {
-      console.error("run needs --ticket, --repo and --pr");
+    if (!values.ticket || !(values["pr-file"] || (values.repo && values.pr))) {
+      console.error("run needs --ticket, and either --repo with --pr or --pr-file");
       return 2;
     }
     const ticket = await loadTicket(values.ticket);
-    const pullRequest = await loadPullRequest(values.repo, Number(values.pr));
+    const pullRequest = values["pr-file"]
+      ? await loadPullRequestFile(values["pr-file"])
+      : await loadPullRequest(values.repo!, Number(values.pr));
     const driver = makeDriver();
     try {
       const report = await runPipeline({

@@ -10,7 +10,15 @@ export const Expected = z.union([
 ]);
 export type Expected = z.infer<typeof Expected>;
 
-export const AssertionKind = z.enum(["number_equals", "text_equals", "text_contains", "present", "absent"]);
+export const AssertionKind = z.enum([
+  "number_equals",
+  "number_at_least",
+  "number_at_most",
+  "text_equals",
+  "text_contains",
+  "present",
+  "absent",
+]);
 
 export const Assertion = z.object({
   id: z.string(),

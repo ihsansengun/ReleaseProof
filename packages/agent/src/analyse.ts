@@ -19,7 +19,7 @@ How far to trust each source:
 
 Requirements:
 - One requirement per testable behaviour. Split compound criteria into separate requirements.
-- kind "documented": the behaviour is stated in the ticket or documentation. "quote" must be an exact, contiguous copy of the text that states it. It is checked mechanically against the sources; a paraphrase or stitched-together quote is rejected and the requirement is downgraded.
+- kind "documented": the behaviour is stated in the ticket or documentation. "quote" must be an exact, contiguous copy of the text that states it. It is checked mechanically against the sources (line breaks, spacing and markup characters are ignored); a paraphrase or stitched-together quote is rejected and the requirement is downgraded.
 - kind "inferred": you believe the behaviour is intended, but no source states it (a common-sense expectation, an implication, something the code does that the ticket never mentions). Use sourceType "none" or "pull-request" and an empty quote.
 - Be honest about the difference. An inferred requirement cannot be used to fail a test, so marking a guess as documented damages the result more than leaving it inferred.
 
