@@ -9,14 +9,16 @@ import { loadManifest } from "./env.ts";
 import { runScenario } from "./execute/run.ts";
 import { loadPullRequest, loadPullRequestFile } from "./ingest/github.ts";
 import { loadTicket } from "./ingest/jira.ts";
-import { retest, runPipeline } from "./pipeline.ts";
+import { retestRun, runPipeline } from "./pipeline.ts";
+import { Budget, DEFAULT_LIMITS, DEFAULT_PRICES } from "./budget.ts";
+import { RecordedDriver } from "./drivers/recorded.ts";
 import { coverage } from "./report/run.ts";
 import { Scenario, Step, type RunReport, type ScenarioResult } from "./schema.ts";
 
 const USAGE = `Usage:
   releaseproof run --ticket <file|key> (--repo <owner/name> --pr <n> | --pr-file <json>) --manifest <file>
         ticket + pull request -> discovery, analysis, plan, execution, report
-  releaseproof retest --run <run.json> --manifest <file>
+  releaseproof retest --run <run.json> --repo <owner/name> --pr <n> --manifest <file>
         re-run a previous run's scenarios against the current build
   releaseproof run-scenario <scenario.json> --manifest <file>
         execute one scenario with a model
@@ -24,7 +26,9 @@ const USAGE = `Usage:
         re-run recorded steps, no model
 
 Options:
-  --driver api|bridge   how the model is attached (default api)
+  --driver api|bridge|recorded   how the model is attached (default api)
+  --recording <run.json>         recorded: an earlier run to replay instead of a live model
+  --max-usd, --max-tokens, --max-minutes   run budget (defaults 8, 3000000, 25)
   --port <n>            bridge: port to serve jobs on (default 4200)
   --base-url <url>      override the manifest's baseUrl
   --expect-sha <sha>    refuse to run unless the environment reports this commit
@@ -68,6 +72,10 @@ async function main(): Promise<number> {
       "pr-file": { type: "string" },
       run: { type: "string" },
       "max-scenarios": { type: "string", default: "10" },
+      "max-usd": { type: "string" },
+      "max-tokens": { type: "string" },
+      "max-minutes": { type: "string" },
+      recording: { type: "string" },
       concurrency: { type: "string", default: "3" },
     },
   });
@@ -79,13 +87,25 @@ async function main(): Promise<number> {
 
   const manifest = await loadManifest(values.manifest, values["base-url"]);
   const outDir = values.out ?? path.join("runs", new Date().toISOString().replace(/[:.]/g, "-"));
-  const makeDriver = (): Driver => {
+  const budget = new Budget(
+    {
+      maxUsd: Number(values["max-usd"] ?? DEFAULT_LIMITS.maxUsd),
+      maxTokens: Number(values["max-tokens"] ?? DEFAULT_LIMITS.maxTokens),
+      maxMinutes: Number(values["max-minutes"] ?? DEFAULT_LIMITS.maxMinutes),
+    },
+    DEFAULT_PRICES,
+  );
+  const makeDriver = async (): Promise<Driver> => {
     if (values.driver === "bridge") {
       console.log(`Bridge: waiting for a model on http://127.0.0.1:${values.port} (POST /claim)`);
       return new BridgeDriver(Number(values.port), "external model via HTTP bridge");
     }
+    if (values.driver === "recorded") {
+      if (!values.recording) throw new Error("--driver recorded needs --recording <run.json>");
+      return new RecordedDriver(JSON.parse(await readFile(values.recording, "utf8")) as RunReport);
+    }
     const effort = (process.env.RELEASEPROOF_EFFORT ?? "medium") as "low" | "medium" | "high";
-    return new ApiDriver(process.env.RELEASEPROOF_MODEL ?? "claude-opus-5-5", effort);
+    return new ApiDriver({ model: process.env.RELEASEPROOF_MODEL ?? "claude-opus-5-5", effort, budget });
   };
 
   if (command === "run") {
@@ -97,7 +117,7 @@ async function main(): Promise<number> {
     const pullRequest = values["pr-file"]
       ? await loadPullRequestFile(values["pr-file"])
       : await loadPullRequest(values.repo!, Number(values.pr));
-    const driver = makeDriver();
+    const driver = await makeDriver();
     try {
       const report = await runPipeline({
         ticket,
@@ -105,6 +125,7 @@ async function main(): Promise<number> {
         manifest,
         manifestFile: values.manifest,
         driver,
+        budget,
         outDir,
         maxScenarios: Number(values["max-scenarios"]),
         concurrency: Number(values.concurrency),
@@ -123,24 +144,27 @@ async function main(): Promise<number> {
   }
 
   if (command === "retest") {
-    if (!values.run) {
-      console.error("retest needs --run <run.json>");
+    if (!values.run || !values.repo || !values.pr) {
+      console.error("retest needs --run <run.json>, --repo and --pr");
       return 2;
     }
     const previous = JSON.parse(await readFile(values.run, "utf8")) as RunReport;
-    const driver = makeDriver();
+    const pullRequest = await loadPullRequest(values.repo, Number(values.pr));
+    const driver = await makeDriver();
     try {
-      const { rows } = await retest({
+      const report = await retestRun({
         previous,
+        pullRequest,
         manifest,
         driver,
+        budget,
         outDir,
-        expectedSha: values["expect-sha"],
         concurrency: Number(values.concurrency),
+        allowShaMismatch: values["allow-sha-mismatch"],
       });
-      for (const r of rows) console.log(`${r.scenarioId}: ${r.before} -> ${r.after} (${r.how})`);
-      console.log(`report: ${path.join(outDir, "retest.md")}`);
-      return rows.some((r) => r.after === "failed") ? 1 : 0;
+      for (const r of report.retestOf!.rows) console.log(`${r.scenarioId}: ${r.before} -> ${r.after} (${r.how})`);
+      console.log(`report: ${path.join(outDir, "report.md")}`);
+      return report.results.some((r) => r.verdict === "failed") ? 1 : 0;
     } finally {
       await driver.close();
     }
@@ -165,7 +189,7 @@ async function main(): Promise<number> {
     return result.verdict === "passed" ? 0 : 1;
   }
 
-  const driver = makeDriver();
+  const driver = await makeDriver();
   try {
     const result = await runScenario({ ...base, outDir: path.join(outDir, scenario.id), mode: { kind: "agent", driver } });
     printScenario(result);

@@ -20,7 +20,14 @@ export async function buildContext(
   const docs: Doc[] = [];
   let docChars = 0;
   for (const relative of manifest.docs) {
-    const file = path.resolve(path.dirname(manifestFile), relative);
+    const root = path.resolve(path.dirname(manifestFile));
+    const file = path.resolve(root, relative);
+    // The manifest comes from the pull request. It may only name files next
+    // to or below itself, never elsewhere on the machine reading them.
+    if (file !== root && !file.startsWith(root + path.sep)) {
+      omitted.push(`document ${relative} (outside the application directory, refused)`);
+      continue;
+    }
     const text = await readFile(file, "utf8").catch(() => null);
     if (text === null) {
       omitted.push(`document ${relative} (listed in the manifest but not readable)`);

@@ -18,8 +18,9 @@ export async function loadPullRequest(repo: string, number: number): Promise<Pul
   const pr = (await get(`/repos/${repo}/pulls/${number}`)) as {
     title: string;
     body: string | null;
-    head: { sha: string; ref: string };
+    head: { sha: string; ref: string; repo: { full_name: string } | null };
     base: { ref: string };
+    draft?: boolean;
   };
   const files: PullRequest["files"] = [];
   for (let page = 1; ; page++) {
@@ -43,6 +44,8 @@ export async function loadPullRequest(repo: string, number: number): Promise<Pul
     headSha: pr.head.sha,
     headRef: pr.head.ref,
     baseRef: pr.base.ref,
+    headRepo: pr.head.repo?.full_name,
+    draft: pr.draft,
     files,
   };
 }

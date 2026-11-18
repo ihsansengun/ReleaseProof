@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { UsageSummary } from "./budget.ts";
 
 // ---- scenarios and assertions (what the engine executes) --------------------
 
@@ -75,6 +76,22 @@ export const Manifest = z.object({
       z.object({ mode: z.enum(["real", "simulated", "unavailable"]), notes: z.string().optional() }),
     )
     .default({}),
+  /** How to build and start the application in an isolated container. */
+  start: z
+    .object({
+      install: z.string().optional(),
+      build: z.string().optional(),
+      run: z.string(),
+      port: z.number().int().min(1).max(65535),
+      /** Environment for the application process. Never secrets. */
+      env: z.record(z.string().regex(/^[A-Z_][A-Z0-9_]*$/), z.string()).default({}),
+      /** Name of the variable through which the application learns its commit. */
+      commitEnv: z
+        .string()
+        .regex(/^[A-Z_][A-Z0-9_]*$/)
+        .optional(),
+    })
+    .optional(),
   /** Documentation and API contracts to read, relative to the manifest. */
   docs: z.array(z.string()).default([]),
   /** Requests allowed to leave the browser while signing in during discovery, e.g. "POST /sign-in". */
@@ -158,6 +175,9 @@ export type PullRequest = {
   headSha: string;
   headRef: string;
   baseRef: string;
+  /** "owner/name" of the repository the head branch lives in. */
+  headRepo?: string;
+  draft?: boolean;
   files: { path: string; status: string; additions: number; deletions: number; patch?: string }[];
 };
 
@@ -281,4 +301,15 @@ export type RunReport = {
   confirmations: Record<string, "reproduced" | "not reproduced" | "replay diverged">;
   timings: { stage: string; seconds: number }[];
   startedAt: string;
+  /** Model spend and the limits it ran under. Absent for runs made before budgets existed. */
+  usage?: UsageSummary;
+  /** Why the run ended early, if it did. */
+  stopped?: string;
+  /** Fingerprint of the ticket text, to tell whether requirements changed between runs. */
+  ticketHash?: string;
+  /** Set when this run re-ran an earlier run's scenarios instead of planning afresh. */
+  retestOf?: {
+    headSha: string;
+    rows: { scenarioId: string; before: string; after: string; how: "replay" | "model" }[];
+  };
 };
