@@ -41,6 +41,7 @@ const SESSION_IDLE_MS = 5 * 60_000;
  *   POST /jobs/:id/tool        -> for sessions: {ok, output}
  */
 export class BridgeDriver implements Driver {
+  readonly live = true;
   private jobs: Job[] = [];
   private server: Server;
   private base: string;

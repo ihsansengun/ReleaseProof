@@ -301,6 +301,13 @@ export type RunReport = {
   confirmations: Record<string, "reproduced" | "not reproduced" | "replay diverged">;
   timings: { stage: string; seconds: number }[];
   startedAt: string;
+  /**
+   * Who decided what to test and how, in this run:
+   *   autonomous  a live model analysed, planned and executed
+   *   replay      an earlier autonomous run's scenarios were re-run
+   *   recorded    no live model; an earlier run's decisions were replayed
+   */
+  executionMode?: "autonomous" | "replay" | "recorded";
   /** Model spend and the limits it ran under. Absent for runs made before budgets existed. */
   usage?: UsageSummary;
   /** Why the run ended early, if it did. */

@@ -110,6 +110,12 @@ result for a commit that is no longer the head does not replace the comment.
 - The API client retries rate limits, overload and connection errors up to
   four times with backoff. A scenario whose model calls still fail ends as
   unverified with the reason; bad credentials stop the run.
+- A manual run can ask for tighter limits (cost, minutes, scenarios) through
+  the build workflow's inputs. The QA stage validates the request and only
+  ever lowers its limits.
+- Every report states its execution mode. A run with no live model
+  ("recorded") always gets a neutral Check, whatever its scenarios did, and
+  is never the basis for a later re-run.
 - When a limit is reached, scenarios not yet started are recorded as
   unverified, and the report says the run ended early. Blocked and
   unverified scenarios make the Check neutral. Only failures make it fail,

@@ -39,6 +39,7 @@ export function planToDraft(plan: RunReport["plan"]): PlanDraft {
  */
 export class RecordedDriver implements Driver {
   readonly label: string;
+  readonly live = false;
 
   constructor(private recording: RunReport) {
     this.label = `recorded responses from the ${recording.ticketKey} run of ${recording.startedAt.slice(0, 10)} (no live model)`;

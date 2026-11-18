@@ -39,6 +39,51 @@ export type CiResult = {
   run?: RunReport;
 };
 
+/** Limits asked for when a run was started by hand. They arrive with the build, so they are untrusted. */
+const Requested = z
+  .object({
+    maxUsd: z.coerce.number().positive().optional().catch(undefined),
+    maxMinutes: z.coerce.number().positive().optional().catch(undefined),
+    maxScenarios: z.coerce.number().int().positive().optional().catch(undefined),
+    disableFallbacks: z.coerce.string().optional().catch(undefined),
+  })
+  .catch({});
+
+/** A request may tighten the configured limits. It can never loosen them. */
+export function tighten(
+  base: { limits: Limits; maxScenarios: number },
+  requested: unknown,
+): { limits: Limits; maxScenarios: number; disableFallbacks: boolean } {
+  const r = Requested.parse(requested ?? {});
+  return {
+    limits: {
+      maxTokens: base.limits.maxTokens,
+      maxUsd: Math.min(base.limits.maxUsd, r.maxUsd ?? Infinity),
+      maxMinutes: Math.min(base.limits.maxMinutes, r.maxMinutes ?? Infinity),
+    },
+    maxScenarios: Math.min(base.maxScenarios, r.maxScenarios ?? Infinity),
+    disableFallbacks: r.disableFallbacks === "true",
+  };
+}
+
+/** Which model driver a run gets: live whenever a key is configured, recorded only without one. */
+export function driverChoice(apiKey: string | undefined, recordingExists: boolean): "live" | "recorded" | "none" {
+  if (apiKey && apiKey.trim() !== "") return "live";
+  return recordingExists ? "recorded" : "none";
+}
+
+/** An earlier run can be re-run on a new commit only if a live model produced it. */
+export function canRetest(previous: RunReport | undefined, pr: number, hash: string, full: boolean): boolean {
+  return (
+    !full &&
+    previous !== undefined &&
+    (previous.executionMode === "autonomous" || previous.executionMode === "replay") &&
+    previous.pullRequest.number === pr &&
+    previous.ticketHash === hash &&
+    previous.results.some((r) => r.steps.length > 0)
+  );
+}
+
 export type CiRunOptions = {
   incoming: string;
   outDir: string;
@@ -126,17 +171,28 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     result.isolation = await probeIsolation(declared.start);
     if (!result.isolation.ok) return finish("error", "The sandbox isolation check failed; nothing was tested.");
 
-    const budget = new Budget(options.limits, DEFAULT_PRICES);
+    const requestedFile = path.join(options.incoming, "limits.json");
+    const effective = tighten(
+      { limits: options.limits, maxScenarios: options.maxScenarios },
+      existsSync(requestedFile) ? JSON.parse(await readFile(requestedFile, "utf8").catch(() => "{}")) : {},
+    );
+    console.log(`limits: $${effective.limits.maxUsd}, ${effective.limits.maxMinutes} min, ${effective.limits.maxTokens} tokens, ${effective.maxScenarios} scenarios`);
+    const budget = new Budget(effective.limits, DEFAULT_PRICES);
     let driver: Driver;
     const recording = path.join(options.recordingsDir, `${key}.json`);
-    if (process.env.ANTHROPIC_API_KEY) {
+    const choice = driverChoice(process.env.ANTHROPIC_API_KEY, existsSync(recording));
+    if (choice === "live") {
+      const model = process.env.RELEASEPROOF_MODEL || "claude-opus-5-5";
+      const fallbacks = process.env.RELEASEPROOF_FALLBACKS !== "off" && !effective.disableFallbacks;
+      console.log(`driver: live model ${model} (an API key is configured); fallbacks ${fallbacks ? "on" : "off"}`);
       driver = new ApiDriver({
-        model: process.env.RELEASEPROOF_MODEL || "claude-opus-5-5",
+        model,
         effort: (process.env.RELEASEPROOF_EFFORT || "medium") as "low" | "medium" | "high",
         budget,
-        fallbacks: process.env.RELEASEPROOF_FALLBACKS !== "off",
+        fallbacks,
       });
-    } else if (existsSync(recording)) {
+    } else if (choice === "recorded") {
+      console.log("driver: recorded responses (no API key is configured)");
       driver = new RecordedDriver(JSON.parse(await readFile(recording, "utf8")) as RunReport);
     } else {
       return finish("skipped", "No model credential is configured and no recording exists for this ticket.");
@@ -146,18 +202,14 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
       options.previousRun && existsSync(options.previousRun)
         ? (JSON.parse(await readFile(options.previousRun, "utf8")) as RunReport)
         : undefined;
-    const retestable =
-      !options.full &&
-      previous !== undefined &&
-      previous.pullRequest.number === meta.pr &&
-      previous.ticketHash === ticketHash(ticket) &&
-      previous.results.some((r) => r.steps.length > 0);
+    const retestable = canRetest(previous, meta.pr, ticketHash(ticket), options.full);
+    console.log(retestable ? "mode: re-running the previous run's scenarios" : "mode: planning afresh");
 
     const runDir = path.join(options.outDir, "run");
     const common = { pullRequest, manifest, driver, budget, outDir: runDir, concurrency: options.concurrency };
     result.run = retestable
       ? await retestRun({ ...common, previous: previous! })
-      : await runPipeline({ ...common, ticket, manifestFile, maxScenarios: options.maxScenarios });
+      : await runPipeline({ ...common, ticket, manifestFile, maxScenarios: effective.maxScenarios });
     await driver.close();
     return finish("completed");
   } catch (error) {

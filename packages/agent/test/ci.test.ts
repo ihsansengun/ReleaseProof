@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { appsTouched } from "../src/ci/build.ts";
 import { render, ReportInput, safe } from "../src/ci/report.ts";
-import { Meta } from "../src/ci/run.ts";
+import { canRetest, driverChoice, Meta, tighten } from "../src/ci/run.ts";
 import { planToDraft } from "../src/drivers/recorded.ts";
 import { PlanDraft, type RunReport } from "../src/schema.ts";
 
@@ -46,12 +46,14 @@ test("untrusted text cannot carry markup, mentions or links into a comment", () 
 
 test("a completed run renders with failures first and a failing conclusion", async () => {
   const run = await recording();
+  run.executionMode = "autonomous";
   run.results[0]!.verdict = "failed";
   run.results[0]!.assertionResults[0]!.pass = false;
   const input = ReportInput.parse({ status: "completed", repo: "acme/widgets", pr: 1, headSha: "b".repeat(40), run });
   const out = render(input, RUN_URL);
   assert.equal(out.conclusion, "failure");
-  assert.match(out.title, /^1 failed, \d+ passed, \d+ not verified$/);
+  assert.match(out.title, /^1 failed, \d+ passed, \d+ not verified \(autonomous\)$/);
+  assert.match(out.body, /Execution mode: autonomous/);
   assert.match(out.body, /^<!-- releaseproof-report -->/);
   assert.match(out.body, /### Failures/);
   assert.match(out.body, /Requirement R\d+: "/);
@@ -60,6 +62,7 @@ test("a completed run renders with failures first and a failing conclusion", asy
 
 test("blocked or unverified scenarios make the result neutral, never a pass", async () => {
   const run = await recording();
+  run.executionMode = "autonomous";
   assert.equal(render(ReportInput.parse({ status: "completed", repo: "acme/widgets", pr: 1, headSha: "b".repeat(40), run }), RUN_URL).conclusion, "success");
   run.results[1]!.verdict = "unverified";
   run.results[1]!.reason = "Not executed: the run's cost limit of $8 reached.";
@@ -92,4 +95,72 @@ test("a recorded plan converts back to the shape a model would return", async ()
   assert.equal(draft.scenarios.length, run.plan.scenarios.length);
   const first = draft.scenarios.find((s) => s.assertions.length > 0)!;
   assert.ok(first.assertions.every((a) => a.requirementId));
+});
+
+test("a run without a live model is never green and says what it is", async () => {
+  const allPassed = await recording();
+  for (const mode of ["recorded", undefined] as const) {
+    allPassed.executionMode = mode;
+    assert.ok(allPassed.results.every((r) => r.verdict === "passed"));
+    const out = render(ReportInput.parse({ status: "completed", repo: "acme/widgets", pr: 1, headSha: "b".repeat(40), run: allPassed }), RUN_URL);
+    assert.equal(out.conclusion, "neutral", String(mode));
+    assert.match(out.title, /^Recorded replay, not an autonomous run: 0 failed, 9 passed/);
+    assert.match(out.body, /\*\*Recorded replay, not an autonomous run\.\*\* No live model was used/);
+    assert.match(out.body, /Execution mode: recorded/);
+  }
+  // Even a failing recorded run stays neutral; the failure is still listed.
+  allPassed.executionMode = "recorded";
+  allPassed.results[0]!.verdict = "failed";
+  allPassed.results[0]!.assertionResults[0]!.pass = false;
+  const failing = render(ReportInput.parse({ status: "completed", repo: "acme/widgets", pr: 1, headSha: "b".repeat(40), run: allPassed }), RUN_URL);
+  assert.equal(failing.conclusion, "neutral");
+  assert.match(failing.body, /### Failures/);
+  // A re-run by replay of an autonomous run is labelled as replay and can pass.
+  const replay = await recording();
+  replay.executionMode = "replay";
+  const replayed = render(ReportInput.parse({ status: "completed", repo: "acme/widgets", pr: 1, headSha: "b".repeat(40), run: replay }), RUN_URL);
+  assert.equal(replayed.conclusion, "success");
+  assert.match(replayed.title, /\(replay\)$/);
+});
+
+test("a requested limit can lower a run's budget but never raise it", () => {
+  const base = { limits: { maxUsd: 8, maxTokens: 3_000_000, maxMinutes: 25 }, maxScenarios: 10 };
+  assert.deepEqual(tighten(base, { maxUsd: "2.5", maxScenarios: "4", maxMinutes: "15" }), {
+    limits: { maxUsd: 2.5, maxTokens: 3_000_000, maxMinutes: 15 },
+    maxScenarios: 4,
+    disableFallbacks: false,
+  });
+  assert.deepEqual(tighten(base, { maxUsd: "500", maxScenarios: "99", maxMinutes: "600", maxTokens: "9e12" }).limits, base.limits);
+  assert.equal(tighten(base, { maxScenarios: "99" }).maxScenarios, 10);
+  for (const junk of [null, "x", [], { maxUsd: "-1" }, { maxUsd: "$(id)" }, { maxScenarios: "1.5" }, { maxUsd: {} }]) {
+    assert.deepEqual(tighten(base, junk).limits, base.limits, JSON.stringify(junk));
+    assert.equal(tighten(base, junk).maxScenarios, 10);
+  }
+  assert.equal(tighten(base, { disableFallbacks: "true" }).disableFallbacks, true);
+  assert.equal(tighten(base, { disableFallbacks: "yes" }).disableFallbacks, false);
+});
+
+test("the live driver is chosen whenever a key is configured, the recording only without one", () => {
+  assert.equal(driverChoice("sk-test", true), "live");
+  assert.equal(driverChoice("sk-test", false), "live");
+  assert.equal(driverChoice("", true), "recorded");
+  assert.equal(driverChoice("   ", true), "recorded");
+  assert.equal(driverChoice(undefined, true), "recorded");
+  assert.equal(driverChoice(undefined, false), "none");
+});
+
+test("only a run produced by a live model can be re-run on a later commit", async () => {
+  const previous = await recording();
+  const hash = "h";
+  previous.ticketHash = hash;
+  previous.pullRequest.number = 1;
+  for (const [mode, expected] of [["autonomous", true], ["replay", true], ["recorded", false], [undefined, false]] as const) {
+    previous.executionMode = mode;
+    assert.equal(canRetest(previous, 1, hash, false), expected, String(mode));
+  }
+  previous.executionMode = "autonomous";
+  assert.equal(canRetest(previous, 1, hash, true), false, "a full run was asked for");
+  assert.equal(canRetest(previous, 2, hash, false), false, "another pull request");
+  assert.equal(canRetest(previous, 1, "changed", false), false, "the ticket changed");
+  assert.equal(canRetest(undefined, 1, hash, false), false);
 });

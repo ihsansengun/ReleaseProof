@@ -27,6 +27,19 @@ on:
         description: Plan from scratch even if an earlier run of this pull request can be re-run
         type: boolean
         default: false
+      max_usd:
+        description: Lower this run's cost limit in US dollars (cannot raise the configured limit)
+        type: string
+      max_scenarios:
+        description: Lower this run's limit on executed scenarios
+        type: string
+      max_minutes:
+        description: Lower this run's time limit in minutes
+        type: string
+      disable_fallbacks:
+        description: Do not send the model-fallback parameters
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -76,12 +89,21 @@ jobs:
         env:
           PR: ${{ inputs.pr || github.event.pull_request.number }}
           FULL: ${{ inputs.full || false }}
+          MAX_USD: ${{ inputs.max_usd }}
+          MAX_SCENARIOS: ${{ inputs.max_scenarios }}
+          MAX_MINUTES: ${{ inputs.max_minutes }}
+          DISABLE_FALLBACKS: ${{ inputs.disable_fallbacks || false }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           npx tsx packages/agent/src/ci/cli.ts build \
             --pr-dir "$GITHUB_WORKSPACE/pr" --repo "$GITHUB_REPOSITORY" --pr "$PR" \
             --out "$GITHUB_WORKSPACE/handoff"
           echo "$FULL" > "$GITHUB_WORKSPACE/handoff/full"
+          # Requests to tighten this run's limits. The QA workflow validates
+          # them and will only ever lower its own limits, never raise them.
+          jq -n --arg usd "$MAX_USD" --arg scenarios "$MAX_SCENARIOS" --arg minutes "$MAX_MINUTES" --arg nofallback "$DISABLE_FALLBACKS" \
+            '{maxUsd: $usd, maxScenarios: $scenarios, maxMinutes: $minutes, disableFallbacks: $nofallback}
+             | with_entries(select(.value != ""))' > "$GITHUB_WORKSPACE/handoff/limits.json"
 
       - name: Hand over to the QA workflow
         uses: actions/upload-artifact@v4
