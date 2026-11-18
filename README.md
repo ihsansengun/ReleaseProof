@@ -15,6 +15,8 @@ Product brief: [project_instructions.md](project_instructions.md).
   application; a test enforces that.
 - `apps/shop`, `apps/timeoff` — two small demonstration apps in different
   domains and stacks, each with a `releaseproof.yml` manifest.
+- `.github/workflows/`, `ci/` — the GitHub Actions adapter; see
+  [docs/CI-SECURITY.md](docs/CI-SECURITY.md) for its trust boundaries.
 - `eval/` — tickets, results and the intervention log. Start with the
   [held-out evaluation](eval/results/2026-11-18/README.md).
 
