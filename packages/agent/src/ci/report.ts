@@ -250,6 +250,10 @@ export async function publish(raw: unknown, runUrl: string, token: string): Prom
   });
   posted.push("check run");
 
+  // A run that was skipped has nothing for a reader to act on: the Check run
+  // records it, and the pull request is left without a comment.
+  if (input.status === "skipped") return { ...rendered, posted };
+
   // Only comment while the tested commit is still the head; an older result
   // must not overwrite a newer one.
   const pull = (await github("GET", `/repos/${input.repo}/pulls/${input.pr}`, token)) as { head: { sha: string } };

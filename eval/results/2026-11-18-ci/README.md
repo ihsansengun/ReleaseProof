@@ -21,6 +21,27 @@ browser steps from the held-out evaluation. The browser actions and every
 comparison were executed for real against the application built from the
 pull request's commit; what was not exercised is a model deciding anything.
 
+## An unplanned fourth run, and what it showed
+
+Opening pull request [#4](https://github.com/ihsansengun/ReleaseProof/pull/4),
+which adds the `pull_request` trigger, started the build workflow by itself:
+GitHub takes that workflow file from the pull request, so the pull request
+activated its own trigger. The QA stage on `main` then ran for it
+([44392466061](https://github.com/ihsansengun/ReleaseProof/actions/runs/44392466061)),
+accepted the build after checking its commit against the event and GitHub's
+API, found that the pull request changes no application, and posted a
+neutral Check.
+
+- It shows the automatic path working end to end, including the provenance
+  checks for a pull-request build.
+- It also shows that keeping the trigger off `main` was not a real gate. The
+  gate is now a repository variable read by the QA stage on `main`
+  (`RELEASEPROOF_AUTO_TRIGGER`), which takes effect once that change is on
+  `main`. Until then, any same-repository pull request that adds the trigger
+  to its own copy of the build workflow will be tested. Fork pull requests
+  are still skipped by the QA stage.
+- Skipped runs no longer post a comment, only the Check.
+
 ## Against the acceptance criteria
 
 | # | Criterion | Status | Evidence |
@@ -30,7 +51,7 @@ pull request's commit; what was not exercised is a model deciding anything.
 | 3 | Scenarios execute against the correct commit | Verified | Commit carried from checkout to image label to metadata, checked against GitHub's API, and reported back by the application; each comment states the commit |
 | 4 | Real test evidence is produced and stored | Verified | `releaseproof-evidence` artifact on each QA run: report, per-scenario steps, 56 files including screenshots for run 1; 14-day retention |
 | 5 | GitHub receives an accurate QA report | Verified | Check run "ReleaseProof QA" and one comment on each pull request, matching `run.json` |
-| 6 | A new commit triggers another run | **Not verified** | The automatic trigger is deliberately not enabled. Run 3 shows the re-run logic (previous run restored, scenarios replayed, comment updated) when started by hand |
+| 6 | A new commit triggers another run | **Partly verified** | A pull-request event started a run automatically (the fourth run above), and a later push to that pull request started another. Neither tested an application, because that pull request changes none. Run 3 shows the re-run logic for an application when started by hand |
 | 7 | Pull-request code cannot reach privileged credentials | Verified for the cases probed | See below |
 | 8 | Cost, time and intervention metrics are recorded | Verified, with zero model cost | Each report states cost, tokens, model calls, tool calls and minutes against the limits; with a recorded driver these are all zero apart from time |
 | 9 | Both applications work through the same integration | Verified | Runs 1 and 2 use the same workflows and engine commit; the shop is installed and built inside its image, the time-off app needs no build |
