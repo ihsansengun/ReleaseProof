@@ -1,0 +1,556 @@
+{
+  "scenarioId": "S2",
+  "title": "Rejecting leaves the balance unchanged, and a rejected request cannot later be approved",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "passed",
+  "reason": "All 2 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3100",
+    "deployedSha": "dev-timeoff",
+    "expectedSha": "dev-timeoff"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": 20,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R4",
+        "field": "body",
+        "jsonPath": "balance",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 20,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R6",
+        "field": "body",
+        "jsonPath": "balance",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    }
+  ],
+  "observations": {
+    "apiBalanceBefore": 20,
+    "apiBalanceAfterReject": 20,
+    "apiBalanceAfterSecondDecision": 20
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Find the sign-in page."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Find the sign-in page."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s2-emp",
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Read balance before."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"handle\":\"s2-emp\",\"name\":\"Employee s2-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Read balance before."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiBalanceBefore",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record initial balance."
+      },
+      "ok": true,
+      "summary": "Recorded apiBalanceBefore = 20",
+      "rationale": "Record initial balance."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "First day"
+        },
+        "text": "2027-02-03",
+        "rationale": "Fill request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Fill request."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Last day"
+        },
+        "text": "2027-02-03",
+        "rationale": "Fill request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Fill request."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Reason"
+        },
+        "text": "Personal day",
+        "rationale": "Fill request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Fill request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Submit request"
+        },
+        "rationale": "Submit the request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit the request."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/requests",
+        "rationale": "Get the new request id."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":[{\"id\":3,\"employee\":\"s2-emp\",\"employeeName\":\"Employee s2-emp\",\"start\":\"2027-02-03\",\"end\":\"2027-02-03\",\"days\":1,\"reason\":\"Personal day\",\"status\":\"Pending\"}]}",
+      "rationale": "Get the new request id."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch to manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch to manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s2-mgr",
+        "rationale": "Sign in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:mgr.password}}",
+        "rationale": "Sign in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as manager."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "POST",
+        "path": "/api/requests/3/decision",
+        "body": {
+          "decision": "reject"
+        },
+        "rationale": "Reject the request."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R3\",\"status\":200,\"body\":{\"id\":3,\"employee\":\"s2-emp\",\"employeeName\":\"Employee s2-emp\",\"start\":\"2027-02-03\",\"end\":\"2027-02-03\",\"days\":1,\"reason\":\"Personal day\",\"status\":\"Rejected\"}}",
+      "rationale": "Reject the request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch to employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch to employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s2-emp",
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Read balance after reject."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R4\",\"status\":200,\"body\":{\"handle\":\"s2-emp\",\"name\":\"Employee s2-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Read balance after reject."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiBalanceAfterReject",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record balance after reject."
+      },
+      "ok": true,
+      "summary": "Recorded apiBalanceAfterReject = 20",
+      "rationale": "Record balance after reject."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Balance after reject should equal before."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected 20, actual 20 -> match. This result is final.",
+      "rationale": "Balance after reject should equal before."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch to manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch to manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s2-mgr",
+        "rationale": "Sign in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:mgr.password}}",
+        "rationale": "Sign in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as manager."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "POST",
+        "path": "/api/requests/3/decision",
+        "body": {
+          "decision": "approve"
+        },
+        "rationale": "Second decision attempt on rejected request."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R5\",\"status\":409,\"body\":{\"error\":\"This request was already decided.\"}}",
+      "rationale": "Second decision attempt on rejected request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch to employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch to employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s2-emp",
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Read balance after second decision."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R6\",\"status\":200,\"body\":{\"handle\":\"s2-emp\",\"name\":\"Employee s2-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Read balance after second decision."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiBalanceAfterSecondDecision",
+        "target": {
+          "source": "api",
+          "responseId": "R6",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record final balance."
+      },
+      "ok": true,
+      "summary": "Recorded apiBalanceAfterSecondDecision = 20",
+      "rationale": "Record final balance."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R6",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Final balance should equal balance after reject."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 20, actual 20 -> match. This result is final.",
+      "rationale": "Final balance should equal balance after reject."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "Both assertions A1 and A2 checked.",
+        "rationale": "All assertions have been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "All assertions have been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "dev-timeoff/scenarios/S2"
+  },
+  "startedAt": "2026-11-18T18:48:36.647Z",
+  "durationMs": 93044
+}

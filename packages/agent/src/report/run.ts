@@ -40,8 +40,24 @@ export function renderRunReport(run: RunReport): string {
     `- Clarification requests: ${run.analysis.ambiguities.length + run.plan.clarifications.length}`,
     `- Environment: ${run.environment.baseUrl}, commit \`${run.environment.deployedSha ?? "not reported"}\``,
     `- Model work done by: ${run.driver}`,
-    "",
   );
+  if (run.usage) {
+    const t = run.usage.total;
+    lines.push(
+      `- Model usage: ${t.calls} calls, ${t.inputTokens + t.cacheReadTokens + t.cacheWriteTokens} input and ${t.outputTokens} output tokens, about $${run.usage.estimatedUsd.toFixed(2)} (limit $${run.usage.limits.maxUsd}); ${run.usage.minutes} of ${run.usage.limits.maxMinutes} minutes`,
+    );
+  }
+  if (run.retestOf) {
+    lines.push(`- This run re-ran the scenarios planned for commit \`${run.retestOf.headSha.slice(0, 10)}\`; it did not plan afresh`);
+  }
+  if (run.stopped) lines.push(`- **Ended early:** ${run.stopped}`);
+  lines.push("");
+
+  if (run.retestOf) {
+    lines.push("## Change since the previous run", "", "| Scenario | Before | Now | Re-run by |", "|---|---|---|---|");
+    for (const row of run.retestOf.rows) lines.push(`| ${row.scenarioId} | ${row.before} | ${row.after} | ${row.how} |`);
+    lines.push("");
+  }
 
   const failures = run.results.filter((r) => r.verdict === "failed");
   lines.push("## Failures", "");
@@ -58,7 +74,14 @@ export function renderRunReport(run: RunReport): string {
         `  - Evidence: [screenshot](scenarios/${failure.scenarioId}/${outcome.screenshot}), [steps](scenarios/${failure.scenarioId}/report.md)`,
       );
     }
-    lines.push(`- Replayed without a model: ${run.confirmations[failure.scenarioId] ?? "not attempted"}`, "");
+    lines.push(`- Repeats when replayed without a model: ${run.confirmations[failure.scenarioId] ?? "not attempted"}`, "");
+  }
+
+  const inconclusive = run.results.filter((r) => r.verdict === "blocked" || r.verdict === "unverified");
+  if (inconclusive.length > 0) {
+    lines.push("## Not verified", "", "These scenarios ran or were due to run, and produced no pass or fail:", "");
+    for (const r of inconclusive) lines.push(`- **${r.scenarioId}** (${r.verdict}) ${cell(r.title)}: ${cell(r.reason)}`);
+    lines.push("");
   }
 
   lines.push(

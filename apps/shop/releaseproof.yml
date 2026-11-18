@@ -20,3 +20,13 @@ docs:
 signIn:
   allow:
     - POST /login
+start:
+  install: npm ci
+  build: npm run build -w apps/shop
+  run: node_modules/.bin/next start apps/shop
+  port: 3000
+  commitEnv: GIT_SHA
+  env:
+    PORT: "3000"
+    TEST_MODE: "1"
+    DATABASE_FILE: /tmp/shop.db

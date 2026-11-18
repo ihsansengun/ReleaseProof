@@ -1,0 +1,731 @@
+{
+  "scenarioId": "S8",
+  "title": "Loyalty points follow the charged amount: $108.00 after SAVE10 earns the same as $108.00 without a code",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "passed",
+  "reason": "All 4 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3000",
+    "deployedSha": "5ca65f012d822e0a2fe3dc56b1dd3a6a0066570b",
+    "expectedSha": "5ca65f012d822e0a2fe3dc56b1dd3a6a0066570b"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": 10800,
+      "actual": 10800,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "orders.0.totalCents",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 10800,
+      "actual": 10800,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "orders.0.totalCents",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A4",
+      "expected": 0,
+      "actual": 0,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "orders.0.discountCents",
+        "count": false
+      },
+      "screenshot": "check-A4.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": 208,
+      "actual": 208,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Loyalty balance:",
+        "count": false,
+        "pattern": "Loyalty balance:\\s*(\\d+)"
+      },
+      "screenshot": "check-A3.png"
+    }
+  ],
+  "observations": {
+    "firstOrderTotal": 10800,
+    "firstPoints": 208,
+    "secondOrderTotal": 10800,
+    "secondOrderDiscount": 0,
+    "secondPoints": 208
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the application structure before signing in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the application structure before signing in."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Open the sign-in page to log in as the first customer."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Open the sign-in page to log in as the first customer."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "s8-codeshopper@fixtures.test",
+        "rationale": "Enter the first customer email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter the first customer email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:codeShopper.password}}",
+        "rationale": "Enter the first customer password."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter the first customer password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit the sign-in form."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit the sign-in form."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to products to add the notebook."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to products to add the notebook."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Notebook, Dotted A5 to cart"
+        },
+        "rationale": "Add the notebook to the cart."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add the notebook to the cart."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Open the cart to set quantity."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Open the cart to set quantity."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "spinbutton",
+          "value": "Quantity for Notebook, Dotted A5"
+        },
+        "text": "10",
+        "rationale": "Set quantity to 10."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Set quantity to 10."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Update quantity for Notebook, Dotted A5"
+        },
+        "rationale": "Apply the quantity change."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply the quantity change."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Promo code"
+        },
+        "text": "SAVE10",
+        "rationale": "Enter the SAVE10 code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter the SAVE10 code."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply the promo code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply the promo code."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "link",
+          "value": "Proceed to checkout"
+        },
+        "rationale": "Go to checkout to pay."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Go to checkout to pay."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Card number"
+        },
+        "text": "4242 4242 4242 4242",
+        "rationale": "Enter the accepted test card."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Enter the accepted test card."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Pay now"
+        },
+        "rationale": "Pay for the order."
+      },
+      "ok": true,
+      "summary": "URL: /account?order=3",
+      "rationale": "Pay for the order."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/account",
+        "rationale": "Read the first customer order totals."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"customer\":{\"id\":10,\"email\":\"s8-codeshopper@fixtures.test\",\"name\":\"Test Customer s8-codeshopper\"},\"balance\":208,\"transactions\":[{\"id\":5,\"orderId\":3,\"points\":108,\"reason\":\"purchase\"},{\"id\":6,\"orderId\":3,\"points\":100,\"reason\":\"welcome\"}],\"orders\":[{\"id\":3,\"total",
+      "rationale": "Read the first customer order totals."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "firstOrderTotal",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "orders.0.totalCents",
+          "count": false
+        },
+        "rationale": "Record the first order total."
+      },
+      "ok": true,
+      "summary": "Recorded firstOrderTotal = 10800",
+      "rationale": "Record the first order total."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "orders.0.totalCents",
+          "count": false
+        },
+        "rationale": "First order totalCents should be 10800."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected 10800, actual 10800 -> match. This result is final.",
+      "rationale": "First order totalCents should be 10800."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/account",
+        "rationale": "Open the account overview to read the loyalty balance."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Open the account overview to read the loyalty balance."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "firstPoints",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Loyalty balance:",
+          "count": false,
+          "pattern": "Loyalty balance:\\s*(\\d+)"
+        },
+        "rationale": "Record the first customer loyalty balance."
+      },
+      "ok": true,
+      "summary": "Recorded firstPoints = 208",
+      "rationale": "Record the first customer loyalty balance."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out the first customer."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign out the first customer."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Open sign-in for the second customer."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Open sign-in for the second customer."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "s8-plainshopper@fixtures.test",
+        "rationale": "Enter second customer email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter second customer email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:plainShopper.password}}",
+        "rationale": "Enter second customer password."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter second customer password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Check the second customer cart starts empty."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Check the second customer cart starts empty."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to products."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to products."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Notebook, Dotted A5 to cart"
+        },
+        "rationale": "Add the notebook."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add the notebook."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Open cart."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Open cart."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "spinbutton",
+          "value": "Quantity for Notebook, Dotted A5"
+        },
+        "text": "9",
+        "rationale": "Set quantity to 9."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Set quantity to 9."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Update quantity for Notebook, Dotted A5"
+        },
+        "rationale": "Apply quantity."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply quantity."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/checkout",
+        "rationale": "Go to checkout."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Go to checkout."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Card number"
+        },
+        "text": "4242 4242 4242 4242",
+        "rationale": "Enter accepted card."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Enter accepted card."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Pay now"
+        },
+        "rationale": "Pay for the order."
+      },
+      "ok": true,
+      "summary": "URL: /account?order=5",
+      "rationale": "Pay for the order."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/account",
+        "rationale": "Read the second customer order fields."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":{\"customer\":{\"id\":11,\"email\":\"s8-plainshopper@fixtures.test\",\"name\":\"Test Customer s8-plainshopper\"},\"balance\":208,\"transactions\":[{\"id\":7,\"orderId\":5,\"points\":108,\"reason\":\"purchase\"},{\"id\":8,\"orderId\":5,\"points\":100,\"reason\":\"welcome\"}],\"orders\":[{\"id\":5,\"tot",
+      "rationale": "Read the second customer order fields."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "secondOrderTotal",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "orders.0.totalCents",
+          "count": false
+        },
+        "rationale": "Record second order total."
+      },
+      "ok": true,
+      "summary": "Recorded secondOrderTotal = 10800",
+      "rationale": "Record second order total."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "secondOrderDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "orders.0.discountCents",
+          "count": false
+        },
+        "rationale": "Record second order discount."
+      },
+      "ok": true,
+      "summary": "Recorded secondOrderDiscount = 0",
+      "rationale": "Record second order discount."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "orders.0.totalCents",
+          "count": false
+        },
+        "rationale": "Second order total should equal the first."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 10800, actual 10800 -> match. This result is final.",
+      "rationale": "Second order total should equal the first."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A4",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "orders.0.discountCents",
+          "count": false
+        },
+        "rationale": "Second order discount should be 0."
+      },
+      "ok": true,
+      "summary": "Recorded A4: expected 0, actual 0 -> match. This result is final.",
+      "rationale": "Second order discount should be 0."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/account",
+        "rationale": "Open account overview for the second customer balance."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Open account overview for the second customer balance."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "secondPoints",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Loyalty balance:",
+          "count": false,
+          "pattern": "Loyalty balance:\\s*(\\d+)"
+        },
+        "rationale": "Record the second customer loyalty balance."
+      },
+      "ok": true,
+      "summary": "Recorded secondPoints = 208",
+      "rationale": "Record the second customer loyalty balance."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out the second customer."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign out the second customer."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Sign back in as the first customer to read their balance after both payments."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign back in as the first customer to read their balance after both payments."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "s8-codeshopper@fixtures.test",
+        "rationale": "Enter first customer email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter first customer email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:codeShopper.password}}",
+        "rationale": "Enter first customer password."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter first customer password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Loyalty balance:",
+          "count": false,
+          "pattern": "Loyalty balance:\\s*(\\d+)"
+        },
+        "rationale": "First customer balance after both payments should equal secondPoints."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected 208, actual 208 -> match. This result is final.",
+      "rationale": "First customer balance after both payments should equal secondPoints."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All four assertions checked. Note: both balances include a 100-point welcome bonus in addition to 108 purchase points; second order promoCode is null.",
+        "rationale": "Every assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "heldout-shop/scenarios/S8"
+  },
+  "startedAt": "2026-11-18T19:00:28.569Z",
+  "durationMs": 99365
+}

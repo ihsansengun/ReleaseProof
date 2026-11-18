@@ -6,3 +6,4 @@ runs/
 next-env.d.ts
 *.tsbuildinfo
 .next-*/
+.claude/worktrees/

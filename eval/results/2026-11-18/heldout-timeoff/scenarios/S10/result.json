@@ -1,0 +1,127 @@
+{
+  "scenarioId": "S10",
+  "title": "Pending request starting tomorrow can still be cancelled (notice rule only for Approved)",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "blocked",
+  "reason": "Not checked: A1, A2. The scenario requires today's date from the Date header of an application response, but the api_request tool returns only responseId, status and body (checked GET /api/requests -> R1 and GET / -> R2); no response headers are exposed and no page shows today's date, so D (today+1) could not be determined. balanceBefore = 20 was recorded; no request was created and A1/A2 were not checked.",
+  "environment": {
+    "baseUrl": "http://localhost:3100",
+    "deployedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0",
+    "expectedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0"
+  },
+  "assertionResults": [],
+  "observations": {
+    "balanceBefore": 20
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Open the application to find the sign-in page."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Open the application to find the sign-in page."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s10-emp",
+        "rationale": "Enter the employee username."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter the employee username."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Enter the employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter the employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Sign in as the employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as the employee."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/requests",
+        "rationale": "Read the Date header to determine today."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":[]}",
+      "rationale": "Read the Date header to determine today."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceBefore",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Record the balance before creating the request."
+      },
+      "ok": true,
+      "summary": "Recorded balanceBefore = 20",
+      "rationale": "Record the balance before creating the request."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/",
+        "rationale": "Check whether this response exposes the Date header."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":\"<!doctype html>\\n<html lang=\\\"en\\\">\\n  <head>\\n    <meta charset=\\\"utf-8\\\" />\\n    <meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1\\\" />\\n    <title>Dayoff</title>\\n    <link rel=\\\"stylesheet\\\" href=\\\"/style.css\\\" />\\n  </head>\\n  <body>\\n",
+      "rationale": "Check whether this response exposes the Date header."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "blocked",
+        "reason": "The scenario requires today's date from the Date header of an application response, but the api_request tool returns only responseId, status and body (checked GET /api/requests -> R1 and GET / -> R2); no response headers are exposed and no page shows today's date, so D (today+1) could not be determined. balanceBefore = 20 was recorded; no request was created and A1/A2 were not checked.",
+        "rationale": "The required date source is not reachable with the provided tools, and the briefing forbids substituting another source."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "The required date source is not reachable with the provided tools, and the briefing forbids substituting another source."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "heldout-timeoff/scenarios/S10"
+  },
+  "startedAt": "2026-11-18T18:58:04.287Z",
+  "durationMs": 36651
+}

@@ -1,0 +1,586 @@
+{
+  "scenarioId": "S1",
+  "title": "SAVE10 on a $24.99 cart: field, Apply, rounding down, cart display and GET /api/cart",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "failed",
+  "reason": "A6: expected 2.49, got 2.5; A4: expected 249, got 250; A5: expected 249, got 250",
+  "environment": {
+    "baseUrl": "http://localhost:3000",
+    "deployedSha": "5ca65f012d822e0a2fe3dc56b1dd3a6a0066570b",
+    "expectedSha": "5ca65f012d822e0a2fe3dc56b1dd3a6a0066570b"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": "present",
+      "actual": "present",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "role",
+        "role": "textbox",
+        "value": "Promo code",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": "present",
+      "actual": "present",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "role",
+        "role": "button",
+        "value": "Apply",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": "SAVE10",
+      "actual": "Promo code SAVE10 applied.",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "applied.",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    },
+    {
+      "assertionId": "A6",
+      "expected": 2.49,
+      "actual": 2.5,
+      "pass": false,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Discount (SAVE10):",
+        "count": false,
+        "pattern": "\\$([0-9.,]+)"
+      },
+      "screenshot": "check-A6.png"
+    },
+    {
+      "assertionId": "A7",
+      "expected": 22.49,
+      "actual": 22.49,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "$22.49",
+        "count": false,
+        "pattern": "\\$([0-9.,]+)"
+      },
+      "screenshot": "check-A7.png"
+    },
+    {
+      "assertionId": "A4",
+      "expected": 249,
+      "actual": 250,
+      "pass": false,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A4.png"
+    },
+    {
+      "assertionId": "A5",
+      "expected": 249,
+      "actual": 250,
+      "pass": false,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A5.png"
+    },
+    {
+      "assertionId": "A8",
+      "expected": 2249,
+      "actual": 2249,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "totalCents",
+        "count": false
+      },
+      "screenshot": "check-A8.png"
+    },
+    {
+      "assertionId": "A9",
+      "expected": "SAVE10",
+      "actual": "SAVE10",
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "promoCode",
+        "count": false
+      },
+      "screenshot": "check-A9.png"
+    }
+  ],
+  "observations": {
+    "uiSubtotal": 24.99,
+    "uiDiscount": 2.5,
+    "uiTotal": 22.49,
+    "apiSubtotal": 2499,
+    "apiDiscount": 250,
+    "apiTotal": 2249
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Find the sign-in entry point."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Find the sign-in entry point."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Sign in as the customer first."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign in as the customer first."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Email"
+        },
+        "text": "s1-shopper@fixtures.test",
+        "rationale": "Enter customer email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter customer email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:shopper.password}}",
+        "rationale": "Enter customer password."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter customer password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Confirm the cart starts empty before adding the item."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Confirm the cart starts empty before adding the item."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to product list to add the tote bag."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to product list to add the tote bag."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Canvas Tote Bag to cart"
+        },
+        "rationale": "Add one Canvas Tote Bag."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add one Canvas Tote Bag."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Open the cart page with the tote bag."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Open the cart page with the tote bag."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "page",
+          "by": "role",
+          "role": "textbox",
+          "value": "Promo code",
+          "count": false
+        },
+        "rationale": "Promo code input present before applying."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected present, actual present -> match. This result is final.",
+      "rationale": "Promo code input present before applying."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "page",
+          "by": "role",
+          "role": "button",
+          "value": "Apply",
+          "count": false
+        },
+        "rationale": "Apply button present before applying."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected present, actual present -> match. This result is final.",
+      "rationale": "Apply button present before applying."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Promo code"
+        },
+        "text": "SAVE10",
+        "rationale": "Enter the promo code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter the promo code."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply the promo code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply the promo code."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "applied.",
+          "count": false
+        },
+        "rationale": "Applied-code display after applying SAVE10."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected SAVE10, actual Promo code SAVE10 applied. -> match. This result is final.",
+      "rationale": "Applied-code display after applying SAVE10."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiSubtotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Subtotal:",
+          "count": false,
+          "pattern": "Subtotal:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed subtotal."
+      },
+      "ok": true,
+      "summary": "Recorded uiSubtotal = 24.99",
+      "rationale": "Record displayed subtotal."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiDiscount",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Discount (SAVE10):",
+          "count": false,
+          "pattern": "\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed discount amount."
+      },
+      "ok": true,
+      "summary": "Recorded uiDiscount = 2.5",
+      "rationale": "Record displayed discount amount."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiTotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Total:",
+          "count": false,
+          "pattern": "^\\s*Total:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed total."
+      },
+      "ok": false,
+      "summary": "Error: Expected exactly one element for {\"source\":\"page\",\"by\":\"text\",\"value\":\"Total:\",\"count\":false,\"pattern\":\"^\\\\s*Total:\\\\s*\\\\$([0-9.,]+)\"}, found 2.",
+      "rationale": "Record displayed total."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiTotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "$22.49",
+          "count": false,
+          "pattern": "\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed total (the strong next to Total:)."
+      },
+      "ok": true,
+      "summary": "Recorded uiTotal = 22.49",
+      "rationale": "Record displayed total (the strong next to Total:)."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A6",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Discount (SAVE10):",
+          "count": false,
+          "pattern": "\\$([0-9.,]+)"
+        },
+        "rationale": "Displayed discount line after applying SAVE10."
+      },
+      "ok": true,
+      "summary": "Recorded A6: expected 2.49, actual 2.5 -> MISMATCH. This result is final.",
+      "rationale": "Displayed discount line after applying SAVE10."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A7",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "$22.49",
+          "count": false,
+          "pattern": "\\$([0-9.,]+)"
+        },
+        "rationale": "Displayed total after applying SAVE10."
+      },
+      "ok": true,
+      "summary": "Recorded A7: expected 22.49, actual 22.49 -> match. This result is final.",
+      "rationale": "Displayed total after applying SAVE10."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read cart totals from the API after applying SAVE10."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"lines\":[{\"productId\":1,\"name\":\"Canvas Tote Bag\",\"priceCents\":2499,\"quantity\":1,\"lineCents\":2499}],\"subtotalCents\":2499,\"promoCode\":\"SAVE10\",\"discountCents\":250,\"totalCents\":2249}}",
+      "rationale": "Read cart totals from the API after applying SAVE10."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiSubtotal",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "subtotalCents",
+          "count": false
+        },
+        "rationale": "Record subtotalCents from GET /api/cart."
+      },
+      "ok": true,
+      "summary": "Recorded apiSubtotal = 2499",
+      "rationale": "Record subtotalCents from GET /api/cart."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discountCents from GET /api/cart."
+      },
+      "ok": true,
+      "summary": "Recorded apiDiscount = 250",
+      "rationale": "Record discountCents from GET /api/cart."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiTotal",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Record totalCents from GET /api/cart."
+      },
+      "ok": true,
+      "summary": "Recorded apiTotal = 2249",
+      "rationale": "Record totalCents from GET /api/cart."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A4",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Check discountCents from GET /api/cart."
+      },
+      "ok": true,
+      "summary": "Recorded A4: expected 249, actual 250 -> MISMATCH. This result is final.",
+      "rationale": "Check discountCents from GET /api/cart."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A5",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Check discountCents from GET /api/cart."
+      },
+      "ok": true,
+      "summary": "Recorded A5: expected 249, actual 250 -> MISMATCH. This result is final.",
+      "rationale": "Check discountCents from GET /api/cart."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A8",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Check totalCents from GET /api/cart."
+      },
+      "ok": true,
+      "summary": "Recorded A8: expected 2249, actual 2249 -> match. This result is final.",
+      "rationale": "Check totalCents from GET /api/cart."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A9",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "promoCode",
+          "count": false
+        },
+        "rationale": "Check promoCode from GET /api/cart."
+      },
+      "ok": true,
+      "summary": "Recorded A9: expected SAVE10, actual SAVE10 -> match. This result is final.",
+      "rationale": "Check promoCode from GET /api/cart."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All assertions A1-A9 were checked in the scenario states they describe.",
+        "rationale": "Every planned assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every planned assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "heldout-shop/scenarios/S1"
+  },
+  "startedAt": "2026-11-18T18:58:14.120Z",
+  "durationMs": 125996
+}

@@ -1,0 +1,92 @@
+{
+  "views": [
+    {
+      "as": "anonymous",
+      "signedIn": false,
+      "pages": [
+        {
+          "path": "/",
+          "title": "Northwind Goods",
+          "snapshot": "URL: /\n- banner:\n  - strong: Northwind Goods\n  - navigation:\n    - link \"Products\":\n      - /url: /\n    - link \"Cart\":\n      - /url: /cart\n    - link \"Account\":\n      - /url: /account\n  - link \"Sign in\":\n    - /url: /login\n- main:\n  - heading \"Products\" [level=1]\n  - list:\n    - listitem:\n      - heading \"Canvas Tote Bag\" [level=2]\n      - paragraph: $24.99\n      - button \"Add Canvas Tote Bag to cart\": Add to cart\n    - listitem:\n      - heading \"Ceramic Pour-Over Set\" [level=2]\n      - paragraph: $59.50\n      - button \"Add Ceramic Pour-Over Set to cart\": Add to cart\n    - listitem:\n      - heading \"Notebook, Dotted A5\" [level=2]\n      - paragraph: $12.00\n      - button \"Add Notebook, Dotted A5 to cart\": Add to cart\n    - listitem:\n      - heading \"Wool Throw Blanket\" [level=2]\n      - paragraph: $129.95\n      - button \"Add Wool Throw Blanket to cart\": Add to cart\n- alert"
+        },
+        {
+          "path": "/login",
+          "title": "Northwind Goods",
+          "snapshot": "URL: /login\n- banner:\n  - strong: Northwind Goods\n  - navigation:\n    - link \"Products\":\n      - /url: /\n    - link \"Cart\":\n      - /url: /cart\n    - link \"Account\":\n      - /url: /account\n  - link \"Sign in\":\n    - /url: /login\n- main:\n  - heading \"Sign in\" [level=1]\n  - text: Email\n  - textbox \"Email\"\n  - text: Password\n  - textbox \"Password\"\n  - paragraph:\n    - button \"Sign in\"\n- alert"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/cart",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/account",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/login",
+          "status": 200
+        }
+      ],
+      "skippedLinks": []
+    },
+    {
+      "as": "customer",
+      "signedIn": true,
+      "pages": [
+        {
+          "path": "/account",
+          "title": "Northwind Goods",
+          "snapshot": "URL: /account\n- banner:\n  - strong: Northwind Goods\n  - navigation:\n    - link \"Products\":\n      - /url: /\n    - link \"Cart\":\n      - /url: /cart\n    - link \"Account\":\n      - /url: /account\n  - button \"Sign out\"\n- main:\n  - heading \"Account overview\" [level=1]\n  - paragraph: Signed in as Test Customer discover-customer-customer (discover-customer-customer@fixtures.test)\n  - heading \"Loyalty\" [level=2]\n  - paragraph:\n    - text: \"Loyalty balance:\"\n    - strong: \"0\"\n    - text: points\n  - heading \"Orders\" [level=2]\n  - paragraph: No orders yet.\n- alert"
+        },
+        {
+          "path": "/",
+          "title": "Northwind Goods",
+          "snapshot": "URL: /\n- banner:\n  - strong: Northwind Goods\n  - navigation:\n    - link \"Products\":\n      - /url: /\n    - link \"Cart\":\n      - /url: /cart\n    - link \"Account\":\n      - /url: /account\n  - button \"Sign out\"\n- main:\n  - heading \"Products\" [level=1]\n  - list:\n    - listitem:\n      - heading \"Canvas Tote Bag\" [level=2]\n      - paragraph: $24.99\n      - button \"Add Canvas Tote Bag to cart\": Add to cart\n    - listitem:\n      - heading \"Ceramic Pour-Over Set\" [level=2]\n      - paragraph: $59.50\n      - button \"Add Ceramic Pour-Over Set to cart\": Add to cart\n    - listitem:\n      - heading \"Notebook, Dotted A5\" [level=2]\n      - paragraph: $12.00\n      - button \"Add Notebook, Dotted A5 to cart\": Add to cart\n    - listitem:\n      - heading \"Wool Throw Blanket\" [level=2]\n      - paragraph: $129.95\n      - button \"Add Wool Throw Blanket to cart\": Add to cart\n- alert"
+        },
+        {
+          "path": "/cart",
+          "title": "Northwind Goods",
+          "snapshot": "URL: /cart\n- banner:\n  - strong: Northwind Goods\n  - navigation:\n    - link \"Products\":\n      - /url: /\n    - link \"Cart\":\n      - /url: /cart\n    - link \"Account\":\n      - /url: /account\n  - button \"Sign out\"\n- main:\n  - heading \"Cart\" [level=1]\n  - paragraph: Your cart is empty.\n- alert"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/cart",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/account",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/login",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/login",
+          "status": 200
+        }
+      ],
+      "skippedLinks": []
+    }
+  ]
+}

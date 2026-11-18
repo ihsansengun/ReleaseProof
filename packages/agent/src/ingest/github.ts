@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { PullRequest } from "../schema.ts";
 
 async function get(path: string): Promise<unknown> {
@@ -17,8 +18,9 @@ export async function loadPullRequest(repo: string, number: number): Promise<Pul
   const pr = (await get(`/repos/${repo}/pulls/${number}`)) as {
     title: string;
     body: string | null;
-    head: { sha: string; ref: string };
+    head: { sha: string; ref: string; repo: { full_name: string } | null };
     base: { ref: string };
+    draft?: boolean;
   };
   const files: PullRequest["files"] = [];
   for (let page = 1; ; page++) {
@@ -42,6 +44,15 @@ export async function loadPullRequest(repo: string, number: number): Promise<Pul
     headSha: pr.head.sha,
     headRef: pr.head.ref,
     baseRef: pr.base.ref,
+    headRepo: pr.head.repo?.full_name,
+    draft: pr.draft,
     files,
   };
+}
+
+/** Loads a pull request saved earlier as JSON, for running without network access. */
+export async function loadPullRequestFile(file: string): Promise<PullRequest> {
+  const pr = JSON.parse(await readFile(file, "utf8")) as PullRequest;
+  if (!pr.headSha || !Array.isArray(pr.files)) throw new Error(`${file} is not a saved pull request.`);
+  return pr;
 }

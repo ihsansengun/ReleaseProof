@@ -1,0 +1,699 @@
+{
+  "scenarioId": "S4",
+  "title": "Lower-case code with surrounding spaces applies; unknown code errors and keeps it; Remove clears it",
+  "mode": "replay",
+  "verdict": "passed",
+  "reason": "All 9 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3000",
+    "deployedSha": "608909953f5ee06a34141dcbeea03fffc4bae337",
+    "expectedSha": "608909953f5ee06a34141dcbeea03fffc4bae337"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": 120,
+      "actual": 120,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 1,
+      "actual": 120,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": "That promo code is not valid.",
+      "actual": "That promo code is not valid.",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "promo code is not valid",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    },
+    {
+      "assertionId": "A6",
+      "expected": "SAVE10",
+      "actual": "Promo code SAVE10 applied.",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "SAVE10 applied",
+        "count": false
+      },
+      "screenshot": "check-A6.png"
+    },
+    {
+      "assertionId": "A4",
+      "expected": 120,
+      "actual": 120,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A4.png"
+    },
+    {
+      "assertionId": "A5",
+      "expected": 1080,
+      "actual": 1080,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "totalCents",
+        "count": false
+      },
+      "screenshot": "check-A5.png"
+    },
+    {
+      "assertionId": "A7",
+      "expected": 0,
+      "actual": 0,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R3",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A7.png"
+    },
+    {
+      "assertionId": "A8",
+      "expected": 1200,
+      "actual": 1200,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R3",
+        "field": "body",
+        "jsonPath": "totalCents",
+        "count": false
+      },
+      "screenshot": "check-A8.png"
+    },
+    {
+      "assertionId": "A9",
+      "expected": 12,
+      "actual": 12,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Total: $12.00You could earn",
+        "count": false,
+        "pattern": "(?<!Sub)Total:\\s*\\$([0-9.,]+)"
+      },
+      "screenshot": "check-A9.png"
+    }
+  ],
+  "observations": {
+    "sub1": 1200,
+    "disc1": 120,
+    "tot1": 1080,
+    "disc2": 120,
+    "tot2": 1080,
+    "uiSubtotal": 12,
+    "sub3": 1200,
+    "disc3": 0,
+    "tot3": 1200,
+    "uiTotal": 12
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the application home page and sign-in entry."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the application home page and sign-in entry."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Open the sign-in page to log in as the customer."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Open the sign-in page to log in as the customer."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "s4-shopper@fixtures.test",
+        "rationale": "Enter the shopper email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter the shopper email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:shopper.password}}",
+        "rationale": "Enter the shopper password placeholder."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter the shopper password placeholder."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit the sign-in form."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit the sign-in form."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Check the cart starts empty before adding the item."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Check the cart starts empty before adding the item."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to products to add the Notebook."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to products to add the Notebook."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Notebook, Dotted A5 to cart"
+        },
+        "rationale": "Add one Notebook, Dotted A5 to the cart."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add one Notebook, Dotted A5 to the cart."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Open the cart page to apply the promo code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Open the cart page to apply the promo code."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "  save10  ",
+        "rationale": "Enter lower-case code with surrounding spaces."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter lower-case code with surrounding spaces."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply the promo code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply the promo code."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read cart totals after applying save10."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"lines\":[{\"productId\":3,\"name\":\"Notebook, Dotted A5\",\"priceCents\":1200,\"quantity\":1,\"lineCents\":1200}],\"subtotalCents\":1200,\"promoCode\":\"SAVE10\",\"discountCents\":120,\"totalCents\":1080}}",
+      "rationale": "Read cart totals after applying save10."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "sub1",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "subtotalCents",
+          "count": false
+        },
+        "rationale": "Record subtotalCents after applying save10."
+      },
+      "ok": true,
+      "summary": "Recorded sub1 = 1200",
+      "rationale": "Record subtotalCents after applying save10."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "disc1",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discountCents after applying save10."
+      },
+      "ok": true,
+      "summary": "Recorded disc1 = 120",
+      "rationale": "Record discountCents after applying save10."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "tot1",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Record totalCents after applying save10."
+      },
+      "ok": true,
+      "summary": "Recorded tot1 = 1080",
+      "rationale": "Record totalCents after applying save10."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount should be floor(sub1/10)."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected 120, actual 120 -> match. This result is final.",
+      "rationale": "Discount should be floor(sub1/10)."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount should be at least 1."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 1, actual 120 -> match. This result is final.",
+      "rationale": "Discount should be at least 1."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "BOGUS99",
+        "rationale": "Enter the unknown code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter the unknown code."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply the unknown code."
+      },
+      "ok": true,
+      "summary": "URL: /cart?promo=unknown&code=BOGUS99",
+      "rationale": "Apply the unknown code."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "promo code is not valid",
+          "count": false
+        },
+        "rationale": "Check the error alert text after applying BOGUS99."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected That promo code is not valid., actual That promo code is not valid. -> match. This result is final.",
+      "rationale": "Check the error alert text after applying BOGUS99."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read cart totals after the rejected code."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":{\"lines\":[{\"productId\":3,\"name\":\"Notebook, Dotted A5\",\"priceCents\":1200,\"quantity\":1,\"lineCents\":1200}],\"subtotalCents\":1200,\"promoCode\":\"SAVE10\",\"discountCents\":120,\"totalCents\":1080}}",
+      "rationale": "Read cart totals after the rejected code."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A6",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "SAVE10 applied",
+          "count": false
+        },
+        "rationale": "Check the applied-code display still shows SAVE10."
+      },
+      "ok": true,
+      "summary": "Recorded A6: expected SAVE10, actual Promo code SAVE10 applied. -> match. This result is final.",
+      "rationale": "Check the applied-code display still shows SAVE10."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "disc2",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discountCents after BOGUS99."
+      },
+      "ok": true,
+      "summary": "Recorded disc2 = 120",
+      "rationale": "Record discountCents after BOGUS99."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "tot2",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Record totalCents after BOGUS99."
+      },
+      "ok": true,
+      "summary": "Recorded tot2 = 1080",
+      "rationale": "Record totalCents after BOGUS99."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A4",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount should be unchanged after BOGUS99."
+      },
+      "ok": true,
+      "summary": "Recorded A4: expected 120, actual 120 -> match. This result is final.",
+      "rationale": "Discount should be unchanged after BOGUS99."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A5",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Total should be unchanged after BOGUS99."
+      },
+      "ok": true,
+      "summary": "Recorded A5: expected 1080, actual 1080 -> match. This result is final.",
+      "rationale": "Total should be unchanged after BOGUS99."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Remove promo code SAVE10"
+        },
+        "rationale": "Remove the applied promo code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Remove the applied promo code."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiSubtotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Subtotal:",
+          "count": false,
+          "pattern": "\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed subtotal after Remove."
+      },
+      "ok": true,
+      "summary": "Recorded uiSubtotal = 12",
+      "rationale": "Record displayed subtotal after Remove."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read cart totals after removing the code."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R3\",\"status\":200,\"body\":{\"lines\":[{\"productId\":3,\"name\":\"Notebook, Dotted A5\",\"priceCents\":1200,\"quantity\":1,\"lineCents\":1200}],\"subtotalCents\":1200,\"promoCode\":null,\"discountCents\":0,\"totalCents\":1200}}",
+      "rationale": "Read cart totals after removing the code."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "sub3",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "subtotalCents",
+          "count": false
+        },
+        "rationale": "Record subtotalCents after Remove."
+      },
+      "ok": true,
+      "summary": "Recorded sub3 = 1200",
+      "rationale": "Record subtotalCents after Remove."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "disc3",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discountCents after Remove."
+      },
+      "ok": true,
+      "summary": "Recorded disc3 = 0",
+      "rationale": "Record discountCents after Remove."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "tot3",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Record totalCents after Remove."
+      },
+      "ok": true,
+      "summary": "Recorded tot3 = 1200",
+      "rationale": "Record totalCents after Remove."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiTotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Total: $12.00You could earn",
+          "count": false,
+          "pattern": "(?<!Sub)Total:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed total after Remove."
+      },
+      "ok": true,
+      "summary": "Recorded uiTotal = 12",
+      "rationale": "Record displayed total after Remove."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A7",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount should be 0 after Remove."
+      },
+      "ok": true,
+      "summary": "Recorded A7: expected 0, actual 0 -> match. This result is final.",
+      "rationale": "Discount should be 0 after Remove."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A8",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Total should equal subtotal after Remove."
+      },
+      "ok": true,
+      "summary": "Recorded A8: expected 1200, actual 1200 -> match. This result is final.",
+      "rationale": "Total should equal subtotal after Remove."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A9",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Total: $12.00You could earn",
+          "count": false,
+          "pattern": "(?<!Sub)Total:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Displayed Total should equal displayed Subtotal after Remove."
+      },
+      "ok": true,
+      "summary": "Recorded A9: expected 12, actual 12 -> match. This result is final.",
+      "rationale": "Displayed Total should equal displayed Subtotal after Remove."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All assertions A1-A9 were checked at the scenario points described.",
+        "rationale": "Every planned assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every planned assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "retest-shop/replay/S4"
+  },
+  "startedAt": "2026-11-18T19:04:01.156Z",
+  "durationMs": 7417
+}

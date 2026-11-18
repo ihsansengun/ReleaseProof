@@ -1,0 +1,422 @@
+{
+  "scenarioId": "S4",
+  "title": "Manager cannot cancel an employee's request",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "passed",
+  "reason": "All 3 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3100",
+    "deployedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0",
+    "expectedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": 403,
+      "actual": 403,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "status",
+        "jsonPath": "",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": "Pending",
+      "actual": "Pending",
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R3",
+        "field": "body",
+        "jsonPath": "0.status",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": 20,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Days remaining:",
+        "count": false,
+        "pattern": "Days remaining:\\s*(\\d+)"
+      },
+      "screenshot": "check-A3.png"
+    }
+  ],
+  "observations": {
+    "balanceBefore": 20,
+    "mgrCancelStatus": 403,
+    "balanceAfter": 20
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the landing page and sign-in form."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the landing page and sign-in form."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s4-emp",
+        "rationale": "Enter employee handle."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee handle."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Enter employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "First day"
+        },
+        "text": "2027-03-08",
+        "rationale": "Set first day."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set first day."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Last day"
+        },
+        "text": "2027-03-10",
+        "rationale": "Set last day."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set last day."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Submit request"
+        },
+        "rationale": "Create the request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Create the request."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceBefore",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Record Days remaining after creating the request."
+      },
+      "ok": true,
+      "summary": "Recorded balanceBefore = 20",
+      "rationale": "Record Days remaining after creating the request."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/requests",
+        "rationale": "Find the new request id."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":[{\"id\":1,\"employee\":\"s4-emp\",\"employeeName\":\"Employee s4-emp\",\"start\":\"2027-03-08\",\"end\":\"2027-03-10\",\"days\":3,\"reason\":\"\",\"status\":\"Pending\"}]}",
+      "rationale": "Find the new request id."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign out employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s4-mgr",
+        "rationale": "Manager handle."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Manager handle."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:mgr.password}}",
+        "rationale": "Manager password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Manager password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Sign in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as manager."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "POST",
+        "path": "/api/requests/1/cancel",
+        "rationale": "Manager attempts to cancel the employee request."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":403,\"body\":{\"error\":\"Only the employee who made a request can cancel it.\"}}",
+      "rationale": "Manager attempts to cancel the employee request."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "mgrCancelStatus",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "status",
+          "jsonPath": "",
+          "count": false
+        },
+        "rationale": "Record manager cancel status."
+      },
+      "ok": true,
+      "summary": "Recorded mgrCancelStatus = 403",
+      "rationale": "Record manager cancel status."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "status",
+          "jsonPath": "",
+          "count": false
+        },
+        "rationale": "Check manager cancel HTTP status."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected 403, actual 403 -> match. This result is final.",
+      "rationale": "Check manager cancel HTTP status."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign out manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s4-emp",
+        "rationale": "Employee handle."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Employee handle."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Sign back in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign back in as employee."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/requests",
+        "rationale": "Read request status after manager attempt."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R3\",\"status\":200,\"body\":[{\"id\":1,\"employee\":\"s4-emp\",\"employeeName\":\"Employee s4-emp\",\"start\":\"2027-03-08\",\"end\":\"2027-03-10\",\"days\":3,\"reason\":\"\",\"status\":\"Pending\"}]}",
+      "rationale": "Read request status after manager attempt."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "0.status",
+          "count": false
+        },
+        "rationale": "Check status of request 1 (index 0) after manager attempt."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected Pending, actual Pending -> match. This result is final.",
+      "rationale": "Check status of request 1 (index 0) after manager attempt."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceAfter",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Record Days remaining after the manager attempt."
+      },
+      "ok": true,
+      "summary": "Recorded balanceAfter = 20",
+      "rationale": "Record Days remaining after the manager attempt."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Compare Days remaining to balanceBefore."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected 20, actual 20 -> match. This result is final.",
+      "rationale": "Compare Days remaining to balanceBefore."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All three assertions (A1, A2, A3) were checked in the states the scenario required.",
+        "rationale": "Every assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "heldout-timeoff/scenarios/S4"
+  },
+  "startedAt": "2026-11-18T18:55:47.782Z",
+  "durationMs": 125190
+}

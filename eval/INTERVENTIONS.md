@@ -35,3 +35,41 @@ Known gaps seen but not yet changed:
   could recover, but this is untested.
 - The accessibility tree shows a filled password field's value. Test accounts
   are synthetic, but real secrets must never be typed through this tool layer.
+
+## Requirements pipeline (18 November 2026)
+
+Development on the two existing tickets, before the freeze:
+
+| # | Trigger | Change | Generic? |
+|---|---|---|---|
+| 7 | Dev run, shop: the planner left a documented rule untested because one detail around it was open | Added bound assertions (`number_at_least`, `number_at_most`) and guidance to assert the part that is stated | Yes |
+| 8 | Dev run, shop: the planner dropped blocked scenarios to stay under the limit | Blocked scenarios no longer count towards the plan limit | Yes |
+| 9 | Dev run, shop: the planner did not know an endpoint the docs describe | The planner is given the documentation as well as the analysis | Yes |
+| 10 | Dev run, shop: a scenario needed the number of rows and nothing could count | Targets can count matching elements or array entries | Yes |
+| 11 | Dev run, shop: read-only discovery cannot see screens that only appear after an action | The planner is told the map is partial and that absence from it is not a reason to block | Yes |
+| 12 | Dev run, both apps: drivers were unsure whether a typed secret had been substituted | Instructions say pages show the placeholder where the value was typed | Yes |
+| 13 | Dev run, time-off: trimming blocked scenarios triggered a needless plan repair that dropped a real question | Size trimming is recorded but no longer treated as a fault | Yes |
+
+**Freeze: commit `b5a0702`.** Held-out runs used this commit unchanged.
+
+After the freeze:
+
+| # | Trigger | Change | Generic? |
+|---|---|---|---|
+| 14 | Held-out, time-off: assertions about an accessible name were compared with visible text (2 false-positive scenarios) | Targets can read the accessible name | Yes |
+| 15 | Held-out, time-off: date-relative scenarios had no source for today's date (2 blocked scenarios, 1 missed defect) | Briefing includes the application server's date | Yes |
+
+Generalisation failures (a change only one app needed): none. Both
+post-freeze changes are generic, but both were needed because of the second
+app's feature, so the frozen engine did not fully generalise to it.
+
+Harness incidents, not engine changes: two workers once overwrote each
+other's helper script in a shared folder and drove each other's sessions
+(fixed by giving each worker its own folder; the bridge now also ends a
+session whose driver goes silent). One worker's tool call was refused by
+its own permission check during a retest; that scenario was left unverified.
+
+Still open: substring matching in text locators; replay against
+app-generated identifiers and value-bearing locators; no fallback in
+discovery for screens behind a state change; replay "confirmation" does not
+distinguish a defect from a consistently wrong comparison.

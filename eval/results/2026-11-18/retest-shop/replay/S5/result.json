@@ -1,0 +1,182 @@
+{
+  "scenarioId": "S5",
+  "title": "Paying with SAVE10: checkout matches cart, order records discount, code cleared and then refused",
+  "mode": "replay",
+  "verdict": "unverified",
+  "reason": "Not checked: A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13. Replay diverged at observe {\"name\":\"cartTotal\",\"target\":{\"source\":\"page\",\"by\":\"text\",\"value\":\"$116.95\",\"count\":false,\"pattern\":\"\\\\$([0-9]+\\\\.[0-9]{2})\"},\"rationale\":\"Record cart discounted total (the strong after Total:) in dollars.\"}: Error: Expected exactly one element for {\"source\":\"page\",\"by\":\"text\",\"value\":\"$116.95\",\"count\":false,\"pattern\":\"\\\\$([0-9]+\\\\.[0-9]{2})\"}, found 0.",
+  "environment": {
+    "baseUrl": "http://localhost:3000",
+    "deployedSha": "608909953f5ee06a34141dcbeea03fffc4bae337",
+    "expectedSha": "608909953f5ee06a34141dcbeea03fffc4bae337"
+  },
+  "assertionResults": [],
+  "observations": {
+    "cartDiscount": 12.99
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Find the sign-in entry point."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Find the sign-in entry point."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Sign in as the customer."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign in as the customer."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "s5-shopper@fixtures.test",
+        "rationale": "Enter customer email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter customer email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:shopper.password}}",
+        "rationale": "Enter customer password."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter customer password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to products."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to products."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Wool Throw Blanket to cart"
+        },
+        "rationale": "Add one Wool Throw Blanket."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add one Wool Throw Blanket."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Open cart page to apply code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Open cart page to apply code."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "SAVE10",
+        "rationale": "Enter promo code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter promo code."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply SAVE10."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply SAVE10."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "cartDiscount",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Discount (SAVE10):",
+          "count": false,
+          "pattern": "\\$([0-9]+\\.[0-9]{2})"
+        },
+        "rationale": "Record cart discount in dollars."
+      },
+      "ok": true,
+      "summary": "Recorded cartDiscount = 12.99",
+      "rationale": "Record cart discount in dollars."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "cartTotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "$116.95",
+          "count": false,
+          "pattern": "\\$([0-9]+\\.[0-9]{2})"
+        },
+        "rationale": "Record cart discounted total (the strong after Total:) in dollars."
+      },
+      "ok": false,
+      "summary": "Error: Expected exactly one element for {\"source\":\"page\",\"by\":\"text\",\"value\":\"$116.95\",\"count\":false,\"pattern\":\"\\\\$([0-9]+\\\\.[0-9]{2})\"}, found 0.",
+      "rationale": "Record cart discounted total (the strong after Total:) in dollars."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "retest-shop/replay/S5"
+  },
+  "startedAt": "2026-11-18T19:04:08.573Z",
+  "durationMs": 8266
+}

@@ -1,0 +1,745 @@
+{
+  "scenarioId": "S6",
+  "title": "A code used by one customer is refused for them but still works for another customer",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "passed",
+  "reason": "All 6 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3000",
+    "deployedSha": "5ca65f012d822e0a2fe3dc56b1dd3a6a0066570b",
+    "expectedSha": "5ca65f012d822e0a2fe3dc56b1dd3a6a0066570b"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": "You have already used promo code TAKE15.",
+      "actual": "You have already used promo code TAKE15.",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "You have already used promo code",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 0,
+      "actual": 0,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": 1500,
+      "actual": 1500,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    },
+    {
+      "assertionId": "A4",
+      "expected": 11495,
+      "actual": 11495,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "totalCents",
+        "count": false
+      },
+      "screenshot": "check-A4.png"
+    },
+    {
+      "assertionId": "A5",
+      "expected": 1500,
+      "actual": 1500,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R3",
+        "field": "body",
+        "jsonPath": "orders.0.discountCents",
+        "count": false
+      },
+      "screenshot": "check-A5.png"
+    },
+    {
+      "assertionId": "A6",
+      "expected": 11495,
+      "actual": 11495,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R3",
+        "field": "body",
+        "jsonPath": "orders.0.totalCents",
+        "count": false
+      },
+      "screenshot": "check-A6.png"
+    }
+  ],
+  "observations": {
+    "firstRetryDiscount": 0,
+    "secondSubtotal": 12995,
+    "secondDiscount": 1500,
+    "secondTotal": 11495,
+    "secondOrderDiscount": 1500,
+    "secondOrderTotal": 11495
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the application layout and sign-in entry."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the application layout and sign-in entry."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Sign in as the first customer."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign in as the first customer."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "s6-firstshopper@fixtures.test",
+        "rationale": "Enter first customer email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter first customer email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:firstShopper.password}}",
+        "rationale": "Enter first customer password."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter first customer password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Confirm the cart starts empty."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Confirm the cart starts empty."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to products to add the blanket."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to products to add the blanket."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Wool Throw Blanket to cart"
+        },
+        "rationale": "Add one Wool Throw Blanket."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add one Wool Throw Blanket."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "TAKE15",
+        "rationale": "Enter the promo code for the first purchase."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter the promo code for the first purchase."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply TAKE15."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply TAKE15."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "link",
+          "value": "Proceed to checkout"
+        },
+        "rationale": "Go to checkout to pay."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Go to checkout to pay."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Card number"
+        },
+        "text": "4242 4242 4242 4242",
+        "rationale": "Enter accepted test card."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Enter accepted test card."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Pay now"
+        },
+        "rationale": "Pay for the first order with TAKE15."
+      },
+      "ok": true,
+      "summary": "URL: /account?order=2",
+      "rationale": "Pay for the first order with TAKE15."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Return to products for the second blanket."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Return to products for the second blanket."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Wool Throw Blanket to cart"
+        },
+        "rationale": "Add another Wool Throw Blanket."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add another Wool Throw Blanket."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "TAKE15",
+        "rationale": "Re-enter the already used code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Re-enter the already used code."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Try to apply TAKE15 again."
+      },
+      "ok": true,
+      "summary": "URL: /cart?promo=used&code=TAKE15",
+      "rationale": "Try to apply TAKE15 again."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "You have already used promo code",
+          "count": false
+        },
+        "rationale": "The refusal alert is on the cart page now."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected You have already used promo code TAKE15., actual You have already used promo code TAKE15. -> match. This result is final.",
+      "rationale": "The refusal alert is on the cart page now."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read cart discount after the refused re-apply."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"lines\":[{\"productId\":4,\"name\":\"Wool Throw Blanket\",\"priceCents\":12995,\"quantity\":1,\"lineCents\":12995}],\"subtotalCents\":12995,\"promoCode\":null,\"discountCents\":0,\"totalCents\":12995}}",
+      "rationale": "Read cart discount after the refused re-apply."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "firstRetryDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record the discount after the refused re-apply."
+      },
+      "ok": true,
+      "summary": "Recorded firstRetryDiscount = 0",
+      "rationale": "Record the discount after the refused re-apply."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Check discount is zero after refusal."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 0, actual 0 -> match. This result is final.",
+      "rationale": "Check discount is zero after refusal."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out the first customer."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign out the first customer."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Sign in as second customer."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign in as second customer."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "s6-secondshopper@fixtures.test",
+        "rationale": "Enter second customer email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter second customer email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:secondShopper.password}}",
+        "rationale": "Enter second customer password."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter second customer password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Confirm second customer cart starts empty."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Confirm second customer cart starts empty."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to products."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to products."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Wool Throw Blanket to cart"
+        },
+        "rationale": "Add one blanket for second customer."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add one blanket for second customer."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "TAKE15",
+        "rationale": "Enter the promo code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter the promo code."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply TAKE15 for second customer."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply TAKE15 for second customer."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read cart totals after applying TAKE15."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":{\"lines\":[{\"productId\":4,\"name\":\"Wool Throw Blanket\",\"priceCents\":12995,\"quantity\":1,\"lineCents\":12995}],\"subtotalCents\":12995,\"promoCode\":\"TAKE15\",\"discountCents\":1500,\"totalCents\":11495}}",
+      "rationale": "Read cart totals after applying TAKE15."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "secondSubtotal",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "subtotalCents",
+          "count": false
+        },
+        "rationale": "Record second customer cart value."
+      },
+      "ok": true,
+      "summary": "Recorded secondSubtotal = 12995",
+      "rationale": "Record second customer cart value."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "secondDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record second customer cart value."
+      },
+      "ok": true,
+      "summary": "Recorded secondDiscount = 1500",
+      "rationale": "Record second customer cart value."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "secondTotal",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Record second customer cart value."
+      },
+      "ok": true,
+      "summary": "Recorded secondTotal = 11495",
+      "rationale": "Record second customer cart value."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Check second customer discount."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected 1500, actual 1500 -> match. This result is final.",
+      "rationale": "Check second customer discount."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A4",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Check second customer total."
+      },
+      "ok": true,
+      "summary": "Recorded A4: expected 11495, actual 11495 -> match. This result is final.",
+      "rationale": "Check second customer total."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/checkout",
+        "rationale": "Go to checkout for second customer."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Go to checkout for second customer."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Card number"
+        },
+        "text": "4242 4242 4242 4242",
+        "rationale": "Enter accepted test card."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Enter accepted test card."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Pay now"
+        },
+        "rationale": "Pay second customer order."
+      },
+      "ok": true,
+      "summary": "URL: /account?order=6",
+      "rationale": "Pay second customer order."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/account",
+        "rationale": "Read the paid order discount and total."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R3\",\"status\":200,\"body\":{\"customer\":{\"id\":8,\"email\":\"s6-secondshopper@fixtures.test\",\"name\":\"Test Customer s6-secondshopper\"},\"balance\":214,\"transactions\":[{\"id\":9,\"orderId\":6,\"points\":114,\"reason\":\"purchase\"},{\"id\":10,\"orderId\":6,\"points\":100,\"reason\":\"welcome\"}],\"orders\":[{\"id\":6,\"t",
+      "rationale": "Read the paid order discount and total."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "secondOrderDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "orders.0.discountCents",
+          "count": false
+        },
+        "rationale": "Record paid order discount."
+      },
+      "ok": true,
+      "summary": "Recorded secondOrderDiscount = 1500",
+      "rationale": "Record paid order discount."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "secondOrderTotal",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "orders.0.totalCents",
+          "count": false
+        },
+        "rationale": "Record paid order total."
+      },
+      "ok": true,
+      "summary": "Recorded secondOrderTotal = 11495",
+      "rationale": "Record paid order total."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A5",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "orders.0.discountCents",
+          "count": false
+        },
+        "rationale": "Check paid order discount."
+      },
+      "ok": true,
+      "summary": "Recorded A5: expected 1500, actual 1500 -> match. This result is final.",
+      "rationale": "Check paid order discount."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A6",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "orders.0.totalCents",
+          "count": false
+        },
+        "rationale": "Check paid order total."
+      },
+      "ok": true,
+      "summary": "Recorded A6: expected 11495, actual 11495 -> match. This result is final.",
+      "rationale": "Check paid order total."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All six assertions A1-A6 were checked at the scenario points described.",
+        "rationale": "Every assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "heldout-shop/scenarios/S6"
+  },
+  "startedAt": "2026-11-18T19:00:20.117Z",
+  "durationMs": 110347
+}

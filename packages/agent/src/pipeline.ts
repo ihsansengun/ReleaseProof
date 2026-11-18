@@ -1,13 +1,15 @@
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { analyse } from "./analyse.ts";
+import type { Budget } from "./budget.ts";
 import { discover } from "./discover.ts";
 import type { Driver } from "./drivers/driver.ts";
 import { runScenario } from "./execute/run.ts";
 import { buildContext } from "./ingest/context.ts";
 import { plan as makePlan } from "./plan.ts";
 import { renderRunReport } from "./report/run.ts";
-import type { Manifest, PullRequest, RunReport, ScenarioResult, Ticket } from "./schema.ts";
+import type { Manifest, PullRequest, RunReport, Scenario, ScenarioResult, Ticket } from "./schema.ts";
 
 export type PipelineOptions = {
   ticket: Ticket;
@@ -15,6 +17,7 @@ export type PipelineOptions = {
   manifest: Manifest;
   manifestFile: string;
   driver: Driver;
+  budget: Budget;
   outDir: string;
   maxScenarios: number;
   concurrency: number;
@@ -37,16 +40,32 @@ async function pool<T, R>(items: T[], limit: number, worker: (item: T) => Promis
   return results;
 }
 
-/**
- * Ticket and pull request in, executed and evidenced test results out.
- * Each stage's output is written to disk as it completes.
- */
-export async function runPipeline(options: PipelineOptions): Promise<RunReport> {
-  const { manifest, driver, outDir } = options;
-  await mkdir(outDir, { recursive: true });
-  const save = (name: string, data: unknown) => writeFile(path.join(outDir, name), JSON.stringify(data, null, 2));
-  const timings: RunReport["timings"] = [];
-  const timed = async <T>(stage: string, work: () => Promise<T>): Promise<T> => {
+export const ticketHash = (ticket: Ticket) =>
+  createHash("sha256")
+    .update(JSON.stringify([ticket.summary, ticket.description, ticket.comments.map((c) => c.body)]))
+    .digest("hex");
+
+/** A scenario that was planned but never started, recorded as such. */
+function notExecuted(scenario: Scenario, manifest: Manifest, reason: string): ScenarioResult {
+  return {
+    scenarioId: scenario.id,
+    title: scenario.title,
+    mode: "agent",
+    verdict: "unverified",
+    reason: `Not executed: ${reason}`,
+    environment: { baseUrl: manifest.baseUrl },
+    assertionResults: [],
+    observations: {},
+    steps: [],
+    evidence: { dir: "" },
+    startedAt: new Date().toISOString(),
+    durationMs: 0,
+  };
+}
+
+function stageTimer(budget: Budget, timings: RunReport["timings"]) {
+  return async <T>(stage: string, work: () => Promise<T>): Promise<T> => {
+    budget.enter(stage);
     const start = Date.now();
     try {
       return await work();
@@ -55,53 +74,26 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
       console.log(`[${stage}] ${timings.at(-1)!.seconds}s`);
     }
   };
-  const startedAt = new Date().toISOString();
+}
+
+async function writeRun(outDir: string, report: RunReport): Promise<RunReport> {
+  await writeFile(path.join(outDir, "run.json"), JSON.stringify(report, null, 2));
+  await writeFile(path.join(outDir, "report.md"), renderRunReport(report));
+  return report;
+}
+
+/**
+ * Ticket and pull request in, executed and evidenced test results out.
+ * Each stage's output is written to disk as it completes. A run that hits
+ * its budget or loses the model still ends with a report that says so.
+ */
+export async function runPipeline(options: PipelineOptions): Promise<RunReport> {
+  const { manifest, driver, budget, outDir } = options;
+  await mkdir(outDir, { recursive: true });
+  const save = (name: string, data: unknown) => writeFile(path.join(outDir, name), JSON.stringify(data, null, 2));
+  const timings: RunReport["timings"] = [];
+  const timed = stageTimer(budget, timings);
   const expectedSha = options.allowShaMismatch ? undefined : options.pullRequest.headSha;
-
-  const context = await timed("ingest", () =>
-    buildContext(options.ticket, options.pullRequest, manifest, options.manifestFile),
-  );
-  await save("context.json", context);
-
-  const appMap = await timed("discover", () => discover(manifest, driver, path.join(outDir, "discovery")));
-  await save("appmap.json", appMap);
-
-  const { analysis, notes: analysisNotes } = await timed("analyse", () => analyse(context, appMap, manifest, driver));
-  await save("analysis.json", { analysis, notes: analysisNotes });
-
-  const plan = await timed("plan", () => makePlan(context, analysis, appMap, manifest, driver, options.maxScenarios));
-  await save("plan.json", plan);
-
-  const runnable = plan.scenarios.filter((s) => s.status === "runnable").map((s) => s.scenario);
-  const results = await timed("execute", () =>
-    pool(runnable, options.concurrency, (scenario) =>
-      runScenario({
-        scenario,
-        manifest,
-        expectedSha,
-        outDir: path.join(outDir, "scenarios", scenario.id),
-        mode: { kind: "agent", driver },
-      }),
-    ),
-  );
-
-  // A failure counts as confirmed only if the recorded steps fail again with
-  // no model involved.
-  const confirmations: RunReport["confirmations"] = {};
-  await timed("confirm", async () => {
-    for (const result of results.filter((r) => r.verdict === "failed")) {
-      const scenario = runnable.find((s) => s.id === result.scenarioId)!;
-      const replay = await runScenario({
-        scenario,
-        manifest,
-        expectedSha,
-        outDir: path.join(outDir, "confirmations", scenario.id),
-        mode: { kind: "replay", steps: result.steps },
-      });
-      confirmations[scenario.id] =
-        replay.verdict === "failed" ? "reproduced" : replay.verdict === "passed" ? "not reproduced" : "replay diverged";
-    }
-  });
 
   const report: RunReport = {
     ticketKey: options.ticket.key,
@@ -111,74 +103,158 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
       headSha: options.pullRequest.headSha,
       title: options.pullRequest.title,
     },
-    environment: { baseUrl: manifest.baseUrl, deployedSha: results[0]?.environment.deployedSha },
+    environment: { baseUrl: manifest.baseUrl },
     driver: driver.label,
-    context: {
+    context: { docs: [], changedFiles: [], omitted: [] },
+    analysis: { featureSummary: "", requirements: [], ambiguities: [], risks: [] },
+    analysisNotes: [],
+    plan: { scenarios: [], notes: [], clarifications: [] },
+    results: [],
+    confirmations: {},
+    timings,
+    startedAt: new Date().toISOString(),
+    ticketHash: ticketHash(options.ticket),
+  };
+  const finish = (stopped?: string) => writeRun(outDir, { ...report, stopped, usage: budget.summary() });
+
+  let runnable: Scenario[];
+  try {
+    const context = await timed("ingest", () =>
+      buildContext(options.ticket, options.pullRequest, manifest, options.manifestFile),
+    );
+    await save("context.json", context);
+    report.context = {
       docs: context.docs.map((d) => d.path),
       changedFiles: context.pullRequest.files.map((f) => f.path),
       omitted: context.omitted,
-    },
-    analysis,
-    analysisNotes,
-    plan,
-    results,
-    confirmations,
-    timings,
-    startedAt,
-  };
-  await save("run.json", report);
-  await writeFile(path.join(outDir, "report.md"), renderRunReport(report));
-  return report;
-}
+    };
 
-export type RetestRow = { scenarioId: string; before: string; after: string; how: "replay" | "model"; reason: string };
+    const appMap = await timed("discover", () => discover(manifest, driver, path.join(outDir, "discovery")));
+    await save("appmap.json", appMap);
+
+    const analysed = await timed("analyse", () => analyse(context, appMap, manifest, driver));
+    report.analysis = analysed.analysis;
+    report.analysisNotes = analysed.notes;
+    await save("analysis.json", analysed);
+
+    report.plan = await timed("plan", () =>
+      makePlan(context, report.analysis, appMap, manifest, driver, options.maxScenarios),
+    );
+    await save("plan.json", report.plan);
+    runnable = report.plan.scenarios.filter((s) => s.status === "runnable").map((s) => s.scenario);
+  } catch (error) {
+    // Nothing was executed, so there is nothing to pass or fail: say why.
+    return finish(`Stopped before execution: ${(error as Error).message.split("\n")[0]}`);
+  }
+
+  report.results = await timed("execute", () =>
+    pool(runnable, options.concurrency, async (scenario) => {
+      const over = budget.exceeded();
+      if (over) return notExecuted(scenario, manifest, `the run's ${over}.`);
+      return runScenario({
+        scenario,
+        manifest,
+        expectedSha,
+        outDir: path.join(outDir, "scenarios", scenario.id),
+        mode: { kind: "agent", driver },
+      });
+    }),
+  );
+  report.environment.deployedSha = report.results.find((r) => r.environment.deployedSha)?.environment.deployedSha;
+
+  // Replaying a failure shows whether it repeats. It does not show that the
+  // comparison was the right one, so it is reported as "repeats", no more.
+  await timed("confirm", async () => {
+    for (const result of report.results.filter((r) => r.verdict === "failed")) {
+      const scenario = runnable.find((s) => s.id === result.scenarioId)!;
+      const replay = await runScenario({
+        scenario,
+        manifest,
+        expectedSha,
+        outDir: path.join(outDir, "confirmations", scenario.id),
+        mode: { kind: "replay", steps: result.steps },
+      });
+      report.confirmations[scenario.id] =
+        replay.verdict === "failed" ? "reproduced" : replay.verdict === "passed" ? "not reproduced" : "replay diverged";
+    }
+  });
+
+  const over = budget.exceeded();
+  return finish(over ? `The run's ${over}; scenarios not started by then are listed as unverified.` : undefined);
+}
 
 /**
  * Re-runs a previous run's executed scenarios against the current build:
  * first by replaying the recorded steps, and with the model only where the
- * recording no longer fits the application.
+ * recording no longer fits the application. Produces a run report of the
+ * same shape, carrying over the earlier analysis and plan.
  */
-export async function retest(options: {
+export async function retestRun(options: {
   previous: RunReport;
+  pullRequest: PullRequest;
   manifest: Manifest;
   driver: Driver;
+  budget: Budget;
   outDir: string;
-  expectedSha?: string;
   concurrency: number;
-}): Promise<{ rows: RetestRow[]; results: ScenarioResult[] }> {
-  const { previous, manifest, driver, outDir } = options;
+  allowShaMismatch?: boolean;
+}): Promise<RunReport> {
+  const { previous, manifest, driver, budget, outDir } = options;
   await mkdir(outDir, { recursive: true });
-  const rows: RetestRow[] = [];
-  const results = await pool(previous.results, options.concurrency, async (before) => {
-    const scenario = previous.plan.scenarios.find((s) => s.scenario.id === before.scenarioId)!.scenario;
-    const base = { scenario, manifest, expectedSha: options.expectedSha };
-    let after = await runScenario({
-      ...base,
-      outDir: path.join(outDir, "replay", scenario.id),
-      mode: { kind: "replay", steps: before.steps },
-    });
-    let how: RetestRow["how"] = "replay";
-    if (after.verdict === "unverified" || after.verdict === "blocked") {
-      how = "model";
-      after = await runScenario({
-        ...base,
-        outDir: path.join(outDir, "model", scenario.id),
-        mode: { kind: "agent", driver },
-      });
-    }
-    rows.push({ scenarioId: scenario.id, before: before.verdict, after: after.verdict, how, reason: after.reason });
-    return after;
-  });
+  const timings: RunReport["timings"] = [];
+  const timed = stageTimer(budget, timings);
+  const expectedSha = options.allowShaMismatch ? undefined : options.pullRequest.headSha;
+  const rows: NonNullable<RunReport["retestOf"]>["rows"] = [];
+
+  const results = await timed("retest", () =>
+    pool(previous.results, options.concurrency, async (before) => {
+      const scenario = previous.plan.scenarios.find((s) => s.scenario.id === before.scenarioId)!.scenario;
+      const base = { scenario, manifest, expectedSha };
+      let how: "replay" | "model" = "replay";
+      let after =
+        before.steps.length > 0
+          ? await runScenario({
+              ...base,
+              outDir: path.join(outDir, "scenarios", scenario.id),
+              mode: { kind: "replay", steps: before.steps },
+            })
+          : notExecuted(scenario, manifest, "the earlier run recorded no steps for it.");
+      if (after.verdict === "unverified" || after.verdict === "blocked") {
+        const over = budget.exceeded();
+        if (over) {
+          after = notExecuted(scenario, manifest, `its recording no longer fits, and the run's ${over}.`);
+        } else {
+          how = "model";
+          after = await runScenario({
+            ...base,
+            outDir: path.join(outDir, "scenarios", scenario.id),
+            mode: { kind: "agent", driver },
+          });
+        }
+      }
+      rows.push({ scenarioId: scenario.id, before: before.verdict, after: after.verdict, how });
+      return after;
+    }),
+  );
   rows.sort((a, b) => a.scenarioId.localeCompare(b.scenarioId, undefined, { numeric: true }));
-  await writeFile(path.join(outDir, "retest.json"), JSON.stringify({ rows, results }, null, 2));
-  const lines = [
-    `# Retest of ${previous.ticketKey} (pull request #${previous.pullRequest.number})`,
-    "",
-    "| Scenario | Before | After | Re-run by | Detail |",
-    "|---|---|---|---|---|",
-    ...rows.map((r) => `| ${r.scenarioId} | ${r.before} | ${r.after} | ${r.how} | ${r.reason.replace(/\|/g, "\\|")} |`),
-    "",
-  ];
-  await writeFile(path.join(outDir, "retest.md"), lines.join("\n"));
-  return { rows, results };
+
+  const over = budget.exceeded();
+  return writeRun(outDir, {
+    ...previous,
+    pullRequest: {
+      repo: options.pullRequest.repo,
+      number: options.pullRequest.number,
+      headSha: options.pullRequest.headSha,
+      title: options.pullRequest.title,
+    },
+    environment: { baseUrl: manifest.baseUrl, deployedSha: results.find((r) => r.environment.deployedSha)?.environment.deployedSha },
+    driver: driver.label,
+    results,
+    confirmations: {},
+    timings,
+    startedAt: new Date().toISOString(),
+    usage: budget.summary(),
+    stopped: over ? `The run's ${over}.` : undefined,
+    retestOf: { headSha: previous.pullRequest.headSha, rows },
+  });
 }

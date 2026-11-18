@@ -1,0 +1,743 @@
+{
+  "scenarioId": "S7",
+  "title": "A declined payment does not use up the code: it stays, can be removed and re-applied",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "failed",
+  "reason": "A4: expected absent, got present; A5: expected 1300, got 0; A7: expected 1300, got 0",
+  "environment": {
+    "baseUrl": "http://localhost:3000",
+    "deployedSha": "5ca65f012d822e0a2fe3dc56b1dd3a6a0066570b",
+    "expectedSha": "5ca65f012d822e0a2fe3dc56b1dd3a6a0066570b"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": 1300,
+      "actual": 1300,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": "SAVE10",
+      "actual": "Promo code SAVE10 applied.",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "applied.",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": 0,
+      "actual": 0,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R3",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    },
+    {
+      "assertionId": "A4",
+      "expected": "absent",
+      "actual": "present",
+      "pass": false,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "You have already used promo code",
+        "count": false
+      },
+      "screenshot": "check-A4.png"
+    },
+    {
+      "assertionId": "A5",
+      "expected": 1300,
+      "actual": 0,
+      "pass": false,
+      "target": {
+        "source": "api",
+        "responseId": "R4",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A5.png"
+    },
+    {
+      "assertionId": "A6",
+      "expected": 12995,
+      "actual": 12995,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R5",
+        "field": "body",
+        "jsonPath": "orders.1.totalCents",
+        "count": false
+      },
+      "screenshot": "check-A6.png"
+    },
+    {
+      "assertionId": "A7",
+      "expected": 1300,
+      "actual": 0,
+      "pass": false,
+      "target": {
+        "source": "api",
+        "responseId": "R5",
+        "field": "body",
+        "jsonPath": "orders.1.discountCents",
+        "count": false
+      },
+      "screenshot": "check-A7.png"
+    }
+  ],
+  "observations": {
+    "discBefore": 1300,
+    "discAfterDecline": 1300,
+    "discRemoved": 0,
+    "discReapplied": 0,
+    "totReapplied": 12995,
+    "subReapplied": 12995,
+    "paidTotal": 12995,
+    "paidDiscount": 0
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the app and find sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the app and find sign-in."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Sign in as the customer."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign in as the customer."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "s7-shopper@fixtures.test",
+        "rationale": "Enter the shopper email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter the shopper email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:shopper.password}}",
+        "rationale": "Enter the shopper password."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter the shopper password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit the sign-in form."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit the sign-in form."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Confirm the cart starts empty."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Confirm the cart starts empty."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to products to add the blanket."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to products to add the blanket."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Wool Throw Blanket to cart"
+        },
+        "rationale": "Add one Wool Throw Blanket."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add one Wool Throw Blanket."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Open the cart to apply the code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Open the cart to apply the code."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "SAVE10",
+        "rationale": "Enter the promo code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter the promo code."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply SAVE10."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply SAVE10."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read discountCents before checkout."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"lines\":[{\"productId\":4,\"name\":\"Wool Throw Blanket\",\"priceCents\":12995,\"quantity\":1,\"lineCents\":12995}],\"subtotalCents\":12995,\"promoCode\":\"SAVE10\",\"discountCents\":1300,\"totalCents\":11695}}",
+      "rationale": "Read discountCents before checkout."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "discBefore",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discount after applying SAVE10."
+      },
+      "ok": true,
+      "summary": "Recorded discBefore = 1300",
+      "rationale": "Record discount after applying SAVE10."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/checkout",
+        "rationale": "Go to checkout to pay with the declined card."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Go to checkout to pay with the declined card."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Card number"
+        },
+        "text": "4000 0000 0000 0002",
+        "rationale": "Enter the declining card."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Enter the declining card."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Pay now"
+        },
+        "rationale": "Attempt payment that should be declined."
+      },
+      "ok": true,
+      "summary": "URL: /checkout?error=declined",
+      "rationale": "Attempt payment that should be declined."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Return to cart after the decline."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Return to cart after the decline."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read discountCents after the decline."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":{\"lines\":[{\"productId\":4,\"name\":\"Wool Throw Blanket\",\"priceCents\":12995,\"quantity\":1,\"lineCents\":12995}],\"subtotalCents\":12995,\"promoCode\":\"SAVE10\",\"discountCents\":1300,\"totalCents\":11695}}",
+      "rationale": "Read discountCents after the decline."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "discAfterDecline",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discount after the decline."
+      },
+      "ok": true,
+      "summary": "Recorded discAfterDecline = 1300",
+      "rationale": "Record discount after the decline."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount after decline should equal discBefore."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected 1300, actual 1300 -> match. This result is final.",
+      "rationale": "Discount after decline should equal discBefore."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "SAVE10",
+          "count": false
+        },
+        "rationale": "Applied-code display on cart after decline should contain SAVE10."
+      },
+      "ok": false,
+      "summary": "Error: Expected exactly one element for {\"source\":\"page\",\"by\":\"text\",\"value\":\"SAVE10\",\"count\":false}, found 2.",
+      "rationale": "Applied-code display on cart after decline should contain SAVE10."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "page",
+          "by": "role",
+          "role": "strong",
+          "value": "SAVE10",
+          "count": false
+        },
+        "rationale": "The strong element in the applied-code line shows the code."
+      },
+      "ok": false,
+      "summary": "Error: Expected exactly one element for {\"source\":\"page\",\"by\":\"role\",\"role\":\"strong\",\"value\":\"SAVE10\",\"count\":false}, found 0.",
+      "rationale": "The strong element in the applied-code line shows the code."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "applied.",
+          "count": false
+        },
+        "rationale": "Select the applied-code line, which reads SAVE10 applied."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected SAVE10, actual Promo code SAVE10 applied. -> match. This result is final.",
+      "rationale": "Select the applied-code line, which reads SAVE10 applied."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Remove promo code SAVE10"
+        },
+        "rationale": "Remove the code after the decline."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Remove the code after the decline."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read discountCents after removing the code."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R3\",\"status\":200,\"body\":{\"lines\":[{\"productId\":4,\"name\":\"Wool Throw Blanket\",\"priceCents\":12995,\"quantity\":1,\"lineCents\":12995}],\"subtotalCents\":12995,\"promoCode\":null,\"discountCents\":0,\"totalCents\":12995}}",
+      "rationale": "Read discountCents after removing the code."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "discRemoved",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discount after removal."
+      },
+      "ok": true,
+      "summary": "Recorded discRemoved = 0",
+      "rationale": "Record discount after removal."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount after removal should be 0."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected 0, actual 0 -> match. This result is final.",
+      "rationale": "Discount after removal should be 0."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "SAVE10",
+        "rationale": "Re-enter SAVE10."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Re-enter SAVE10."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Re-apply SAVE10 after the decline."
+      },
+      "ok": true,
+      "summary": "URL: /cart?promo=used&code=SAVE10",
+      "rationale": "Re-apply SAVE10 after the decline."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A4",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "You have already used promo code",
+          "count": false
+        },
+        "rationale": "The already-used error should be absent after re-applying."
+      },
+      "ok": true,
+      "summary": "Recorded A4: expected absent, actual present -> MISMATCH. This result is final.",
+      "rationale": "The already-used error should be absent after re-applying."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read cart totals after re-applying SAVE10."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R4\",\"status\":200,\"body\":{\"lines\":[{\"productId\":4,\"name\":\"Wool Throw Blanket\",\"priceCents\":12995,\"quantity\":1,\"lineCents\":12995}],\"subtotalCents\":12995,\"promoCode\":null,\"discountCents\":0,\"totalCents\":12995}}",
+      "rationale": "Read cart totals after re-applying SAVE10."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "discReapplied",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record cart value after re-applying."
+      },
+      "ok": true,
+      "summary": "Recorded discReapplied = 0",
+      "rationale": "Record cart value after re-applying."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "totReapplied",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Record cart value after re-applying."
+      },
+      "ok": true,
+      "summary": "Recorded totReapplied = 12995",
+      "rationale": "Record cart value after re-applying."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "subReapplied",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "subtotalCents",
+          "count": false
+        },
+        "rationale": "Record cart value after re-applying."
+      },
+      "ok": true,
+      "summary": "Recorded subReapplied = 12995",
+      "rationale": "Record cart value after re-applying."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A5",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount after re-applying should equal discBefore."
+      },
+      "ok": true,
+      "summary": "Recorded A5: expected 1300, actual 0 -> MISMATCH. This result is final.",
+      "rationale": "Discount after re-applying should equal discBefore."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/checkout",
+        "rationale": "Go to checkout to pay with the accepted card."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Go to checkout to pay with the accepted card."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Card number"
+        },
+        "text": "4242 4242 4242 4242",
+        "rationale": "Enter the accepted card."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Enter the accepted card."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Pay now"
+        },
+        "rationale": "Complete payment."
+      },
+      "ok": true,
+      "summary": "URL: /account?order=7",
+      "rationale": "Complete payment."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/account",
+        "rationale": "Read the paid order totals."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R5\",\"status\":200,\"body\":{\"customer\":{\"id\":9,\"email\":\"s7-shopper@fixtures.test\",\"name\":\"Test Customer s7-shopper\"},\"balance\":229,\"transactions\":[{\"id\":11,\"orderId\":7,\"points\":129,\"reason\":\"purchase\"},{\"id\":12,\"orderId\":7,\"points\":100,\"reason\":\"welcome\"}],\"orders\":[{\"id\":4,\"totalCents\":",
+      "rationale": "Read the paid order totals."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "paidTotal",
+        "target": {
+          "source": "api",
+          "responseId": "R5",
+          "field": "body",
+          "jsonPath": "orders.1.totalCents",
+          "count": false
+        },
+        "rationale": "Record the paid order total (order 7, status paid)."
+      },
+      "ok": true,
+      "summary": "Recorded paidTotal = 12995",
+      "rationale": "Record the paid order total (order 7, status paid)."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "paidDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R5",
+          "field": "body",
+          "jsonPath": "orders.1.discountCents",
+          "count": false
+        },
+        "rationale": "Record the paid order discount."
+      },
+      "ok": true,
+      "summary": "Recorded paidDiscount = 0",
+      "rationale": "Record the paid order discount."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A6",
+        "target": {
+          "source": "api",
+          "responseId": "R5",
+          "field": "body",
+          "jsonPath": "orders.1.totalCents",
+          "count": false
+        },
+        "rationale": "Paid order total vs subReapplied - discReapplied."
+      },
+      "ok": true,
+      "summary": "Recorded A6: expected 12995, actual 12995 -> match. This result is final.",
+      "rationale": "Paid order total vs subReapplied - discReapplied."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A7",
+        "target": {
+          "source": "api",
+          "responseId": "R5",
+          "field": "body",
+          "jsonPath": "orders.1.discountCents",
+          "count": false
+        },
+        "rationale": "Paid order discount vs discBefore."
+      },
+      "ok": true,
+      "summary": "Recorded A7: expected 1300, actual 0 -> MISMATCH. This result is final.",
+      "rationale": "Paid order discount vs discBefore."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All assertions A1-A7 checked. After the declined payment, re-applying SAVE10 showed \"You have already used promo code SAVE10.\" and the code was not applied, so the paid order (#7) had no discount.",
+        "rationale": "Every planned assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every planned assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "heldout-shop/scenarios/S7"
+  },
+  "startedAt": "2026-11-18T19:00:26.948Z",
+  "durationMs": 109902
+}
