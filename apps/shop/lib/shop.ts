@@ -118,6 +118,8 @@ export function setQuantity(customerId: number, productId: number, quantity: num
       .prepare("UPDATE cart_items SET quantity = ? WHERE customer_id = ? AND product_id = ?")
       .run(quantity, customerId, productId);
   }
+  const promo = appliedPromo(customerId);
+  if (promo && getCart(customerId).subtotalCents < promo.minSubtotalCents) removePromo(customerId);
 }
 
 // ---- promo codes ----------------------------------------------------------
@@ -139,7 +141,7 @@ const findPromo = (code: string) => PROMOS.find((p) => p.code === code) ?? null;
 
 function discountFor(promo: Promo, subtotalCents: number): number {
   const discount =
-    promo.kind === "percent" ? Math.round((subtotalCents * promo.value) / 100) : promo.value;
+    promo.kind === "percent" ? Math.floor((subtotalCents * promo.value) / 100) : promo.value;
   return Math.min(discount, subtotalCents);
 }
 
@@ -150,10 +152,10 @@ function appliedPromo(customerId: number): Promo | null {
   return row ? findPromo(row.code) : null;
 }
 
-/** A code counts as used once the customer has placed an order with it. */
+/** A code counts as used once the customer has a paid order that was placed with it. */
 function hasUsedPromo(customerId: number, code: string): boolean {
   const row = db()
-    .prepare("SELECT 1 FROM orders WHERE customer_id = ? AND promo_code = ? LIMIT 1")
+    .prepare("SELECT 1 FROM orders WHERE customer_id = ? AND promo_code = ? AND status = 'paid' LIMIT 1")
     .get(customerId, code);
   return row !== undefined;
 }
