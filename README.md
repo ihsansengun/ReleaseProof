@@ -20,9 +20,14 @@ Product brief: [project_instructions.md](project_instructions.md).
 - `eval/` — tickets, results and the intervention log. Start with the
   [held-out evaluation](eval/results/2026-11-18/README.md).
 
-Not built yet: the GitHub Actions workflow, posting reports to pull requests,
-posting questions to Jira. The direct model API driver is written but has
-not been run.
+To test a pull request in CI: Actions → "ReleaseProof build" → Run workflow,
+with the pull request number. Results appear as a Check run and a comment.
+For a live model, add the repository secret `ANTHROPIC_API_KEY`; without it
+runs replay recorded responses and say so.
+
+Not yet: the automatic pull-request trigger, posting questions to Jira. The
+model API driver is tested against a stand-in but has not run against the
+live API.
 
 ## Run it
 
