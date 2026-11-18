@@ -1,0 +1,588 @@
+{
+  "scenarioId": "S3",
+  "title": "TAKE15 at exactly $60.00 applies; dropping the quantity below the minimum removes it",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "passed",
+  "reason": "All 5 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3000",
+    "deployedSha": "608909953f5ee06a34141dcbeea03fffc4bae337",
+    "expectedSha": "608909953f5ee06a34141dcbeea03fffc4bae337"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": 1500,
+      "actual": 1500,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 4500,
+      "actual": 4500,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "totalCents",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A5",
+      "expected": 48,
+      "actual": 48,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "ApplyTotal:",
+        "count": false,
+        "pattern": "Apply\\s*Total:\\s*\\$([0-9.,]+)"
+      },
+      "screenshot": "check-A5.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": 0,
+      "actual": 0,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    },
+    {
+      "assertionId": "A4",
+      "expected": 4800,
+      "actual": 4800,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "totalCents",
+        "count": false
+      },
+      "screenshot": "check-A4.png"
+    }
+  ],
+  "observations": {
+    "atSubtotal": 6000,
+    "atDiscount": 1500,
+    "atTotal": 4500,
+    "uiSubtotal": 48,
+    "uiTotal": 48,
+    "afterSubtotal": 4800,
+    "afterDiscount": 0,
+    "afterTotal": 4800
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the app entry page and sign-in link."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the app entry page and sign-in link."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Sign in as the customer first."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign in as the customer first."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "s3-shopper@fixtures.test",
+        "rationale": "Enter shopper email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter shopper email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:shopper.password}}",
+        "rationale": "Enter shopper password."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter shopper password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Check the cart starts empty before adding items."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Check the cart starts empty before adding items."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to products to add the notebook."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to products to add the notebook."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Notebook, Dotted A5 to cart"
+        },
+        "rationale": "Add the notebook to the cart."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add the notebook to the cart."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Quantity for Notebook, Dotted A5"
+        },
+        "text": "5",
+        "rationale": "Set quantity to 5 for a $60.00 subtotal."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Set quantity to 5 for a $60.00 subtotal."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Update quantity for Notebook, Dotted A5"
+        },
+        "rationale": "Apply the quantity change."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply the quantity change."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "TAKE15",
+        "rationale": "Enter the promo code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter the promo code."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply TAKE15 at subtotal $60.00."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply TAKE15 at subtotal $60.00."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read cart totals with TAKE15 applied at $60.00."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"lines\":[{\"productId\":3,\"name\":\"Notebook, Dotted A5\",\"priceCents\":1200,\"quantity\":5,\"lineCents\":6000}],\"subtotalCents\":6000,\"promoCode\":\"TAKE15\",\"discountCents\":1500,\"totalCents\":4500}}",
+      "rationale": "Read cart totals with TAKE15 applied at $60.00."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "atSubtotal",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "subtotalCents",
+          "count": false
+        },
+        "rationale": "Record subtotalCents at qty 5 with TAKE15."
+      },
+      "ok": true,
+      "summary": "Recorded atSubtotal = 6000",
+      "rationale": "Record subtotalCents at qty 5 with TAKE15."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "atDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discountCents at qty 5 with TAKE15."
+      },
+      "ok": true,
+      "summary": "Recorded atDiscount = 1500",
+      "rationale": "Record discountCents at qty 5 with TAKE15."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "atTotal",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Record totalCents at qty 5 with TAKE15."
+      },
+      "ok": true,
+      "summary": "Recorded atTotal = 4500",
+      "rationale": "Record totalCents at qty 5 with TAKE15."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount at exactly $60.00."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected 1500, actual 1500 -> match. This result is final.",
+      "rationale": "Discount at exactly $60.00."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Total at exactly $60.00 with TAKE15."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 4500, actual 4500 -> match. This result is final.",
+      "rationale": "Total at exactly $60.00 with TAKE15."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Quantity for Notebook, Dotted A5"
+        },
+        "text": "4",
+        "rationale": "Drop quantity to 4 (subtotal $48.00)."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Drop quantity to 4 (subtotal $48.00)."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Update quantity for Notebook, Dotted A5"
+        },
+        "rationale": "Apply the quantity change."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply the quantity change."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiSubtotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Subtotal:",
+          "count": false,
+          "pattern": "Subtotal:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed subtotal after qty change."
+      },
+      "ok": true,
+      "summary": "Recorded uiSubtotal = 48",
+      "rationale": "Record displayed subtotal after qty change."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiTotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Total:",
+          "count": false,
+          "pattern": "^\\s*Total:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed total after qty change."
+      },
+      "ok": false,
+      "summary": "Error: Expected exactly one element for {\"source\":\"page\",\"by\":\"text\",\"value\":\"Total:\",\"count\":false,\"pattern\":\"^\\\\s*Total:\\\\s*\\\\$([0-9.,]+)\"}, found 2.",
+      "rationale": "Record displayed total after qty change."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiTotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Total: $48.00",
+          "count": false,
+          "pattern": "Total:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed total after qty change."
+      },
+      "ok": false,
+      "summary": "Error: Expected exactly one element for {\"source\":\"page\",\"by\":\"text\",\"value\":\"Total: $48.00\",\"count\":false,\"pattern\":\"Total:\\\\s*\\\\$([0-9.,]+)\"}, found 2.",
+      "rationale": "Record displayed total after qty change."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiTotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "ApplyTotal:",
+          "count": false,
+          "pattern": "Apply\\s*Total:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed total after qty change."
+      },
+      "ok": true,
+      "summary": "Recorded uiTotal = 48",
+      "rationale": "Record displayed total after qty change."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiTotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Apply Total:",
+          "count": false,
+          "pattern": "Apply\\s*Total:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed total after qty change."
+      },
+      "ok": false,
+      "summary": "Error: Observation \"uiTotal\" is already recorded as 48.",
+      "rationale": "Record displayed total after qty change."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A5",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "ApplyTotal:",
+          "count": false,
+          "pattern": "Apply\\s*Total:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Displayed Total after quantity 4 should equal displayed Subtotal."
+      },
+      "ok": true,
+      "summary": "Recorded A5: expected 48, actual 48 -> match. This result is final.",
+      "rationale": "Displayed Total after quantity 4 should equal displayed Subtotal."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read cart totals after dropping quantity to 4."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":{\"lines\":[{\"productId\":3,\"name\":\"Notebook, Dotted A5\",\"priceCents\":1200,\"quantity\":4,\"lineCents\":4800}],\"subtotalCents\":4800,\"promoCode\":null,\"discountCents\":0,\"totalCents\":4800}}",
+      "rationale": "Read cart totals after dropping quantity to 4."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "afterSubtotal",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "subtotalCents",
+          "count": false
+        },
+        "rationale": "Record subtotalCents at qty 4."
+      },
+      "ok": true,
+      "summary": "Recorded afterSubtotal = 4800",
+      "rationale": "Record subtotalCents at qty 4."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "afterDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discountCents at qty 4."
+      },
+      "ok": true,
+      "summary": "Recorded afterDiscount = 0",
+      "rationale": "Record discountCents at qty 4."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "afterTotal",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Record totalCents at qty 4."
+      },
+      "ok": true,
+      "summary": "Recorded afterTotal = 4800",
+      "rationale": "Record totalCents at qty 4."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount after dropping below minimum."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected 0, actual 0 -> match. This result is final.",
+      "rationale": "Discount after dropping below minimum."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A4",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Total equals subtotal after dropping below minimum."
+      },
+      "ok": true,
+      "summary": "Recorded A4: expected 4800, actual 4800 -> match. This result is final.",
+      "rationale": "Total equals subtotal after dropping below minimum."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All assertions A1-A5 checked: TAKE15 applied at exactly $60.00 subtotal, then quantity dropped to 4 and the cart was re-read in UI and API.",
+        "rationale": "Every planned assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every planned assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "retest-shop/model/S3"
+  },
+  "startedAt": "2026-11-18T19:04:02.771Z",
+  "durationMs": 110823
+}

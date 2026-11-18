@@ -1,0 +1,519 @@
+{
+  "scenarioId": "S1",
+  "title": "Submitting leaves the balance unchanged; approving a 3-day range that includes a weekend deducts 3 days",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "passed",
+  "reason": "All 4 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3100",
+    "deployedSha": "dev-timeoff",
+    "expectedSha": "dev-timeoff"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": 20,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Days remaining:",
+        "count": false,
+        "pattern": "Days remaining:\\s*(\\d+(?:\\.\\d+)?)"
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 20,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "balance",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": "Pending",
+      "actual": "Pending",
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R3",
+        "field": "body",
+        "jsonPath": "0.status",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    },
+    {
+      "assertionId": "A4",
+      "expected": 17,
+      "actual": 17,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R4",
+        "field": "body",
+        "jsonPath": "balance",
+        "count": false
+      },
+      "screenshot": "check-A4.png"
+    }
+  ],
+  "observations": {
+    "screenBalanceBefore": 20,
+    "apiBalanceBefore": 20,
+    "apiBalanceAfterSubmit": 20,
+    "apiBalanceAfterApprove": 17
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Open the application to find the sign-in page."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Open the application to find the sign-in page."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s1-emp",
+        "rationale": "Enter employee handle."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee handle."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Enter employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "screenBalanceBefore",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "pattern": "Days remaining:\\s*(\\d+(?:\\.\\d+)?)"
+        },
+        "rationale": "Record displayed days remaining before any request."
+      },
+      "ok": true,
+      "summary": "Recorded screenBalanceBefore = 20",
+      "rationale": "Record displayed days remaining before any request."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Read API balance at the same moment."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"handle\":\"s1-emp\",\"name\":\"Employee s1-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Read API balance at the same moment."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiBalanceBefore",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record API balance before any request."
+      },
+      "ok": true,
+      "summary": "Recorded apiBalanceBefore = 20",
+      "rationale": "Record API balance before any request."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "pattern": "Days remaining:\\s*(\\d+(?:\\.\\d+)?)"
+        },
+        "rationale": "Screen days remaining should equal API balance before any request."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected 20, actual 20 -> match. This result is final.",
+      "rationale": "Screen days remaining should equal API balance before any request."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "First day"
+        },
+        "text": "2027-01-08",
+        "rationale": "Set first day."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set first day."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Last day"
+        },
+        "text": "2027-01-10",
+        "rationale": "Set last day."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set last day."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Reason"
+        },
+        "text": "Long weekend",
+        "rationale": "Set a reason."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set a reason."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Submit request"
+        },
+        "rationale": "Submit the time-off request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit the time-off request."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Read balance right after submitting."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":{\"handle\":\"s1-emp\",\"name\":\"Employee s1-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Read balance right after submitting."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/requests",
+        "rationale": "Find the new request and its status."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R3\",\"status\":200,\"body\":[{\"id\":2,\"employee\":\"s1-emp\",\"employeeName\":\"Employee s1-emp\",\"start\":\"2027-01-08\",\"end\":\"2027-01-10\",\"days\":3,\"reason\":\"Long weekend\",\"status\":\"Pending\"}]}",
+      "rationale": "Find the new request and its status."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiBalanceAfterSubmit",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record balance after submitting."
+      },
+      "ok": true,
+      "summary": "Recorded apiBalanceAfterSubmit = 20",
+      "rationale": "Record balance after submitting."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Balance after submit should equal balance before."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 20, actual 20 -> match. This result is final.",
+      "rationale": "Balance after submit should equal balance before."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "0.status",
+          "count": false
+        },
+        "rationale": "New request status should be Pending."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected Pending, actual Pending -> match. This result is final.",
+      "rationale": "New request status should be Pending."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out the employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign out the employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s1-mgr",
+        "rationale": "Enter manager handle."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter manager handle."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:mgr.password}}",
+        "rationale": "Enter manager password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter manager password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Sign in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as manager."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Approve request 2 from Employee s1-emp"
+        },
+        "rationale": "Approve the scenario request #2."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Approve the scenario request #2."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out the manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign out the manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s1-emp",
+        "rationale": "Enter employee handle."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee handle."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Enter employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Fresh employee session."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Fresh employee session."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Read balance after approval in fresh employee session."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R4\",\"status\":200,\"body\":{\"handle\":\"s1-emp\",\"name\":\"Employee s1-emp\",\"role\":\"employee\",\"balance\":17}}",
+      "rationale": "Read balance after approval in fresh employee session."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiBalanceAfterApprove",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record balance after approval."
+      },
+      "ok": true,
+      "summary": "Recorded apiBalanceAfterApprove = 17",
+      "rationale": "Record balance after approval."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A4",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Balance after approval should be before minus 3."
+      },
+      "ok": true,
+      "summary": "Recorded A4: expected 17, actual 17 -> match. This result is final.",
+      "rationale": "Balance after approval should be before minus 3."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All four assertions (A1-A4) were checked.",
+        "rationale": "Every assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "dev-timeoff/scenarios/S1"
+  },
+  "startedAt": "2026-11-18T18:48:36.647Z",
+  "durationMs": 73930
+}

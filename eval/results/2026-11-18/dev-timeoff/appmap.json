@@ -1,0 +1,96 @@
+{
+  "views": [
+    {
+      "as": "anonymous",
+      "signedIn": false,
+      "pages": [
+        {
+          "path": "/",
+          "title": "Dayoff",
+          "snapshot": "URL: /\n- banner:\n  - strong: Dayoff\n- main:\n  - heading \"Sign in\" [level=1]\n  - alert\n  - text: Username\n  - textbox \"Username\"\n  - text: Password\n  - textbox \"Password\"\n  - paragraph:\n    - button \"Sign in\""
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/api/me",
+          "status": 401
+        }
+      ],
+      "skippedLinks": []
+    },
+    {
+      "as": "employee",
+      "signedIn": true,
+      "pages": [
+        {
+          "path": "/",
+          "title": "Dayoff",
+          "snapshot": "URL: /\n- banner:\n  - strong: Dayoff\n  - text: Employee discover-employee-employee (employee)\n  - button \"Sign out\"\n- main:\n  - heading \"My time off\" [level=1]\n  - paragraph:\n    - text: \"Days remaining:\"\n    - strong: \"20\"\n  - heading \"Request time off\" [level=2]\n  - alert\n  - text: First day\n  - textbox \"First day\"\n  - text: Last day\n  - textbox \"Last day\"\n  - text: Reason\n  - textbox \"Reason\"\n  - paragraph:\n    - button \"Submit request\"\n  - heading \"My requests\" [level=2]\n  - paragraph: You have not requested any time off."
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/api/me",
+          "status": 401
+        },
+        {
+          "method": "POST",
+          "path": "/api/session",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/api/requests",
+          "status": 200
+        }
+      ],
+      "skippedLinks": []
+    },
+    {
+      "as": "manager",
+      "signedIn": true,
+      "pages": [
+        {
+          "path": "/",
+          "title": "Dayoff",
+          "snapshot": "URL: /\n- banner:\n  - strong: Dayoff\n  - text: Manager discover-manager-manager (manager)\n  - button \"Sign out\"\n- main:\n  - heading \"Requests awaiting a decision\" [level=1]\n  - paragraph: Nothing is waiting for you.\n  - heading \"Decided\" [level=2]\n  - paragraph: No decisions yet."
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/api/me",
+          "status": 401
+        },
+        {
+          "method": "POST",
+          "path": "/api/session",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/api/requests",
+          "status": 200
+        }
+      ],
+      "skippedLinks": []
+    }
+  ]
+}

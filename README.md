@@ -8,21 +8,19 @@ Product brief: [project_instructions.md](project_instructions.md).
 
 ## What exists today
 
-- `packages/agent` — the engine. Generic browser and API tools over
-  Playwright, assertions compared in code against expectations fixed in the
-  plan, a verdict computed from those comparisons, recording and replay, and
-  an HTTP bridge for attaching a model from outside the process. It contains
-  no knowledge of any application; a test enforces that.
-- `apps/shop` — demonstration app A (retail; Next.js, server-rendered, SQLite).
-- `apps/timeoff` — demonstration app B (time-off requests; plain Node, JSON
-  API, rendered in the browser).
-- Each app has its own `releaseproof.yml` manifest.
-- `eval/` — tickets, scenarios, recorded steps, the
-  [results of the first model-driven runs](eval/results/2026-11-17/README.md)
-  and the [intervention log](eval/INTERVENTIONS.md).
+- `packages/agent` — the engine and pipeline: ingest a ticket and pull
+  request, discover the running app read-only, analyse requirements, plan
+  scenarios whose every expected value cites quoted ticket text, execute them
+  in a real browser, report, and retest. It contains no knowledge of any
+  application; a test enforces that.
+- `apps/shop`, `apps/timeoff` — two small demonstration apps in different
+  domains and stacks, each with a `releaseproof.yml` manifest.
+- `eval/` — tickets, results and the intervention log. Start with the
+  [held-out evaluation](eval/results/2026-11-18/README.md).
 
-Not built yet: Jira and GitHub ingestion, discovery, requirement analysis,
-scenario generation, GitHub Actions, PR reporting. See the plan for the order.
+Not built yet: the GitHub Actions workflow, posting reports to pull requests,
+posting questions to Jira. The direct model API driver is written but has
+not been run.
 
 ## Run it
 
@@ -32,7 +30,16 @@ npm run shop:build
 TEST_MODE=1 GIT_SHA=$(git rev-parse HEAD) npm run shop:start
 ```
 
-In a second terminal:
+The whole workflow, from a ticket and a pull request (needs `ANTHROPIC_API_KEY`,
+or `--driver bridge` to attach a model over HTTP):
+
+```bash
+npx tsx packages/agent/src/cli.ts run --ticket eval/tickets/NWG-342.json \
+  --repo ihsansengun/ReleaseProof --pr 1 --manifest apps/shop/releaseproof.yml
+```
+
+The app must be running the pull request's head commit (`GIT_SHA`), or the run
+is refused. Single scenarios, in a second terminal:
 
 ```bash
 # Deterministic: replay recorded steps, no model needed
@@ -43,14 +50,6 @@ npx tsx packages/agent/src/cli.ts replay eval/scenarios/SC-001-second-order.json
 # Autonomous: the agent drives the browser itself (needs ANTHROPIC_API_KEY)
 npx tsx packages/agent/src/cli.ts run-scenario eval/scenarios/SC-001-second-order.json \
   --manifest apps/shop/releaseproof.yml --confirm
-```
-
-To attach a model over HTTP instead (any client that can read
-`GET /briefing` and `POST /tool`):
-
-```bash
-npx tsx packages/agent/src/cli.ts serve-scenario eval/scenarios/SC-001-second-order.json \
-  --manifest apps/shop/releaseproof.yml
 ```
 
 App B starts with `TEST_MODE=1 npm start -w apps/timeoff` (port 3100) and uses

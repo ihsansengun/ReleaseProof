@@ -1,0 +1,743 @@
+{
+  "scenarios": [
+    {
+      "scenario": {
+        "id": "S1",
+        "title": "Employee cancels a Pending request from My requests; balance unchanged",
+        "basis": "requirement",
+        "requirementIds": [
+          "R1",
+          "R3",
+          "R5",
+          "R6",
+          "R7",
+          "R28"
+        ],
+        "intent": "Sign in as the employee. Record the number shown as Days remaining as balanceBefore. Using the Request time off form, request leave with first day 2027-03-08, last day 2027-03-10 and any reason. In My requests, find the row for this new Pending request and look at its Cancel button and that button's accessible name. Click that Cancel button. Without reloading, look at the row's status and record Days remaining as balanceAfterCancel. Then reload the page and look again at the row's status, check whether the row still offers a Cancel button, and record Days remaining as balanceAfterReload.",
+        "fixtures": {
+          "emp": "employee"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "Before cancelling: a Cancel button exists in the My requests row of the new Pending request (2027-03-08 to 2027-03-10).",
+            "kind": "present",
+            "requirementId": "R1"
+          },
+          {
+            "id": "A2",
+            "description": "Before cancelling: the accessible name of that row's Cancel button contains the first day 2027-03-08.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "2027-03-08"
+            },
+            "requirementId": "R3"
+          },
+          {
+            "id": "A3",
+            "description": "Before cancelling: the accessible name of that row's Cancel button contains the last day 2027-03-10.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "2027-03-10"
+            },
+            "requirementId": "R3"
+          },
+          {
+            "id": "A4",
+            "description": "After clicking Cancel and reloading: the status shown in the My requests row for 2027-03-08 to 2027-03-10 contains Cancelled.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "Cancelled"
+            },
+            "requirementId": "R28"
+          },
+          {
+            "id": "A5",
+            "description": "Days remaining right after the cancel (no reload), balanceAfterCancel, equals balanceBefore recorded before the request was made.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "balanceBefore"
+            },
+            "requirementId": "R7"
+          },
+          {
+            "id": "A6",
+            "description": "Days remaining after reload, balanceAfterReload, equals balanceBefore.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "balanceBefore"
+            },
+            "requirementId": "R7"
+          },
+          {
+            "id": "A7",
+            "description": "After reload: the My requests row for the now Cancelled request 2027-03-08 to 2027-03-10 has no Cancel button.",
+            "kind": "absent",
+            "requirementId": "R5"
+          },
+          {
+            "id": "A8",
+            "description": "Via GET /api/requests as the employee after the cancel: the status field of the request with first day 2027-03-08 equals Cancelled.",
+            "kind": "text_equals",
+            "expected": {
+              "literal": "Cancelled"
+            },
+            "requirementId": "R6"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K9",
+        "K10"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S2",
+        "title": "Employee cancels an Approved far-future request in the UI; days returned immediately and after reload",
+        "basis": "requirement",
+        "requirementIds": [
+          "R2",
+          "R3",
+          "R9",
+          "R10",
+          "R11",
+          "R12"
+        ],
+        "intent": "Sign in as the employee and request leave with first day 2027-03-08, last day 2027-03-10 and any reason. Record Days remaining as balanceBeforeApproval. Sign out, sign in as the manager and approve this request. Sign out and sign in again as the employee. Record Days remaining as balanceApproved. In My requests, look at the Cancel button on the Approved row and its accessible name. Click Cancel. Without reloading, record Days remaining as balanceAfterCancel and look at the row's status. Reload the page and record Days remaining as balanceAfterReload, and look at the row's status again.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "After approval, before cancelling: a Cancel button exists in the My requests row of the Approved request 2027-03-08 to 2027-03-10.",
+            "kind": "present",
+            "requirementId": "R2"
+          },
+          {
+            "id": "A2",
+            "description": "After approval: the accessible name of that Approved row's Cancel button contains the last day 2027-03-10.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "2027-03-10"
+            },
+            "requirementId": "R3"
+          },
+          {
+            "id": "A3",
+            "description": "Right after clicking Cancel, without reload: the status shown in the row for 2027-03-08 to 2027-03-10 contains Cancelled.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "Cancelled"
+            },
+            "requirementId": "R9"
+          },
+          {
+            "id": "A4",
+            "description": "Days remaining right after the cancel without reload (balanceAfterCancel) equals balanceBeforeApproval, i.e. the request's days were returned.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "balanceBeforeApproval"
+            },
+            "requirementId": "R11"
+          },
+          {
+            "id": "A5",
+            "description": "Days remaining right after the cancel (balanceAfterCancel) is at least balanceApproved + 1 (the balance went up).",
+            "kind": "number_at_least",
+            "expected": {
+              "formula": "balanceApproved + 1"
+            },
+            "requirementId": "R10"
+          },
+          {
+            "id": "A6",
+            "description": "Days remaining after reloading the page (balanceAfterReload) equals balanceBeforeApproval.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "balanceBeforeApproval"
+            },
+            "requirementId": "R12"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K6"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S3",
+        "title": "Non-owner employee cannot cancel someone else's Approved request",
+        "basis": "risk",
+        "requirementIds": [
+          "R18",
+          "R20"
+        ],
+        "intent": "Sign in as employee owner and create a request with first day 2027-03-08, last day 2027-03-10. Sign out, sign in as the manager and approve it; note the request id. Sign out and sign in as owner; record Days remaining as ownerBalanceBefore. Sign out and sign in as employee other. As other, POST /api/requests/<id>/cancel for owner's request and record the HTTP status code as otherCancelStatus. Sign out, sign in as owner, record Days remaining as ownerBalanceAfter and look at the request's status in GET /api/requests.",
+        "fixtures": {
+          "owner": "employee",
+          "other": "employee",
+          "mgr": "manager"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "HTTP status code of other's POST /api/requests/<owner request id>/cancel (otherCancelStatus) equals 403.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 403
+            },
+            "requirementId": "R18"
+          },
+          {
+            "id": "A2",
+            "description": "After other's attempt, signed in as owner: status field of the request in GET /api/requests equals Approved.",
+            "kind": "text_equals",
+            "expected": {
+              "literal": "Approved"
+            },
+            "requirementId": "R20"
+          },
+          {
+            "id": "A3",
+            "description": "After other's attempt: owner's Days remaining (ownerBalanceAfter) equals ownerBalanceBefore.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "ownerBalanceBefore"
+            },
+            "requirementId": "R20"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K2"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S4",
+        "title": "Manager cannot cancel an employee's request",
+        "basis": "requirement",
+        "requirementIds": [
+          "R19",
+          "R20"
+        ],
+        "intent": "Sign in as the employee and create a request with first day 2027-03-08, last day 2027-03-10; note its id and record Days remaining as balanceBefore. Sign out, sign in as the manager and POST /api/requests/<id>/cancel; record the HTTP status code as mgrCancelStatus. Sign out, sign in as the employee, read the request's status from GET /api/requests and record Days remaining as balanceAfter.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "HTTP status code of the manager's POST /api/requests/<id>/cancel (mgrCancelStatus) equals 403.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 403
+            },
+            "requirementId": "R19"
+          },
+          {
+            "id": "A2",
+            "description": "After the manager's attempt, as the employee: status field of the request in GET /api/requests equals Pending.",
+            "kind": "text_equals",
+            "expected": {
+              "literal": "Pending"
+            },
+            "requirementId": "R20"
+          },
+          {
+            "id": "A3",
+            "description": "After the manager's attempt: employee's Days remaining (balanceAfter) equals balanceBefore.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "balanceBefore"
+            },
+            "requirementId": "R20"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": []
+    },
+    {
+      "scenario": {
+        "id": "S5",
+        "title": "Cancelled request leaves the manager's queue, shows under Decided and cannot be approved or rejected",
+        "basis": "requirement",
+        "requirementIds": [
+          "R21",
+          "R22",
+          "R23",
+          "R24"
+        ],
+        "intent": "Sign in as the employee, create a request with first day 2027-03-08, last day 2027-03-10, note its id, record Days remaining as balanceBefore, and cancel it with the Cancel button in My requests. Sign out, sign in as the manager and view the main page: look for the request in the Requests awaiting a decision section and in the Decided section, and read its status in Decided. Then POST /api/requests/<id>/decision with decision approve and record the HTTP status code as approveStatus; then with decision reject and record it as rejectStatus. Sign out, sign in as the employee, read the request's status from GET /api/requests and record Days remaining as balanceAfter.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "Manager main page after the cancel: no entry for the request 2027-03-08 to 2027-03-10 is listed under Requests awaiting a decision.",
+            "kind": "absent",
+            "requirementId": "R23"
+          },
+          {
+            "id": "A2",
+            "description": "Manager main page after the cancel: the entry for the request 2027-03-08 to 2027-03-10 under Decided shows a status containing Cancelled.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "Cancelled"
+            },
+            "requirementId": "R24"
+          },
+          {
+            "id": "A3",
+            "description": "HTTP status code of the manager's POST /api/requests/<id>/decision with approve (approveStatus) equals 409.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 409
+            },
+            "requirementId": "R21"
+          },
+          {
+            "id": "A4",
+            "description": "HTTP status code of the manager's POST /api/requests/<id>/decision with reject (rejectStatus) equals 409.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 409
+            },
+            "requirementId": "R22"
+          },
+          {
+            "id": "A5",
+            "description": "After both decision attempts, as the employee: status field of the request in GET /api/requests equals Cancelled.",
+            "kind": "text_equals",
+            "expected": {
+              "literal": "Cancelled"
+            },
+            "requirementId": "R21"
+          },
+          {
+            "id": "A6",
+            "description": "After both decision attempts: employee's Days remaining (balanceAfter) equals balanceBefore.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "balanceBefore"
+            },
+            "requirementId": "R21"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K4",
+        "K5"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S6",
+        "title": "Double cancel of an Approved request via API: 409 and no second refund",
+        "basis": "risk",
+        "requirementIds": [
+          "R25",
+          "R26",
+          "R27",
+          "R10"
+        ],
+        "intent": "Sign in as the employee, create a request with first day 2027-03-08, last day 2027-03-10 and note its id. Sign out, sign in as the manager and approve it. Sign out, sign in as the employee and record balance from GET /api/me as balanceApproved. POST /api/requests/<id>/cancel; keep its response body and record the HTTP status. Record balance from GET /api/me as balanceAfterFirst. POST the same cancel again and record its HTTP status code as secondCancelStatus. Record balance from GET /api/me as balanceAfterSecond.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "Response body of the first POST /api/requests/<id>/cancel: its status field equals Cancelled.",
+            "kind": "text_equals",
+            "expected": {
+              "literal": "Cancelled"
+            },
+            "requirementId": "R25"
+          },
+          {
+            "id": "A2",
+            "description": "balanceAfterFirst (GET /api/me balance after the first cancel) is at least balanceApproved + 1.",
+            "kind": "number_at_least",
+            "expected": {
+              "formula": "balanceApproved + 1"
+            },
+            "requirementId": "R10"
+          },
+          {
+            "id": "A3",
+            "description": "HTTP status code of the second POST /api/requests/<id>/cancel (secondCancelStatus) equals 409.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 409
+            },
+            "requirementId": "R26"
+          },
+          {
+            "id": "A4",
+            "description": "balanceAfterSecond (GET /api/me balance after the second cancel) equals balanceAfterFirst.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "balanceAfterFirst"
+            },
+            "requirementId": "R27"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K7"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S7",
+        "title": "Approved request starting tomorrow cannot be cancelled (inside notice window)",
+        "basis": "requirement",
+        "requirementIds": [
+          "R14",
+          "R15",
+          "R16",
+          "R17"
+        ],
+        "intent": "Work out today's date (use the Date header of a response from the application if available) and let D be today + 1 day in YYYY-MM-DD. Sign in as the employee, create a request with first and last day D, note its id. Sign out, sign in as the manager and approve it. Sign out, sign in as the employee and record balance from GET /api/me as balanceApproved. POST /api/requests/<id>/cancel via the API and keep the response body (including any error message). Then record balance from GET /api/me as balanceAfter and read the request's status from GET /api/requests.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "After the refused cancel: status field of the request in GET /api/requests equals Approved.",
+            "kind": "text_equals",
+            "expected": {
+              "literal": "Approved"
+            },
+            "requirementId": "R16"
+          },
+          {
+            "id": "A2",
+            "description": "After the refused cancel: balanceAfter equals balanceApproved.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "balanceApproved"
+            },
+            "requirementId": "R17"
+          },
+          {
+            "id": "A3",
+            "description": "The error message text returned in the response body of the refused cancel contains the number 3.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "3"
+            },
+            "requirementId": "R15"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K8"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S8",
+        "title": "Approved request starting today + 2 cannot be cancelled (boundary just inside window)",
+        "basis": "risk",
+        "requirementIds": [
+          "R14",
+          "R16",
+          "R17"
+        ],
+        "intent": "Work out today's date (use the Date header of a response from the application) and let D be today + 2 calendar days in YYYY-MM-DD. Sign in as the employee, create a request with first and last day D, note its id. Sign out, sign in as the manager and approve it. Sign out, sign in as the employee and record balance from GET /api/me as balanceApproved. POST /api/requests/<id>/cancel via the API and keep the response. Then record balance from GET /api/me as balanceAfter and read the request's status from GET /api/requests.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "After the cancel attempt on the request starting today + 2: status field of the request in GET /api/requests equals Approved.",
+            "kind": "text_equals",
+            "expected": {
+              "literal": "Approved"
+            },
+            "requirementId": "R14"
+          },
+          {
+            "id": "A2",
+            "description": "After the cancel attempt: balanceAfter equals balanceApproved.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "balanceApproved"
+            },
+            "requirementId": "R17"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [
+        "Q2"
+      ],
+      "riskIds": [
+        "K1",
+        "K3"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S9",
+        "title": "Rejected request has no Cancel button while a Pending one does",
+        "basis": "requirement",
+        "requirementIds": [
+          "R1",
+          "R4"
+        ],
+        "intent": "Sign in as the employee and create two requests: one with first day 2027-03-08, last day 2027-03-10, and one with first day 2027-04-12, last day 2027-04-14. Sign out, sign in as the manager and reject only the 2027-03-08 request. Sign out, sign in as the employee and look at My requests: check the row of each request for a Cancel button and read the status of the rejected row.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "My requests after rejection: the status shown in the row for 2027-03-08 to 2027-03-10 contains Rejected.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "Rejected"
+            },
+            "requirementId": "R4"
+          },
+          {
+            "id": "A2",
+            "description": "My requests after rejection: the row for 2027-03-08 to 2027-03-10 has no Cancel button.",
+            "kind": "absent",
+            "requirementId": "R4"
+          },
+          {
+            "id": "A3",
+            "description": "My requests after rejection: the row for the Pending request 2027-04-12 to 2027-04-14 has a Cancel button.",
+            "kind": "present",
+            "requirementId": "R1"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": []
+    },
+    {
+      "scenario": {
+        "id": "S10",
+        "title": "Pending request starting tomorrow can still be cancelled (notice rule only for Approved)",
+        "basis": "risk",
+        "requirementIds": [
+          "R8",
+          "R6",
+          "R7"
+        ],
+        "intent": "Work out today's date (use the Date header of a response from the application) and let D be today + 1 day in YYYY-MM-DD. Sign in as the employee, record Days remaining as balanceBefore, create a request with first and last day D and leave it Pending. In My requests click the Cancel button of that row. Read the row's status and record Days remaining as balanceAfter.",
+        "fixtures": {
+          "emp": "employee"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "After clicking Cancel on the Pending request starting tomorrow: status field of that request in GET /api/requests equals Cancelled.",
+            "kind": "text_equals",
+            "expected": {
+              "literal": "Cancelled"
+            },
+            "requirementId": "R8"
+          },
+          {
+            "id": "A2",
+            "description": "After the cancel: Days remaining (balanceAfter) equals balanceBefore.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "balanceBefore"
+            },
+            "requirementId": "R7"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K10"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S11",
+        "title": "Approved request starting exactly today + 3 can be cancelled (boundary)",
+        "basis": "risk",
+        "requirementIds": [
+          "R13"
+        ],
+        "intent": "Create and approve a request whose first day is today + 3, then cancel it as the employee and check status Cancelled and days returned.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "The outcome at exactly today + 3 depends on whether the 3 days are calendar or working days (over a weekend they differ) and on which time zone defines today (server UTC vs local). Decide both before this boundary can be asserted.",
+      "ambiguityIds": [
+        "Q2",
+        "Q3"
+      ],
+      "riskIds": [
+        "K1",
+        "K3"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S12",
+        "title": "HTTP status of a notice-window refusal",
+        "basis": "requirement",
+        "requirementIds": [
+          "R14",
+          "R15"
+        ],
+        "intent": "Cancel an Approved request starting tomorrow via the API and check the HTTP status code of the refusal.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "The ticket only says the cancel is refused with a message; the expected status code (409, 400 or 422) is not documented.",
+      "ambiguityIds": [
+        "Q1"
+      ],
+      "riskIds": []
+    },
+    {
+      "scenario": {
+        "id": "S13",
+        "title": "Cancel button and UI error for an Approved request inside the notice window",
+        "basis": "requirement",
+        "requirementIds": [
+          "R2",
+          "R15",
+          "R32"
+        ],
+        "intent": "With an Approved request starting tomorrow, check in My requests whether a Cancel button is offered and, if clicked, that the refusal message is shown on screen and the row stays Approved.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "The description says every Approved request has a Cancel button, while the payroll rule makes in-window cancels always fail; it must be decided whether the button is shown, hidden or disabled for such rows before the UI can be asserted.",
+      "ambiguityIds": [
+        "Q4"
+      ],
+      "riskIds": [
+        "K6"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S14",
+        "title": "Cancelling a Rejected request through the API",
+        "basis": "risk",
+        "requirementIds": [
+          "R30"
+        ],
+        "intent": "Create and reject a request, then POST the cancel endpoint directly and check the response, status and balance.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "Only an inferred requirement covers a direct API cancel of a Rejected request; the expected status code and outcome are not documented.",
+      "ambiguityIds": [
+        "Q6"
+      ],
+      "riskIds": []
+    },
+    {
+      "scenario": {
+        "id": "S15",
+        "title": "Re-requesting the same dates after cancelling",
+        "basis": "risk",
+        "requirementIds": [
+          "R6",
+          "R9"
+        ],
+        "intent": "Cancel a request, then submit a new request for the same dates and check whether it is accepted.",
+        "fixtures": {
+          "emp": "employee"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "It is not documented whether a Cancelled request still counts in overlap or duplicate checks for a new request on the same dates.",
+      "ambiguityIds": [
+        "Q7"
+      ],
+      "riskIds": []
+    },
+    {
+      "scenario": {
+        "id": "S16",
+        "title": "Unauthenticated cancel and cancel of a non-existent id",
+        "basis": "risk",
+        "requirementIds": [
+          "R31",
+          "R33"
+        ],
+        "intent": "Call the cancel endpoint without a session and with an unknown request id, and check the responses and that nothing changes.",
+        "fixtures": {
+          "emp": "employee"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "The 401 and 404 responses are inferred requirements only; the documentation does not state the expected codes. Confirm them before asserting.",
+      "ambiguityIds": [],
+      "riskIds": []
+    }
+  ],
+  "notes": [],
+  "clarifications": []
+}

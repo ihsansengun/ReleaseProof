@@ -1,0 +1,590 @@
+{
+  "scenarioId": "S2",
+  "title": "TAKE15 refused at $59.50 with an error naming $60.00, then accepted at $71.50",
+  "mode": "replay",
+  "verdict": "passed",
+  "reason": "All 7 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3000",
+    "deployedSha": "608909953f5ee06a34141dcbeea03fffc4bae337",
+    "expectedSha": "608909953f5ee06a34141dcbeea03fffc4bae337"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": "$60.00",
+      "actual": "TAKE15 needs a subtotal of at least $60.00.",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "TAKE15 needs a subtotal",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 0,
+      "actual": 0,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": 5950,
+      "actual": 5950,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R1",
+        "field": "body",
+        "jsonPath": "totalCents",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    },
+    {
+      "assertionId": "A6",
+      "expected": 56.5,
+      "actual": 56.5,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Total: $56",
+        "count": false,
+        "pattern": "Total:\\s*\\$([0-9.,]+)"
+      },
+      "screenshot": "check-A6.png"
+    },
+    {
+      "assertionId": "A7",
+      "expected": "TAKE15",
+      "actual": "Promo code TAKE15 applied.",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "TAKE15 applied",
+        "count": false
+      },
+      "screenshot": "check-A7.png"
+    },
+    {
+      "assertionId": "A4",
+      "expected": 1500,
+      "actual": 1500,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A4.png"
+    },
+    {
+      "assertionId": "A5",
+      "expected": 5650,
+      "actual": 5650,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R2",
+        "field": "body",
+        "jsonPath": "totalCents",
+        "count": false
+      },
+      "screenshot": "check-A5.png"
+    }
+  ],
+  "observations": {
+    "belowDiscount": 0,
+    "belowTotal": 5950,
+    "belowSubtotal": 5950,
+    "uiSubtotal": 71.5,
+    "uiTotal": 56.5,
+    "apiSubtotal": 7150,
+    "apiDiscount": 1500,
+    "apiTotal": 5650
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the application entry page and sign-in link."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the application entry page and sign-in link."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Sign in as the customer first."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign in as the customer first."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "s2-shopper@fixtures.test",
+        "rationale": "Enter shopper email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter shopper email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:shopper.password}}",
+        "rationale": "Enter shopper password."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter shopper password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Confirm the cart starts empty before adding items."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Confirm the cart starts empty before adding items."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to products to add the Pour-Over Set."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to products to add the Pour-Over Set."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Ceramic Pour-Over Set to cart"
+        },
+        "rationale": "Add one Ceramic Pour-Over Set per scenario."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add one Ceramic Pour-Over Set per scenario."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "TAKE15",
+        "rationale": "Enter TAKE15 on the $59.50 cart."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter TAKE15 on the $59.50 cart."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply TAKE15 to see the refusal."
+      },
+      "ok": true,
+      "summary": "URL: /cart?promo=minimum&code=TAKE15",
+      "rationale": "Apply TAKE15 to see the refusal."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "TAKE15 needs a subtotal",
+          "count": false
+        },
+        "rationale": "The error alert is shown after the refused TAKE15 attempt."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected $60.00, actual TAKE15 needs a subtotal of at least $60.00. -> match. This result is final.",
+      "rationale": "The error alert is shown after the refused TAKE15 attempt."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read cart amounts after the refused code."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"lines\":[{\"productId\":2,\"name\":\"Ceramic Pour-Over Set\",\"priceCents\":5950,\"quantity\":1,\"lineCents\":5950}],\"subtotalCents\":5950,\"promoCode\":null,\"discountCents\":0,\"totalCents\":5950}}",
+      "rationale": "Read cart amounts after the refused code."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "belowDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discountCents after refused code."
+      },
+      "ok": true,
+      "summary": "Recorded belowDiscount = 0",
+      "rationale": "Record discountCents after refused code."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "belowTotal",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Record totalCents after refused code."
+      },
+      "ok": true,
+      "summary": "Recorded belowTotal = 5950",
+      "rationale": "Record totalCents after refused code."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "belowSubtotal",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "subtotalCents",
+          "count": false
+        },
+        "rationale": "Record subtotalCents after refused code."
+      },
+      "ok": true,
+      "summary": "Recorded belowSubtotal = 5950",
+      "rationale": "Record subtotalCents after refused code."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount must be 0 after refusal."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 0, actual 0 -> match. This result is final.",
+      "rationale": "Discount must be 0 after refusal."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Total must equal subtotal after refusal."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected 5950, actual 5950 -> match. This result is final.",
+      "rationale": "Total must equal subtotal after refusal."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to products to add the Notebook."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to products to add the Notebook."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Notebook, Dotted A5 to cart"
+        },
+        "rationale": "Add one Notebook to reach $71.50."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add one Notebook to reach $71.50."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "TAKE15",
+        "rationale": "Enter TAKE15 on the $71.50 cart."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter TAKE15 on the $71.50 cart."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply TAKE15 now that subtotal meets the minimum."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply TAKE15 now that subtotal meets the minimum."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiSubtotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Subtotal:",
+          "count": false,
+          "pattern": "Subtotal:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Record displayed subtotal after TAKE15 applied."
+      },
+      "ok": true,
+      "summary": "Recorded uiSubtotal = 71.5",
+      "rationale": "Record displayed subtotal after TAKE15 applied."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "uiTotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Total: $56",
+          "count": false,
+          "pattern": "Total:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Record the displayed Total paragraph (not Subtotal) after TAKE15 applied."
+      },
+      "ok": true,
+      "summary": "Recorded uiTotal = 56.5",
+      "rationale": "Record the displayed Total paragraph (not Subtotal) after TAKE15 applied."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A6",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Total: $56",
+          "count": false,
+          "pattern": "Total:\\s*\\$([0-9.,]+)"
+        },
+        "rationale": "Check displayed Total equals Subtotal minus 15."
+      },
+      "ok": true,
+      "summary": "Recorded A6: expected 56.5, actual 56.5 -> match. This result is final.",
+      "rationale": "Check displayed Total equals Subtotal minus 15."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A7",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "TAKE15 applied",
+          "count": false
+        },
+        "rationale": "The applied-code display reads TAKE15 applied."
+      },
+      "ok": true,
+      "summary": "Recorded A7: expected TAKE15, actual Promo code TAKE15 applied. -> match. This result is final.",
+      "rationale": "The applied-code display reads TAKE15 applied."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read cart amounts after TAKE15 accepted."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":{\"lines\":[{\"productId\":2,\"name\":\"Ceramic Pour-Over Set\",\"priceCents\":5950,\"quantity\":1,\"lineCents\":5950},{\"productId\":3,\"name\":\"Notebook, Dotted A5\",\"priceCents\":1200,\"quantity\":1,\"lineCents\":1200}],\"subtotalCents\":7150,\"promoCode\":\"TAKE15\",\"discountCents\":1500",
+      "rationale": "Read cart amounts after TAKE15 accepted."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiSubtotal",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "subtotalCents",
+          "count": false
+        },
+        "rationale": "Record subtotalCents after TAKE15 accepted."
+      },
+      "ok": true,
+      "summary": "Recorded apiSubtotal = 7150",
+      "rationale": "Record subtotalCents after TAKE15 accepted."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discountCents after TAKE15 accepted."
+      },
+      "ok": true,
+      "summary": "Recorded apiDiscount = 1500",
+      "rationale": "Record discountCents after TAKE15 accepted."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiTotal",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Record totalCents after TAKE15 accepted."
+      },
+      "ok": true,
+      "summary": "Recorded apiTotal = 5650",
+      "rationale": "Record totalCents after TAKE15 accepted."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A4",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount should be 1500."
+      },
+      "ok": true,
+      "summary": "Recorded A4: expected 1500, actual 1500 -> match. This result is final.",
+      "rationale": "Discount should be 1500."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A5",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Total should be subtotal minus 1500."
+      },
+      "ok": true,
+      "summary": "Recorded A5: expected 5650, actual 5650 -> match. This result is final.",
+      "rationale": "Total should be subtotal minus 1500."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All assertions A1-A7 were checked at the states the scenario describes.",
+        "rationale": "Every planned assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every planned assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "retest-shop/replay/S2"
+  },
+  "startedAt": "2026-11-18T19:03:52.639Z",
+  "durationMs": 8516
+}
