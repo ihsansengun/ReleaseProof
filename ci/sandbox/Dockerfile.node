@@ -1,0 +1,18 @@
+# Generic sandbox image for an application under test.
+#
+# Everything the pull request controls (its files, and the install, build and
+# run commands from its manifest) executes inside this image and nowhere
+# else. Nothing secret is ever passed in.
+FROM node:22-slim
+WORKDIR /app
+COPY . .
+
+ARG RP_INSTALL=""
+ARG RP_BUILD=""
+RUN if [ -n "$RP_INSTALL" ]; then sh -c "$RP_INSTALL"; fi
+RUN if [ -n "$RP_BUILD" ]; then sh -c "$RP_BUILD"; fi
+
+ARG RP_RUN
+ENV RP_RUN=$RP_RUN NODE_ENV=production HOME=/tmp
+USER 10001:10001
+CMD ["sh", "-c", "exec $RP_RUN"]
