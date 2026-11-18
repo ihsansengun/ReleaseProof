@@ -1,6 +1,9 @@
 import { evaluateFormula, formulaVariables } from "./formula.ts";
 import type { Analysis, Assertion, Manifest, Plan, PlanDraft, PlannedScenario } from "./schema.ts";
 
+/** Blocked scenarios are not executed, so the allowance for them is generous. */
+const MAX_BLOCKED = 20;
+
 /**
  * Checks a drafted plan against rules that must hold whatever the model
  * wrote, and returns the plan with offending parts removed or blocked.
@@ -13,6 +16,7 @@ export function validatePlan(
   maxScenarios: number,
 ): { plan: Plan; problems: string[] } {
   const problems: string[] = [];
+  const trimmed: string[] = [];
   const clarifications: Plan["clarifications"] = [];
   const requirement = new Map(analysis.requirements.map((r) => [r.id, r]));
   const ambiguityIds = new Set(analysis.ambiguities.map((a) => a.id));
@@ -27,9 +31,11 @@ export function validatePlan(
     }
     // The limit is on what gets executed. Blocked scenarios cost nothing to
     // keep and are results in their own right, so they have their own allowance.
-    const sameStatus = scenarios.filter((s) => s.status === d.status).length;
-    if (sameStatus >= maxScenarios) {
-      problems.push(`Scenario ${d.id} was dropped: the plan is limited to ${maxScenarios} ${d.status} scenarios.`);
+    const limit = d.status === "runnable" ? maxScenarios : MAX_BLOCKED;
+    if (scenarios.filter((s) => s.status === d.status).length >= limit) {
+      // Trimming to size is not a fault in the plan, so it is recorded but
+      // does not send the plan back for repair.
+      trimmed.push(`Scenario ${d.id} was dropped: the plan is limited to ${limit} ${d.status} scenarios.`);
       continue;
     }
     seen.add(d.id);
@@ -129,5 +135,5 @@ export function validatePlan(
       riskIds: known(d.riskIds, riskIds, "risk"),
     });
   }
-  return { plan: { scenarios, notes: problems, clarifications }, problems };
+  return { plan: { scenarios, notes: [...problems, ...trimmed], clarifications }, problems };
 }

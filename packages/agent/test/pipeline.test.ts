@@ -98,7 +98,10 @@ test("malformed expectations, unknown fixtures and repeated ids are caught", () 
 
 test("the plan size limit is enforced", () => {
   const many = { scenarios: Array.from({ length: 4 }, (_, i) => scenario({ id: `S${i + 1}`, assertions: [assertion({})] })) };
-  assert.equal(validatePlan(many, checkedAnalysis, manifest, 3).plan.scenarios.length, 3);
+  const trimmedPlan = validatePlan(many, checkedAnalysis, manifest, 3);
+  assert.equal(trimmedPlan.plan.scenarios.length, 3);
+  assert.deepEqual(trimmedPlan.problems, []);
+  assert.equal(trimmedPlan.plan.notes.length, 1);
   const withBlocked = { scenarios: [...many.scenarios, scenario({ id: "S9", status: "blocked", blockedReason: "needs Q1" })] };
   assert.deepEqual(
     validatePlan(withBlocked, checkedAnalysis, manifest, 3).plan.scenarios.map((s) => s.scenario.id),

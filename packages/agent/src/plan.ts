@@ -69,9 +69,6 @@ export async function plan(
   const rechecked = validatePlan(second, analysis, manifest, maxScenarios);
   return {
     ...rechecked.plan,
-    notes: [
-      ...checked.problems.map((p) => `First draft: ${p}`),
-      ...rechecked.problems.map((p) => `After repair: ${p}`),
-    ],
+    notes: [...checked.problems.map((p) => `First draft: ${p}`), ...rechecked.plan.notes.map((p) => `After repair: ${p}`)],
   };
 }
