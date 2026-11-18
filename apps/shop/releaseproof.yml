@@ -8,9 +8,15 @@ fixtures:
     description: A customer with no orders and no loyalty history. Returns id, email, password and name.
     method: POST
     path: /api/test/customers
+    account: true
     body:
       key: "{{key}}"
 integrations:
   payments:
     mode: simulated
     notes: Card number 4242 4242 4242 4242 is accepted. Any other card number is declined.
+docs:
+  - README.md
+signIn:
+  allow:
+    - POST /login

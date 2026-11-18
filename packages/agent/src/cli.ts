@@ -3,43 +3,50 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
+import { BridgeDriver } from "./drivers/bridge.ts";
+import { ApiDriver, type Driver } from "./drivers/driver.ts";
 import { loadManifest } from "./env.ts";
-import { serveScenario } from "./execute/bridge.ts";
-import { runScenario, type SessionOptions } from "./execute/run.ts";
-import { Scenario, Step, type ScenarioResult } from "./schema.ts";
+import { runScenario } from "./execute/run.ts";
+import { loadPullRequest } from "./ingest/github.ts";
+import { loadTicket } from "./ingest/jira.ts";
+import { retest, runPipeline } from "./pipeline.ts";
+import { coverage } from "./report/run.ts";
+import { Scenario, Step, type RunReport, type ScenarioResult } from "./schema.ts";
 
 const USAGE = `Usage:
-  releaseproof run-scenario <scenario.json> [options]   execute with the agent loop
-  releaseproof serve-scenario <scenario.json> [options] execute with a model attached over HTTP
-  releaseproof replay <scenario.json> --steps <file>    re-run recorded steps, no model
+  releaseproof run --ticket <file|key> --repo <owner/name> --pr <n> --manifest <file>
+        ticket + pull request -> discovery, analysis, plan, execution, report
+  releaseproof retest --run <run.json> --manifest <file>
+        re-run a previous run's scenarios against the current build
+  releaseproof run-scenario <scenario.json> --manifest <file>
+        execute one scenario with a model
+  releaseproof replay <scenario.json> --steps <file> --manifest <file>
+        re-run recorded steps, no model
 
 Options:
-  --manifest <file>     environment manifest (default: releaseproof.yml)
+  --driver api|bridge   how the model is attached (default api)
+  --port <n>            bridge: port to serve jobs on (default 4200)
   --base-url <url>      override the manifest's baseUrl
   --expect-sha <sha>    refuse to run unless the environment reports this commit
-  --out <dir>           evidence directory (default: runs/<timestamp>)
+  --allow-sha-mismatch  run: do not require the pull request's head commit
+  --out <dir>           output directory (default runs/<timestamp>)
+  --max-scenarios <n>   run: plan size limit (default 10)
+  --concurrency <n>     scenarios executed at once (default 3)
   --steps <file>        replay: a step array, or a result.json containing steps
-  --max-steps <n>       agent: tool-call budget (default 40)
-  --confirm             agent: replay a failed scenario once without the model
-  --read-only           block every request that could change application state
-  --port <n>            serve-scenario: port to listen on (default 4100)
-  --driver <label>      serve-scenario: what is driving, recorded in the result
+  --confirm             run-scenario: replay a failure once without the model
 
 Environment:
-  RELEASEPROOF_MODEL    model id (default claude-opus-5-5)
-  RELEASEPROOF_EFFORT   low | medium | high (default medium)`;
+  RELEASEPROOF_MODEL, RELEASEPROOF_EFFORT   api driver (default claude-opus-5-5, medium)
+  GITHUB_TOKEN                              optional, for private repositories
+  JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN when --ticket is a key, not a file`;
 
-function print(result: ScenarioResult, label = "") {
+function printScenario(result: ScenarioResult, label = "") {
   console.log(`\n${result.scenarioId} ${result.title}${label}`);
   for (const r of result.assertionResults) {
     console.log(`  ${r.pass ? "match   " : "MISMATCH"} ${r.assertionId}: expected ${r.expected}, actual ${r.actual}`);
   }
   console.log(`  verdict: ${result.verdict.toUpperCase()} - ${result.reason}`);
   console.log(`  evidence: ${result.evidence.dir}`);
-  if (result.usage) {
-    const u = result.usage;
-    console.log(`  model: ${u.model}, ${u.turns} turns, ${u.inputTokens} in / ${u.outputTokens} out tokens`);
-  }
 }
 
 async function main(): Promise<number> {
@@ -49,30 +56,99 @@ async function main(): Promise<number> {
       manifest: { type: "string", default: "releaseproof.yml" },
       "base-url": { type: "string" },
       "expect-sha": { type: "string" },
+      "allow-sha-mismatch": { type: "boolean", default: false },
       out: { type: "string" },
       steps: { type: "string" },
-      "max-steps": { type: "string", default: "40" },
       confirm: { type: "boolean", default: false },
-      "read-only": { type: "boolean", default: false },
-      port: { type: "string", default: "4100" },
-      driver: { type: "string", default: "external model via bridge" },
+      driver: { type: "string", default: "api" },
+      port: { type: "string", default: "4200" },
+      ticket: { type: "string" },
+      repo: { type: "string" },
+      pr: { type: "string" },
+      run: { type: "string" },
+      "max-scenarios": { type: "string", default: "10" },
+      concurrency: { type: "string", default: "3" },
     },
   });
   const [command, scenarioFile] = positionals;
-  if (!command || !scenarioFile || !["run-scenario", "serve-scenario", "replay"].includes(command)) {
+  if (!command || !["run", "retest", "run-scenario", "replay"].includes(command)) {
     console.error(USAGE);
     return 2;
   }
 
-  const scenario = Scenario.parse(JSON.parse(await readFile(scenarioFile, "utf8")));
   const manifest = await loadManifest(values.manifest, values["base-url"]);
-  const root = values.out ?? path.join("runs", new Date().toISOString().replace(/[:.]/g, "-"));
-  const base: Omit<SessionOptions, "outDir"> = {
-    scenario,
-    manifest,
-    expectedSha: values["expect-sha"],
-    readOnly: values["read-only"],
+  const outDir = values.out ?? path.join("runs", new Date().toISOString().replace(/[:.]/g, "-"));
+  const makeDriver = (): Driver => {
+    if (values.driver === "bridge") {
+      console.log(`Bridge: waiting for a model on http://127.0.0.1:${values.port} (POST /claim)`);
+      return new BridgeDriver(Number(values.port), "external model via HTTP bridge");
+    }
+    const effort = (process.env.RELEASEPROOF_EFFORT ?? "medium") as "low" | "medium" | "high";
+    return new ApiDriver(process.env.RELEASEPROOF_MODEL ?? "claude-opus-5-5", effort);
   };
+
+  if (command === "run") {
+    if (!values.ticket || !values.repo || !values.pr) {
+      console.error("run needs --ticket, --repo and --pr");
+      return 2;
+    }
+    const ticket = await loadTicket(values.ticket);
+    const pullRequest = await loadPullRequest(values.repo, Number(values.pr));
+    const driver = makeDriver();
+    try {
+      const report = await runPipeline({
+        ticket,
+        pullRequest,
+        manifest,
+        manifestFile: values.manifest,
+        driver,
+        outDir,
+        maxScenarios: Number(values["max-scenarios"]),
+        concurrency: Number(values.concurrency),
+        allowShaMismatch: values["allow-sha-mismatch"],
+      });
+      const { documented, covered } = coverage(report);
+      const count = (v: string) => report.results.filter((r) => r.verdict === v).length;
+      console.log(
+        `\n${report.ticketKey}: ${count("passed")} passed, ${count("failed")} failed, ${count("blocked")} blocked, ${count("unverified")} unverified; ${report.plan.scenarios.filter((s) => s.status === "blocked").length} not run; ${covered}/${documented.length} documented requirements compared`,
+      );
+      console.log(`report: ${path.join(outDir, "report.md")}`);
+      return count("failed") === 0 ? 0 : 1;
+    } finally {
+      await driver.close();
+    }
+  }
+
+  if (command === "retest") {
+    if (!values.run) {
+      console.error("retest needs --run <run.json>");
+      return 2;
+    }
+    const previous = JSON.parse(await readFile(values.run, "utf8")) as RunReport;
+    const driver = makeDriver();
+    try {
+      const { rows } = await retest({
+        previous,
+        manifest,
+        driver,
+        outDir,
+        expectedSha: values["expect-sha"],
+        concurrency: Number(values.concurrency),
+      });
+      for (const r of rows) console.log(`${r.scenarioId}: ${r.before} -> ${r.after} (${r.how})`);
+      console.log(`report: ${path.join(outDir, "retest.md")}`);
+      return rows.some((r) => r.after === "failed") ? 1 : 0;
+    } finally {
+      await driver.close();
+    }
+  }
+
+  if (!scenarioFile) {
+    console.error(USAGE);
+    return 2;
+  }
+  const scenario = Scenario.parse(JSON.parse(await readFile(scenarioFile, "utf8")));
+  const base = { scenario, manifest, expectedSha: values["expect-sha"] };
 
   if (command === "replay") {
     if (!values.steps) {
@@ -81,47 +157,27 @@ async function main(): Promise<number> {
     }
     const raw = JSON.parse(await readFile(values.steps, "utf8"));
     const steps = Step.array().parse(Array.isArray(raw) ? raw : raw.steps);
-    const result = await runScenario({ ...base, outDir: path.join(root, scenario.id), mode: { kind: "replay", steps } });
-    print(result, " (replay)");
+    const result = await runScenario({ ...base, outDir: path.join(outDir, scenario.id), mode: { kind: "replay", steps } });
+    printScenario(result, " (replay)");
     return result.verdict === "passed" ? 0 : 1;
   }
 
-  let result: ScenarioResult;
-  if (command === "serve-scenario") {
-    console.log(`Waiting for a driver on http://127.0.0.1:${values.port}/briefing`);
-    result = await serveScenario({
-      ...base,
-      outDir: path.join(root, scenario.id),
-      port: Number(values.port),
-      maxToolCalls: Number(values["max-steps"]),
-      driver: values.driver,
-    });
-  } else {
-    const effort = (process.env.RELEASEPROOF_EFFORT ?? "medium") as "low" | "medium" | "high";
-    const loop = {
-      client: new Anthropic(),
-      model: process.env.RELEASEPROOF_MODEL ?? "claude-opus-5-5",
-      effort,
-      maxToolCalls: Number(values["max-steps"]),
-    };
-    result = await runScenario({ ...base, outDir: path.join(root, scenario.id), mode: { kind: "agent", loop } });
+  const driver = makeDriver();
+  try {
+    const result = await runScenario({ ...base, outDir: path.join(outDir, scenario.id), mode: { kind: "agent", driver } });
+    printScenario(result);
+    if (values.confirm && result.verdict === "failed") {
+      const confirmation = await runScenario({
+        ...base,
+        outDir: path.join(outDir, `${scenario.id}-confirm`),
+        mode: { kind: "replay", steps: result.steps },
+      });
+      printScenario(confirmation, " (confirmation replay)");
+    }
+    return result.verdict === "passed" ? 0 : 1;
+  } finally {
+    await driver.close();
   }
-  print(result);
-
-  if (values.confirm && result.verdict === "failed") {
-    const confirmation = await runScenario({
-      ...base,
-      outDir: path.join(root, `${scenario.id}-confirm`),
-      mode: { kind: "replay", steps: result.steps },
-    });
-    print(confirmation, " (confirmation replay)");
-    console.log(
-      confirmation.verdict === "failed"
-        ? "\nFailure reproduced without the model."
-        : "\nFailure did NOT reproduce on replay; treat it as unverified.",
-    );
-  }
-  return result.verdict === "passed" ? 0 : 1;
 }
 
 main().then(

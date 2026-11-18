@@ -36,7 +36,11 @@ export function renderReport(scenario: Scenario, result: ScenarioResult): string
   );
   for (const assertion of scenario.assertions) {
     const r = result.assertionResults.find((x) => x.assertionId === assertion.id);
-    const planned = "literal" in assertion.expected ? assertion.expected.literal : assertion.expected.formula;
+    const planned = !assertion.expected
+      ? assertion.kind
+      : "literal" in assertion.expected
+        ? assertion.expected.literal
+        : assertion.expected.formula;
     lines.push(
       `| ${assertion.id} | ${cell(assertion.description)} | \`${cell(planned)}\` | ${r ? cell(r.expected) : ""} | ${r ? cell(r.actual) : ""} | ${r ? (r.pass ? "match" : "**MISMATCH**") : "not checked"} | ${r?.screenshot ? `[${r.screenshot}](${r.screenshot})` : ""} |`,
     );

@@ -11,6 +11,7 @@ fixtures:
       handle: "{{key}}"
       role: employee
       balance: 20
+    account: true
   manager:
     description: A manager who can decide requests from any employee. Returns handle, password, name and role.
     method: POST
@@ -18,3 +19,9 @@ fixtures:
     body:
       handle: "{{key}}"
       role: manager
+    account: true
+docs:
+  - README.md
+signIn:
+  allow:
+    - POST /api/session

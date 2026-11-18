@@ -3,6 +3,7 @@ import type { BrowserContext, Locator, Page } from "playwright";
 import { z } from "zod";
 import { evaluateFormula } from "../formula.ts";
 import type { AssertionResult, Outcome, Scenario, Step } from "../schema.ts";
+import type { SecretVault } from "../secrets.ts";
 
 /** Everything one scenario execution accumulates. */
 export type Session = {
@@ -16,9 +17,24 @@ export type Session = {
   assertionResults: AssertionResult[];
   steps: Step[];
   outcome?: Outcome;
-  /** When set, nothing that could change application state is allowed. */
-  readOnly?: boolean;
+  vault: SecretVault;
+  /**
+   * Which state-changing requests may leave the browser: all of them, none,
+   * or only those matching patterns such as "POST /sign-in" ("*" ends a prefix).
+   */
+  writes: "all" | "none" | string[];
 };
+
+/** Whether a request is permitted under a session's write policy. */
+export function requestAllowed(writes: Session["writes"], method: string, pathname: string): boolean {
+  if (["GET", "HEAD"].includes(method) || writes === "all") return true;
+  if (writes === "none") return false;
+  return writes.some((pattern) => {
+    const [m, p = ""] = pattern.trim().split(/\s+/);
+    if (m !== method) return false;
+    return p.endsWith("*") ? pathname.startsWith(p.slice(0, -1)) : pathname === p;
+  });
+}
 
 const ROLES = [
   "button", "link", "textbox", "spinbutton", "checkbox", "radio", "combobox",
@@ -42,7 +58,8 @@ const PageTarget = z.object({
 const ApiTarget = z.object({
   source: z.literal("api"),
   responseId: z.string().describe("Id returned by api_request."),
-  jsonPath: z.string().describe('Dot path into the JSON body, e.g. "items.0.status".'),
+  field: z.enum(["body", "status"]).default("body").describe('"status" reads the HTTP status code.'),
+  jsonPath: z.string().default("").describe('For field=body: dot path into the JSON body, e.g. "items.0.status".'),
 });
 const Target = z.discriminatedUnion("source", [PageTarget, ApiTarget]);
 type Target = z.infer<typeof Target>;
@@ -57,6 +74,7 @@ const schemas = {
   navigate: z.object({ path: z.string().describe('Path on the application under test, e.g. "/settings".') }),
   click: z.object({ element: ElementRef }),
   fill: z.object({ element: ElementRef, text: z.string() }),
+  select: z.object({ element: ElementRef, option: z.string().describe("Visible label of the option to choose.") }),
   api_request: z.object({
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
     path: z.string(),
@@ -77,20 +95,23 @@ export type ToolName = keyof typeof schemas;
 const descriptions: Record<ToolName, string> = {
   navigate: "Open a path on the application under test. Returns the resulting page.",
   click: "Click one element. Returns the resulting page.",
-  fill: "Replace the content of one input. Returns the resulting page.",
+  fill: "Replace the content of one input. Returns the resulting page. Secret placeholders from the test data are substituted for you.",
+  select: "Choose one option of a drop-down by its visible label. Returns the resulting page.",
   api_request:
     "Send an HTTP request to the application under test using the browser session's cookies. Returns status, body and a responseId usable as a target.",
   observe:
     "Read a number from the page or from an API response and store it under a name, for use in assertion formulas. Read it at the moment it is meaningful; it is not re-read later.",
   check:
-    "Run one planned assertion. The tool reads the actual value from the target you point at and compares it in code with the expectation fixed in the plan. Each assertion can be checked once; the first result is final.",
+    "Run one planned assertion. The tool reads the actual value from the target you point at and compares it in code with the expectation fixed in the plan. For kinds present and absent, the target is the element (or API field) whose existence is in question. Each assertion can be checked once; the first result is final.",
   finish:
     'End the scenario. Use "blocked" with a specific reason if something outside your control prevented a check. You do not decide pass or fail.',
 };
 
 const RATIONALE = z.string().describe("One sentence: why you are taking this step now.");
 
-export const toolDefinitions = (Object.keys(schemas) as ToolName[]).map((name) => ({
+export const ALL_TOOLS = Object.keys(schemas) as ToolName[];
+
+export const toolDefinitions = ALL_TOOLS.map((name) => ({
   name,
   description: descriptions[name],
   input_schema: z.toJSONSchema(schemas[name].extend({ rationale: RATIONALE })) as {
@@ -106,9 +127,15 @@ const LOCATE_TIMEOUT_MS = 3_000;
 const SETTLE_TIMEOUT_MS = 10_000;
 const STABLE_TIMEOUT_MS = 5_000;
 
-async function describePage(page: Page): Promise<string> {
+export async function describePage(session: Pick<Session, "page" | "vault">): Promise<string> {
+  const { page } = session;
   const url = new URL(page.url());
-  const snapshot = await page.locator("body").ariaSnapshot();
+  let snapshot = session.vault.scrub(await page.locator("body").ariaSnapshot());
+  // Whatever sits in a password field is hidden, whether or not we know it.
+  const typed = await page
+    .locator('input[type="password"]')
+    .evaluateAll((inputs) => inputs.map((i) => (i as HTMLInputElement).value).filter((v) => v.length > 0));
+  for (const value of typed) snapshot = snapshot.split(value).join("[REDACTED]");
   const body =
     snapshot.length > SNAPSHOT_LIMIT
       ? `${snapshot.slice(0, SNAPSHOT_LIMIT)}\n[snapshot cut at ${SNAPSHOT_LIMIT} of ${snapshot.length} characters]`
@@ -116,14 +143,18 @@ async function describePage(page: Page): Promise<string> {
   return `URL: ${url.pathname}${url.search}\n${body}`;
 }
 
-async function locate(page: Page, ref: z.infer<typeof ElementRef>): Promise<Locator> {
-  let locator: Locator;
+function buildLocator(page: Page, ref: z.infer<typeof ElementRef>): Locator {
   if (ref.by === "role") {
     if (!ref.role) throw new Error("role is required when by=role");
-    locator = page.getByRole(ref.role, { name: ref.value, exact: true });
-  } else if (ref.by === "label") locator = page.getByLabel(ref.value, { exact: true });
-  else if (ref.by === "testid") locator = page.getByTestId(ref.value);
-  else locator = page.getByText(ref.value);
+    return page.getByRole(ref.role, { name: ref.value, exact: true });
+  }
+  if (ref.by === "label") return page.getByLabel(ref.value, { exact: true });
+  if (ref.by === "testid") return page.getByTestId(ref.value);
+  return page.getByText(ref.value);
+}
+
+async function locate(page: Page, ref: z.infer<typeof ElementRef>): Promise<Locator> {
+  const locator = buildLocator(page, ref);
 
   // Pages may still be rendering after an action, so give the element a
   // moment to appear before deciding it is missing or ambiguous.
@@ -145,7 +176,7 @@ async function locate(page: Page, ref: z.infer<typeof ElementRef>): Promise<Loca
  * idleness reports reliably, so after the network goes quiet the URL and the
  * accessibility tree must also read the same twice in a row.
  */
-async function settle(page: Page): Promise<void> {
+export async function settle(page: Page): Promise<void> {
   await page.waitForTimeout(150);
   await page.waitForLoadState("networkidle", { timeout: SETTLE_TIMEOUT_MS }).catch(() => {});
   const read = async () => `${page.url()}\n${await page.locator("body").ariaSnapshot().catch(() => "")}`;
@@ -176,6 +207,7 @@ async function readTarget(session: Session, target: Target): Promise<{ text: str
   if (target.source === "api") {
     const response = session.apiResponses.get(target.responseId);
     if (!response) throw new Error(`Unknown responseId "${target.responseId}".`);
+    if (target.field === "status") return { text: String(response.status) };
     let value: unknown = response.body;
     for (const key of target.jsonPath.split(".").filter(Boolean)) {
       if (value === null || typeof value !== "object" || !(key in value)) {
@@ -228,24 +260,33 @@ const handlers: Handlers = {
     if (!p.startsWith("/") || p.startsWith("//")) throw new Error('path must start with a single "/".');
     await s.page.goto(new URL(p, s.baseUrl).toString(), { waitUntil: "load" });
     await settle(s.page);
-    return describePage(s.page);
+    return describePage(s);
   },
 
   async click(s, { element }) {
     await (await locate(s.page, element)).click();
     await settle(s.page);
-    return describePage(s.page);
+    return describePage(s);
   },
 
   async fill(s, { element, text }) {
     await (await locate(s.page, element)).fill(text);
-    return describePage(s.page);
+    return describePage(s);
+  },
+
+  async select(s, { element, option }) {
+    await (await locate(s.page, element)).selectOption({ label: option });
+    await settle(s.page);
+    return describePage(s);
   },
 
   async api_request(s, { method, path: p, body }) {
     if (!p.startsWith("/") || p.startsWith("//")) throw new Error('path must start with a single "/".');
-    if (s.readOnly && method !== "GET") throw new Error("This session is read-only; only GET is allowed.");
-    const response = await s.context.request.fetch(new URL(p, s.baseUrl).toString(), {
+    const url = new URL(p, s.baseUrl);
+    if (!requestAllowed(s.writes, method, url.pathname)) {
+      throw new Error(`${method} ${url.pathname} is not permitted in this session.`);
+    }
+    const response = await s.context.request.fetch(url.toString(), {
       method,
       data: body === undefined ? undefined : (body as object),
     });
@@ -278,26 +319,54 @@ const handlers: Handlers = {
       throw new Error(`Assertion ${assertionId} already has a recorded result; it cannot be re-checked.`);
     }
 
-    // Resolve both sides before recording anything: a target that cannot be
-    // read, or a formula with a missing observation, is a tool error and not
-    // a test result.
-    const { text, locator } = await readTarget(s, target);
-    const expected =
-      "literal" in assertion.expected
-        ? assertion.expected.literal
-        : evaluateFormula(assertion.expected.formula, s.observations);
-
+    let expected: number | string;
     let actual: number | string;
     let pass: boolean;
-    if (assertion.kind === "number_equals") {
-      actual = parseNumber(text);
-      pass = Math.abs(actual - Number(expected)) < 1e-9;
-    } else if (assertion.kind === "text_equals") {
-      actual = text;
-      pass = actual === squash(String(expected));
+    let locator: Locator | undefined;
+
+    if (assertion.kind === "present" || assertion.kind === "absent") {
+      // Existence is the question, so a target that matches nothing is an
+      // answer here and not a tool error.
+      let count: number;
+      if (target.source === "api") {
+        count = await readTarget(s, target).then(
+          () => 1,
+          () => 0,
+        );
+      } else {
+        const found = buildLocator(s.page, target);
+        const deadline = Date.now() + (assertion.kind === "present" ? LOCATE_TIMEOUT_MS : 1_000);
+        count = await found.count();
+        while (count === 0 && Date.now() < deadline) {
+          await s.page.waitForTimeout(100);
+          count = await found.count();
+        }
+        if (count === 1) locator = found;
+      }
+      expected = assertion.kind;
+      actual = count === 0 ? "absent" : "present";
+      pass = actual === expected;
     } else {
-      actual = text;
-      pass = actual.includes(squash(String(expected)));
+      // Resolve both sides before recording anything: a target that cannot be
+      // read, or a formula with a missing observation, is a tool error and not
+      // a test result.
+      if (!assertion.expected) throw new Error(`Assertion ${assertionId} has no expected value in the plan.`);
+      const read = await readTarget(s, target);
+      locator = read.locator;
+      expected =
+        "literal" in assertion.expected
+          ? assertion.expected.literal
+          : evaluateFormula(assertion.expected.formula, s.observations);
+      if (assertion.kind === "number_equals") {
+        actual = parseNumber(read.text);
+        pass = Math.abs(actual - Number(expected)) < 1e-9;
+      } else if (assertion.kind === "text_equals") {
+        actual = read.text;
+        pass = actual === squash(String(expected));
+      } else {
+        actual = read.text;
+        pass = actual.includes(squash(String(expected)));
+      }
     }
 
     const shot = await screenshot(s, `check-${assertionId}`, locator);
@@ -319,22 +388,27 @@ export async function runTool(
   session: Session,
   name: string,
   input: unknown,
+  allowed: readonly ToolName[] = ALL_TOOLS,
 ): Promise<{ ok: boolean; output: string }> {
   let ok = true;
   let output: string;
   try {
-    if (!(name in schemas)) throw new Error(`Unknown tool "${name}".`);
+    if (!(name in schemas) || !allowed.includes(name as ToolName)) throw new Error(`Unknown tool "${name}".`);
     const tool = name as ToolName;
     const parsed = schemas[tool].safeParse(input);
     if (!parsed.success) throw new Error(`Invalid input: ${z.prettifyError(parsed.error)}`);
-    output = await (handlers[tool] as (s: Session, i: unknown) => Promise<string>)(session, parsed.data);
+    // Placeholders become real values only here, on the way into the browser.
+    const resolved = session.vault.resolve(parsed.data);
+    output = await (handlers[tool] as (s: Session, i: unknown) => Promise<string>)(session, resolved);
   } catch (error) {
     ok = false;
     output = `Error: ${(error as Error).message.split("\n")[0]}`;
   }
+  output = session.vault.scrub(output);
   const rationale = (input as { rationale?: unknown } | null)?.rationale;
   session.steps.push({
     tool: name,
+    // The input as the executor wrote it: placeholders, never secret values.
     input,
     ok,
     summary: output.split("\n")[0]!.slice(0, 300),

@@ -1,12 +1,14 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
+import type { Driver } from "../drivers/driver.ts";
 import { createFixtures, deployedSha } from "../env.ts";
 import { renderReport } from "../report/markdown.ts";
-import type { Manifest, Scenario, ScenarioResult, Step } from "../schema.ts";
-import { runAgentLoop, type LoopOptions, type LoopUsage } from "./loop.ts";
+import type { Manifest, Scenario, ScenarioResult, Step, Usage } from "../schema.ts";
+import { SecretVault } from "../secrets.ts";
+import { briefing, SYSTEM } from "./briefing.ts";
 import { replaySteps } from "./replay.ts";
-import type { Session } from "./tools.ts";
+import { ALL_TOOLS, requestAllowed, type Session } from "./tools.ts";
 import { computeVerdict } from "./verdict.ts";
 
 export type SessionOptions = {
@@ -15,14 +17,15 @@ export type SessionOptions = {
   outDir: string;
   /** If set, the environment must report this commit or nothing is executed. */
   expectedSha?: string;
-  /** Block every request that is not a GET or HEAD, at the network layer. */
-  readOnly?: boolean;
+  /** State-changing requests allowed out of the browser. Default: all. */
+  writes?: Session["writes"];
 };
 
 export type OpenSession = {
   session: Session;
   browser: Browser;
   manifest: Manifest;
+  /** Fixture data as the model may see it: secrets replaced by placeholders. */
   fixtures: Record<string, unknown>;
   sha?: string;
   expectedSha?: string;
@@ -42,14 +45,6 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   const browser = await chromium.launch();
   const context = await browser.newContext({ baseURL: manifest.baseUrl });
   const origin = new URL(manifest.baseUrl).origin;
-  // The executor may only talk to the application under test, and in
-  // read-only mode may not send anything that could change its state.
-  await context.route("**/*", (route) => {
-    const request = route.request();
-    const sameOrigin = new URL(request.url()).origin === origin;
-    const safeMethod = ["GET", "HEAD"].includes(request.method());
-    return sameOrigin && (!options.readOnly || safeMethod) ? route.continue() : route.abort();
-  });
   await context.tracing.start({ screenshots: true, snapshots: true });
 
   const session: Session = {
@@ -62,8 +57,20 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
     apiResponses: new Map(),
     assertionResults: [],
     steps: [],
-    readOnly: options.readOnly,
+    vault: new SecretVault(),
+    writes: options.writes ?? "all",
   };
+
+  // The executor may only talk to the application under test, and only send
+  // what the session's write policy permits. The policy is read per request,
+  // so a session can be tightened while it runs.
+  await context.route("**/*", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    return url.origin === origin && requestAllowed(session.writes, request.method(), url.pathname)
+      ? route.continue()
+      : route.abort();
+  });
 
   let sha: string | undefined;
   let fixtures: Record<string, unknown> = {};
@@ -75,7 +82,11 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
         reason: `The environment runs commit ${sha ?? "unknown"}, not ${options.expectedSha}. Nothing was executed.`,
       };
     } else {
-      fixtures = await createFixtures(context.request, manifest, scenario.id, scenario.fixtures);
+      const raw = await createFixtures(context.request, manifest, scenario.id, scenario.fixtures);
+      const extra = Object.fromEntries(
+        Object.entries(scenario.fixtures).map(([alias, type]) => [alias, manifest.fixtures[type]?.secretFields ?? []]),
+      );
+      fixtures = session.vault.maskFixtures(raw, extra);
     }
   } catch (error) {
     session.outcome = { kind: "blocked", reason: `Environment error: ${(error as Error).message.split("\n")[0]}` };
@@ -86,7 +97,7 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
 /** Stops the browser, computes the verdict and writes result.json and report.md. */
 export async function closeSession(
   open: OpenSession,
-  info: { mode: "agent" | "replay"; driver?: string; usage?: LoopUsage },
+  info: { mode: "agent" | "replay"; driver?: string; usage?: Usage },
 ): Promise<ScenarioResult> {
   const { session } = open;
   await session.context.tracing.stop({ path: path.join(session.outDir, "trace.zip") });
@@ -100,7 +111,7 @@ export async function closeSession(
     mode: info.mode,
     driver: info.driver,
     verdict,
-    reason,
+    reason: session.vault.scrub(reason),
     environment: { baseUrl: session.baseUrl, deployedSha: open.sha, expectedSha: open.expectedSha },
     assertionResults: session.assertionResults,
     observations: session.observations,
@@ -116,17 +127,24 @@ export async function closeSession(
 }
 
 export type RunOptions = SessionOptions & {
-  mode: { kind: "agent"; loop: LoopOptions } | { kind: "replay"; steps: Step[] };
+  maxToolCalls?: number;
+  mode: { kind: "agent"; driver: Driver } | { kind: "replay"; steps: Step[] };
 };
 
-/** Runs one scenario start to finish, with the built-in model loop or a recording. */
+/** Runs one scenario start to finish, driven by a model or by a recording. */
 export async function runScenario(options: RunOptions): Promise<ScenarioResult> {
   const open = await openSession(options);
-  let usage: LoopUsage | undefined;
+  let usage: Usage | undefined;
   if (!open.session.outcome) {
     try {
       if (options.mode.kind === "agent") {
-        usage = await runAgentLoop(open.session, open.manifest, open.fixtures, options.mode.loop);
+        usage = await options.mode.driver.session(open.session, {
+          name: options.scenario.id,
+          system: SYSTEM,
+          briefing: briefing(options.scenario, open.manifest, open.fixtures),
+          tools: ALL_TOOLS,
+          maxToolCalls: options.maxToolCalls ?? 60,
+        });
       } else {
         await replaySteps(open.session, options.mode.steps);
       }
@@ -139,7 +157,7 @@ export async function runScenario(options: RunOptions): Promise<ScenarioResult> 
   }
   return closeSession(open, {
     mode: options.mode.kind,
-    driver: options.mode.kind === "agent" ? options.mode.loop.model : undefined,
+    driver: options.mode.kind === "agent" ? options.mode.driver.label : undefined,
     usage,
   });
 }
