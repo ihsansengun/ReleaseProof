@@ -1,0 +1,568 @@
+{
+  "scenarioId": "S2",
+  "title": "Employee cancels an Approved far-future request in the UI; days returned immediately and after reload",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "passed",
+  "reason": "All 6 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3100",
+    "deployedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0",
+    "expectedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": "present",
+      "actual": "present",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "role",
+        "role": "button",
+        "value": "Cancel request from 2027-03-08 to 2027-03-10",
+        "count": false,
+        "read": "name"
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": "2027-03-10",
+      "actual": "Cancel request from 2027-03-08 to 2027-03-10",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "role",
+        "role": "button",
+        "value": "Cancel request from 2027-03-08 to 2027-03-10",
+        "count": false,
+        "read": "name"
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": "Cancelled",
+      "actual": "2027-03-08 2027-03-10 3 Family trip Cancelled",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "role",
+        "role": "row",
+        "value": "2027-03-08 2027-03-10 3 Family trip Cancelled",
+        "count": false,
+        "read": "text"
+      },
+      "screenshot": "check-A3.png"
+    },
+    {
+      "assertionId": "A4",
+      "expected": 20,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Days remaining:",
+        "count": false,
+        "read": "text",
+        "pattern": "Days remaining:\\s*(\\d+)"
+      },
+      "screenshot": "check-A4.png"
+    },
+    {
+      "assertionId": "A5",
+      "expected": 18,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Days remaining:",
+        "count": false,
+        "read": "text",
+        "pattern": "Days remaining:\\s*(\\d+)"
+      },
+      "screenshot": "check-A5.png"
+    },
+    {
+      "assertionId": "A6",
+      "expected": 20,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Days remaining:",
+        "count": false,
+        "read": "text",
+        "pattern": "Days remaining:\\s*(\\d+)"
+      },
+      "screenshot": "check-A6.png"
+    }
+  ],
+  "observations": {
+    "balanceBeforeApproval": 20,
+    "balanceApproved": 17,
+    "balanceAfterCancel": 20,
+    "balanceAfterReload": 20
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the application landing page."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the application landing page."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s2-emp",
+        "rationale": "Enter employee username."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee username."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Enter employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "First day"
+        },
+        "text": "2027-03-08",
+        "rationale": "Set first day."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set first day."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Last day"
+        },
+        "text": "2027-03-10",
+        "rationale": "Set last day."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set last day."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Reason"
+        },
+        "text": "Family trip",
+        "rationale": "Set reason."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set reason."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Submit request"
+        },
+        "rationale": "Submit the leave request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit the leave request."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceBeforeApproval",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "read": "text",
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Record balance after submitting, before approval."
+      },
+      "ok": true,
+      "summary": "Recorded balanceBeforeApproval = 20",
+      "rationale": "Record balance after submitting, before approval."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out to switch to manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign out to switch to manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s2-mgr",
+        "rationale": "Enter manager username."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter manager username."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:mgr.password}}",
+        "rationale": "Enter manager password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter manager password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Sign in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as manager."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Approve request 14 from Employee s2-emp"
+        },
+        "rationale": "Approve the s2-emp request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Approve the s2-emp request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign out manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s2-emp",
+        "rationale": "Enter employee username."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee username."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Enter employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Sign in again as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in again as employee."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceApproved",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "read": "text",
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Record balance after approval."
+      },
+      "ok": true,
+      "summary": "Recorded balanceApproved = 17",
+      "rationale": "Record balance after approval."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "page",
+          "by": "role",
+          "role": "button",
+          "value": "Cancel request from 2027-03-08 to 2027-03-10",
+          "count": false,
+          "read": "name"
+        },
+        "rationale": "Cancel button exists on the Approved row."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected present, actual present -> match. This result is final.",
+      "rationale": "Cancel button exists on the Approved row."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "page",
+          "by": "role",
+          "role": "button",
+          "value": "Cancel request from 2027-03-08 to 2027-03-10",
+          "count": false,
+          "read": "name"
+        },
+        "rationale": "Accessible name of the Cancel button should contain the last day."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 2027-03-10, actual Cancel request from 2027-03-08 to 2027-03-10 -> match. This result is final.",
+      "rationale": "Accessible name of the Cancel button should contain the last day."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Cancel request from 2027-03-08 to 2027-03-10"
+        },
+        "rationale": "Cancel the approved request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Cancel the approved request."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceAfterCancel",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "read": "text",
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Record balance right after cancel, no reload."
+      },
+      "ok": true,
+      "summary": "Recorded balanceAfterCancel = 20",
+      "rationale": "Record balance right after cancel, no reload."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "page",
+          "by": "role",
+          "role": "row",
+          "value": "2027-03-08 2027-03-10 3 Family trip Cancelled",
+          "count": false,
+          "read": "text"
+        },
+        "rationale": "Row status after cancel without reload."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected Cancelled, actual 2027-03-08 2027-03-10 3 Family trip Cancelled -> match. This result is final.",
+      "rationale": "Row status after cancel without reload."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A4",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "read": "text",
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Balance after cancel equals balanceBeforeApproval."
+      },
+      "ok": true,
+      "summary": "Recorded A4: expected 20, actual 20 -> match. This result is final.",
+      "rationale": "Balance after cancel equals balanceBeforeApproval."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A5",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "read": "text",
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Balance after cancel at least balanceApproved+1."
+      },
+      "ok": true,
+      "summary": "Recorded A5: expected 18, actual 20 -> match. This result is final.",
+      "rationale": "Balance after cancel at least balanceApproved+1."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Reload the page to verify persisted state."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Reload the page to verify persisted state."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceAfterReload",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "read": "text",
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Record balance after reload."
+      },
+      "ok": true,
+      "summary": "Recorded balanceAfterReload = 20",
+      "rationale": "Record balance after reload."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A6",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Days remaining:",
+          "count": false,
+          "read": "text",
+          "pattern": "Days remaining:\\s*(\\d+)"
+        },
+        "rationale": "Balance after reload equals balanceBeforeApproval."
+      },
+      "ok": true,
+      "summary": "Recorded A6: expected 20, actual 20 -> match. This result is final.",
+      "rationale": "Balance after reload equals balanceBeforeApproval."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All six assertions checked; row status after reload still Cancelled.",
+        "rationale": "Every assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "rerun/out-S2/S2"
+  },
+  "startedAt": "2026-11-18T19:04:58.740Z",
+  "durationMs": 101558
+}

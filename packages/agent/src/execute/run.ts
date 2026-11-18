@@ -29,6 +29,8 @@ export type OpenSession = {
   fixtures: Record<string, unknown>;
   sha?: string;
   expectedSha?: string;
+  /** The application server's current date (UTC), from its response headers. */
+  serverDate?: string;
   startedAt: Date;
 };
 
@@ -73,9 +75,12 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   });
 
   let sha: string | undefined;
+  let serverDate: string | undefined;
   let fixtures: Record<string, unknown> = {};
   try {
     sha = await deployedSha(context.request, manifest);
+    const header = (await context.request.get(manifest.baseUrl)).headers()["date"];
+    if (header && !Number.isNaN(Date.parse(header))) serverDate = new Date(header).toISOString().slice(0, 10);
     if (options.expectedSha && sha !== options.expectedSha) {
       session.outcome = {
         kind: "blocked",
@@ -91,7 +96,7 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   } catch (error) {
     session.outcome = { kind: "blocked", reason: `Environment error: ${(error as Error).message.split("\n")[0]}` };
   }
-  return { session, browser, manifest, fixtures, sha, expectedSha: options.expectedSha, startedAt };
+  return { session, browser, manifest, fixtures, sha, expectedSha: options.expectedSha, serverDate, startedAt };
 }
 
 /** Stops the browser, computes the verdict and writes result.json and report.md. */
@@ -141,7 +146,7 @@ export async function runScenario(options: RunOptions): Promise<ScenarioResult> 
         usage = await options.mode.driver.session(open.session, {
           name: options.scenario.id,
           system: SYSTEM,
-          briefing: briefing(options.scenario, open.manifest, open.fixtures),
+          briefing: briefing(options.scenario, open.manifest, open.fixtures, open.serverDate),
           tools: ALL_TOOLS,
           maxToolCalls: options.maxToolCalls ?? 60,
         });

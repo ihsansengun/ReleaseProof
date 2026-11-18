@@ -1,0 +1,500 @@
+{
+  "scenarioId": "S3",
+  "title": "Employee cannot decide own request; approval deducts once even if approved twice",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "passed",
+  "reason": "All 3 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3100",
+    "deployedSha": "dev-timeoff",
+    "expectedSha": "dev-timeoff"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": 20,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R4",
+        "field": "body",
+        "jsonPath": "balance",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": "Pending",
+      "actual": "Pending",
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R5",
+        "field": "body",
+        "jsonPath": "0.status",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": 19,
+      "actual": 19,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R7",
+        "field": "body",
+        "jsonPath": "balance",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    }
+  ],
+  "observations": {
+    "apiBalanceBefore": 20,
+    "apiBalanceAfterEmployeeDecide": 20,
+    "apiBalanceFinal": 19
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Find the sign-in page."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Find the sign-in page."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s3-emp",
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Read starting balance."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"handle\":\"s3-emp\",\"name\":\"Employee s3-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Read starting balance."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiBalanceBefore",
+        "target": {
+          "source": "api",
+          "responseId": "R1",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record starting balance."
+      },
+      "ok": true,
+      "summary": "Recorded apiBalanceBefore = 20",
+      "rationale": "Record starting balance."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "First day"
+        },
+        "text": "2027-03-10",
+        "rationale": "Single-day request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Single-day request."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Last day"
+        },
+        "text": "2027-03-10",
+        "rationale": "Single-day request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Single-day request."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Reason"
+        },
+        "text": "S3 test day off",
+        "rationale": "Any reason."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Any reason."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Submit request"
+        },
+        "rationale": "Submit the request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit the request."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/requests",
+        "rationale": "Get the new request id."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":[{\"id\":1,\"employee\":\"s3-emp\",\"employeeName\":\"Employee s3-emp\",\"start\":\"2027-03-10\",\"end\":\"2027-03-10\",\"days\":1,\"reason\":\"S3 test day off\",\"status\":\"Pending\"}]}",
+      "rationale": "Get the new request id."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "POST",
+        "path": "/api/requests/1/decision",
+        "body": {
+          "decision": "approve"
+        },
+        "rationale": "Employee attempts to approve own request."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R3\",\"status\":403,\"body\":{\"error\":\"Only managers can decide requests.\"}}",
+      "rationale": "Employee attempts to approve own request."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Balance after employee decision attempt."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R4\",\"status\":200,\"body\":{\"handle\":\"s3-emp\",\"name\":\"Employee s3-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Balance after employee decision attempt."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/requests",
+        "rationale": "Request status after employee decision attempt."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R5\",\"status\":200,\"body\":[{\"id\":1,\"employee\":\"s3-emp\",\"employeeName\":\"Employee s3-emp\",\"start\":\"2027-03-10\",\"end\":\"2027-03-10\",\"days\":1,\"reason\":\"S3 test day off\",\"status\":\"Pending\"}]}",
+      "rationale": "Request status after employee decision attempt."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiBalanceAfterEmployeeDecide",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record balance after employee decide."
+      },
+      "ok": true,
+      "summary": "Recorded apiBalanceAfterEmployeeDecide = 20",
+      "rationale": "Record balance after employee decide."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Balance after employee attempt should equal before."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected 20, actual 20 -> match. This result is final.",
+      "rationale": "Balance after employee attempt should equal before."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R5",
+          "field": "body",
+          "jsonPath": "0.status",
+          "count": false
+        },
+        "rationale": "Status should still be Pending."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected Pending, actual Pending -> match. This result is final.",
+      "rationale": "Status should still be Pending."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch to manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch to manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s3-mgr",
+        "rationale": "Manager sign in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Manager sign in."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:mgr.password}}",
+        "rationale": "Manager password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Manager password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Approve request 1 from Employee s3-emp"
+        },
+        "rationale": "Manager approves the request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Manager approves the request."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "POST",
+        "path": "/api/requests/1/decision",
+        "body": {
+          "decision": "approve"
+        },
+        "rationale": "Second approve for the same request."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R6\",\"status\":409,\"body\":{\"error\":\"This request was already decided.\"}}",
+      "rationale": "Second approve for the same request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch back to employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch back to employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Username"
+        },
+        "text": "s3-emp",
+        "rationale": "Employee sign in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Employee sign in."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Final balance in fresh employee session."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R7\",\"status\":200,\"body\":{\"handle\":\"s3-emp\",\"name\":\"Employee s3-emp\",\"role\":\"employee\",\"balance\":19}}",
+      "rationale": "Final balance in fresh employee session."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "apiBalanceFinal",
+        "target": {
+          "source": "api",
+          "responseId": "R7",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record final balance."
+      },
+      "ok": true,
+      "summary": "Recorded apiBalanceFinal = 19",
+      "rationale": "Record final balance."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "api",
+          "responseId": "R7",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Final balance should be before minus 1."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected 19, actual 19 -> match. This result is final.",
+      "rationale": "Final balance should be before minus 1."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All three assertions checked.",
+        "rationale": "Scenario complete."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Scenario complete."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "dev-timeoff/scenarios/S3"
+  },
+  "startedAt": "2026-11-18T18:48:36.647Z",
+  "durationMs": 74762
+}

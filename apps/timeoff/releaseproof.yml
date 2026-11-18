@@ -25,3 +25,10 @@ docs:
 signIn:
   allow:
     - POST /api/session
+start:
+  run: node apps/timeoff/server.mjs
+  port: 3100
+  commitEnv: GIT_SHA
+  env:
+    PORT: "3100"
+    TEST_MODE: "1"

@@ -166,11 +166,15 @@ Four kinds of input are untrusted: Jira content, PR descriptions and diffs, repo
 ## Status
 
 Verified by execution (see `eval/results/`):
-- App A and App B, each with a manifest, fixtures and a version endpoint
-- Tool layer, recording and replay, verdict computation, formula evaluator, commit guard, read-only guard
-- Model-driven execution through the HTTP bridge on both apps, clean and seeded-bug builds, with correct verdicts in every run so far
-- Model-free replay reproducing the model-found failures
+- Engine: tools, code-computed verdicts, recording, replay, commit guard, write policy, secret placeholders
+- Pipeline: ticket and pull-request ingestion (GitHub REST live; Jira from files in its REST format), read-only discovery, requirements analysis with mechanically verified quotes, planning with code-enforced traceability, execution, run report, retest
+- Held-out evaluation on two unseen features, one per app: 4 of 5 planted defects found with the frozen pipeline, 2 false-positive scenarios, all 4 deliberately missing rules raised as questions; 5 of 5 and no false positives after two logged engine changes
 
-Built but not yet run: the built-in loop that calls the model API directly (`execute/loop.ts`). The model-driven runs used the bridge, which serves the same instructions, briefing and tools and shares everything that decides the verdict. What the bridge runs do not exercise is the API request itself (message format, token accounting, refusal handling).
+Built but not run: the direct model API driver (`drivers/driver.ts`, `execute/loop.ts`). All model work so far went through the HTTP bridge. Jira's live REST API is likewise unexercised.
 
-Not built: ingestion, discovery, analysis, planning, CI, PR reporting.
+Not built: GitHub Actions workflow and its isolation, posting the report to the pull request, posting questions to Jira, failure investigation beyond replay.
+
+Findings that change the design:
+- Replay confirms that a failure repeats, not that it is a defect. A second, independently chosen comparison is needed before calling a failure confirmed.
+- Executors need environment facts (today's date) stated, and behave inconsistently when one is missing.
+- Text locators need exact or whole-line matching.

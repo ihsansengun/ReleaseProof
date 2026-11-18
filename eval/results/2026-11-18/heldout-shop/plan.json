@@ -1,0 +1,991 @@
+{
+  "scenarios": [
+    {
+      "scenario": {
+        "id": "S1",
+        "title": "SAVE10 on a $24.99 cart: field, Apply, rounding down, cart display and GET /api/cart",
+        "basis": "requirement",
+        "requirementIds": [
+          "R1",
+          "R2",
+          "R3",
+          "R10",
+          "R26"
+        ],
+        "intent": "Sign in as the customer. Add one Canvas Tote Bag ($24.99) to the cart and open the cart page. Check that the cart page has a Promo code input and an Apply button. Enter SAVE10 exactly (upper case, no spaces) and apply it. On the cart page after applying, check that the applied code is shown and record three numbers in dollars as displayed: the Subtotal (uiSubtotal), the Discount line (uiDiscount) and the Total (uiTotal). Then call GET /api/cart and record subtotalCents (apiSubtotal), discountCents (apiDiscount) and totalCents (apiTotal), and check the promoCode field.",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "Before applying any code, the cart page (with the Canvas Tote Bag in it) contains a text input for the promo code.",
+            "kind": "present",
+            "requirementId": "R1"
+          },
+          {
+            "id": "A2",
+            "description": "Before applying any code, the cart page contains a button labelled Apply.",
+            "kind": "present",
+            "requirementId": "R1"
+          },
+          {
+            "id": "A3",
+            "description": "After applying SAVE10, the cart page's applied-code display contains the text SAVE10.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "SAVE10"
+            },
+            "requirementId": "R10"
+          },
+          {
+            "id": "A4",
+            "description": "After applying SAVE10, discountCents from GET /api/cart (apiDiscount) equals 249: 10% of 2499 cents rounded down to the whole cent (the ticket's own example: 10% of $24.99 = $2.49).",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 249
+            },
+            "requirementId": "R3"
+          },
+          {
+            "id": "A5",
+            "description": "After applying SAVE10, apiDiscount equals 10% of apiSubtotal rounded down: floor(apiSubtotal / 10).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "floor(apiSubtotal / 10)"
+            },
+            "requirementId": "R2"
+          },
+          {
+            "id": "A6",
+            "description": "After applying SAVE10, the Discount line on the cart page (uiDiscount, dollars) equals 2.49.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 2.49
+            },
+            "requirementId": "R3"
+          },
+          {
+            "id": "A7",
+            "description": "After applying SAVE10, the Total shown on the cart page (uiTotal, dollars) equals the displayed Subtotal minus the displayed Discount.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "round((uiSubtotal - uiDiscount) * 100) / 100"
+            },
+            "requirementId": "R10"
+          },
+          {
+            "id": "A8",
+            "description": "After applying SAVE10, totalCents from GET /api/cart (apiTotal) equals apiSubtotal minus apiDiscount.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "apiSubtotal - apiDiscount"
+            },
+            "requirementId": "R26"
+          },
+          {
+            "id": "A9",
+            "description": "After applying SAVE10, the promoCode field of GET /api/cart equals SAVE10.",
+            "kind": "text_equals",
+            "expected": {
+              "literal": "SAVE10"
+            },
+            "requirementId": "R26"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K1"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S2",
+        "title": "TAKE15 refused at $59.50 with an error naming $60.00, then accepted at $71.50",
+        "basis": "requirement",
+        "requirementIds": [
+          "R4",
+          "R5",
+          "R15",
+          "R10"
+        ],
+        "intent": "Sign in as the customer. Add one Ceramic Pour-Over Set ($59.50) to the cart and open the cart page. Apply TAKE15. Record the error message shown. Then call GET /api/cart and record discountCents (belowDiscount), totalCents (belowTotal) and subtotalCents (belowSubtotal). Next add one Notebook, Dotted A5 ($12.00) so the subtotal is $71.50, return to the cart page and apply TAKE15 again. Record the cart page's Total in dollars (uiTotal) and Subtotal in dollars (uiSubtotal), and check that the applied code is shown. Call GET /api/cart and record subtotalCents (apiSubtotal), discountCents (apiDiscount) and totalCents (apiTotal).",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "After applying TAKE15 to the $59.50 cart, the error message shown on the cart page contains $60.00 (the minimum).",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "$60.00"
+            },
+            "requirementId": "R15"
+          },
+          {
+            "id": "A2",
+            "description": "After the refused TAKE15 attempt on the $59.50 cart, discountCents from GET /api/cart (belowDiscount) is 0 (code not applied).",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 0
+            },
+            "requirementId": "R15"
+          },
+          {
+            "id": "A3",
+            "description": "After the refused TAKE15 attempt, totalCents from GET /api/cart (belowTotal) equals subtotalCents (belowSubtotal).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "belowSubtotal"
+            },
+            "requirementId": "R5"
+          },
+          {
+            "id": "A4",
+            "description": "After applying TAKE15 to the $71.50 cart, discountCents from GET /api/cart (apiDiscount) equals 1500.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 1500
+            },
+            "requirementId": "R4"
+          },
+          {
+            "id": "A5",
+            "description": "After applying TAKE15 to the $71.50 cart, totalCents from GET /api/cart (apiTotal) equals apiSubtotal minus 1500.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "apiSubtotal - 1500"
+            },
+            "requirementId": "R4"
+          },
+          {
+            "id": "A6",
+            "description": "After applying TAKE15 to the $71.50 cart, the Total on the cart page (uiTotal, dollars) equals the displayed Subtotal minus 15.00.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "round((uiSubtotal - 15) * 100) / 100"
+            },
+            "requirementId": "R10"
+          },
+          {
+            "id": "A7",
+            "description": "After applying TAKE15 to the $71.50 cart, the cart page's applied-code display contains TAKE15.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "TAKE15"
+            },
+            "requirementId": "R10"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K4"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S3",
+        "title": "TAKE15 at exactly $60.00 applies; dropping the quantity below the minimum removes it",
+        "basis": "risk",
+        "requirementIds": [
+          "R6",
+          "R7",
+          "R16",
+          "R4"
+        ],
+        "intent": "Sign in as the customer. Add Notebook, Dotted A5 ($12.00) to the cart with quantity 5 so the subtotal is exactly $60.00. On the cart page apply TAKE15. Call GET /api/cart and record subtotalCents (atSubtotal), discountCents (atDiscount) and totalCents (atTotal). Then, on the cart page, change the notebook quantity to 4 (subtotal $48.00). After the cart page has updated, record the displayed Subtotal (uiSubtotal) and Total (uiTotal) in dollars, then call GET /api/cart and record subtotalCents (afterSubtotal), discountCents (afterDiscount) and totalCents (afterTotal).",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "With 5 notebooks (subtotal exactly $60.00) and TAKE15 applied, discountCents from GET /api/cart (atDiscount) equals 1500: exactly $60.00 qualifies.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 1500
+            },
+            "requirementId": "R6"
+          },
+          {
+            "id": "A2",
+            "description": "With 5 notebooks and TAKE15 applied, totalCents from GET /api/cart (atTotal) equals atSubtotal minus 1500 (the code stays applied even though the discounted total is below $60.00, since the minimum is checked before discount).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "atSubtotal - 1500"
+            },
+            "requirementId": "R7"
+          },
+          {
+            "id": "A3",
+            "description": "After changing the quantity to 4 (subtotal $48.00), discountCents from GET /api/cart (afterDiscount) is 0.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 0
+            },
+            "requirementId": "R16"
+          },
+          {
+            "id": "A4",
+            "description": "After changing the quantity to 4, totalCents from GET /api/cart (afterTotal) equals subtotalCents (afterSubtotal).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "afterSubtotal"
+            },
+            "requirementId": "R16"
+          },
+          {
+            "id": "A5",
+            "description": "After changing the quantity to 4, the Total shown on the cart page (uiTotal, dollars) equals the displayed Subtotal (uiSubtotal).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "uiSubtotal"
+            },
+            "requirementId": "R16"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K2",
+        "K4"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S4",
+        "title": "Lower-case code with surrounding spaces applies; unknown code errors and keeps it; Remove clears it",
+        "basis": "requirement",
+        "requirementIds": [
+          "R8",
+          "R9",
+          "R13",
+          "R14",
+          "R17"
+        ],
+        "intent": "Sign in as the customer. Add one Notebook, Dotted A5 ($12.00) to the cart and open the cart page. In the promo code field type the code in lower case with two spaces before and after it ('  save10  ') and apply. Check the applied code is shown, and call GET /api/cart recording subtotalCents (sub1), discountCents (disc1) and totalCents (tot1). Then enter the unknown code BOGUS99 and apply. Record the error message shown, check the applied code is still shown, and call GET /api/cart recording discountCents (disc2) and totalCents (tot2). Finally press the Remove button next to the applied code. On the cart page record the Subtotal (uiSubtotal) and Total (uiTotal) in dollars, and call GET /api/cart recording subtotalCents (sub3), discountCents (disc3) and totalCents (tot3).",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "After applying '  save10  ', discountCents from GET /api/cart (disc1) equals floor(sub1 / 10), i.e. SAVE10 was accepted despite lower case and surrounding spaces.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "floor(sub1 / 10)"
+            },
+            "requirementId": "R8"
+          },
+          {
+            "id": "A2",
+            "description": "After applying '  save10  ', disc1 is at least 1 (the code was applied rather than rejected for the spaces).",
+            "kind": "number_at_least",
+            "expected": {
+              "literal": 1
+            },
+            "requirementId": "R9"
+          },
+          {
+            "id": "A3",
+            "description": "After applying BOGUS99, the error message shown on the cart page contains exactly the text 'That promo code is not valid.'",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "That promo code is not valid."
+            },
+            "requirementId": "R13"
+          },
+          {
+            "id": "A4",
+            "description": "After applying BOGUS99, discountCents from GET /api/cart (disc2) is unchanged from disc1.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "disc1"
+            },
+            "requirementId": "R14"
+          },
+          {
+            "id": "A5",
+            "description": "After applying BOGUS99, totalCents from GET /api/cart (tot2) is unchanged from tot1.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "tot1"
+            },
+            "requirementId": "R14"
+          },
+          {
+            "id": "A6",
+            "description": "After applying BOGUS99, the cart page's applied-code display still contains SAVE10 (case-insensitive match not needed: compare the displayed code text to SAVE10).",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "SAVE10"
+            },
+            "requirementId": "R14"
+          },
+          {
+            "id": "A7",
+            "description": "After pressing Remove, discountCents from GET /api/cart (disc3) is 0.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 0
+            },
+            "requirementId": "R17"
+          },
+          {
+            "id": "A8",
+            "description": "After pressing Remove, totalCents from GET /api/cart (tot3) equals subtotalCents (sub3).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "sub3"
+            },
+            "requirementId": "R17"
+          },
+          {
+            "id": "A9",
+            "description": "After pressing Remove, the Total shown on the cart page (uiTotal) equals the displayed Subtotal (uiSubtotal).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "uiSubtotal"
+            },
+            "requirementId": "R17"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K13",
+        "K8"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S5",
+        "title": "Paying with SAVE10: checkout matches cart, order records discount, code cleared and then refused",
+        "basis": "requirement",
+        "requirementIds": [
+          "R11",
+          "R12",
+          "R19",
+          "R20",
+          "R21",
+          "R24",
+          "R25",
+          "R28",
+          "R29",
+          "R8"
+        ],
+        "intent": "Sign in as the customer. Add one Wool Throw Blanket ($129.95) to the cart, open the cart page and apply SAVE10. Record the cart page's Discount (cartDiscount) and Total (cartTotal) in dollars. Go to checkout and record the checkout page's discount (checkoutDiscount) and Order total (checkoutTotal) in dollars. Pay with card number 4242 4242 4242 4242. Then call GET /api/account and, for the single order, record totalCents (orderTotal) and discountCents (orderDiscount) and check promoCode. Open the account overview and record that order's discount (accountDiscount) and total charged (accountTotal) in dollars. Then add one Notebook, Dotted A5 to the cart and call GET /api/cart, recording subtotalCents (newSubtotal), discountCents (newDiscount) and totalCents (newTotal). Finally, on the cart page apply 'save10' in lower case and record the error message shown, then call GET /api/cart again and record discountCents (retryDiscount).",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "The checkout page's discount (checkoutDiscount) equals the cart page's Discount (cartDiscount) recorded just before.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "cartDiscount"
+            },
+            "requirementId": "R11"
+          },
+          {
+            "id": "A2",
+            "description": "The checkout page's Order total (checkoutTotal) equals the cart page's discounted Total (cartTotal).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "cartTotal"
+            },
+            "requirementId": "R12"
+          },
+          {
+            "id": "A3",
+            "description": "The checkout page's Order total (checkoutTotal) equals 116.96: $129.95 minus 10% rounded down to the cent ($12.99).",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 116.96
+            },
+            "requirementId": "R12"
+          },
+          {
+            "id": "A4",
+            "description": "After payment, the order's totalCents in GET /api/account (orderTotal) equals 11696, the discounted total that was charged.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 11696
+            },
+            "requirementId": "R19"
+          },
+          {
+            "id": "A5",
+            "description": "After payment, the order's discountCents in GET /api/account (orderDiscount) equals 1299.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 1299
+            },
+            "requirementId": "R25"
+          },
+          {
+            "id": "A6",
+            "description": "After payment, the order's promoCode in GET /api/account equals SAVE10.",
+            "kind": "text_equals",
+            "expected": {
+              "literal": "SAVE10"
+            },
+            "requirementId": "R25"
+          },
+          {
+            "id": "A7",
+            "description": "After payment, the order's totalCents (orderTotal) equals checkoutTotal * 100 (the amount charged equals the checkout Order total).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "round(checkoutTotal * 100)"
+            },
+            "requirementId": "R28"
+          },
+          {
+            "id": "A8",
+            "description": "On the account overview, the order's discount (accountDiscount, dollars) equals 12.99.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 12.99
+            },
+            "requirementId": "R24"
+          },
+          {
+            "id": "A9",
+            "description": "On the account overview, the order's total charged (accountTotal, dollars) equals 116.96.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 116.96
+            },
+            "requirementId": "R24"
+          },
+          {
+            "id": "A10",
+            "description": "After the successful payment and adding a Notebook, discountCents from GET /api/cart (newDiscount) is 0: the code was cleared from the cart.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 0
+            },
+            "requirementId": "R20"
+          },
+          {
+            "id": "A11",
+            "description": "After the successful payment and adding a Notebook, totalCents from GET /api/cart (newTotal) equals subtotalCents (newSubtotal).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "newSubtotal"
+            },
+            "requirementId": "R20"
+          },
+          {
+            "id": "A12",
+            "description": "After applying 'save10' again (lower case), the error message shown on the cart page contains 'You have already used promo code'.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "You have already used promo code"
+            },
+            "requirementId": "R21"
+          },
+          {
+            "id": "A13",
+            "description": "After the refused re-apply of save10, discountCents from GET /api/cart (retryDiscount) is 0 (the used code was not applied).",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 0
+            },
+            "requirementId": "R29"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K1",
+        "K6",
+        "K9"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S6",
+        "title": "A code used by one customer is refused for them but still works for another customer",
+        "basis": "requirement",
+        "requirementIds": [
+          "R21",
+          "R22",
+          "R29",
+          "R4"
+        ],
+        "intent": "Sign in as the first customer. Add one Wool Throw Blanket ($129.95) to the cart, apply TAKE15 and pay at checkout with card 4242 4242 4242 4242. Then add another Wool Throw Blanket to the cart, apply TAKE15 (upper case) again, and record the error message shown; call GET /api/cart and record discountCents (firstRetryDiscount). Sign out and sign in as the second customer. Add one Wool Throw Blanket, apply TAKE15 and call GET /api/cart recording subtotalCents (secondSubtotal), discountCents (secondDiscount) and totalCents (secondTotal). Pay at checkout with card 4242 4242 4242 4242, then call GET /api/account and record the order's discountCents (secondOrderDiscount) and totalCents (secondOrderTotal).",
+        "fixtures": {
+          "firstShopper": "customer",
+          "secondShopper": "customer"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "For the first customer, after paying with TAKE15 and applying TAKE15 again, the error message on the cart page contains exactly 'You have already used promo code TAKE15.'",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "You have already used promo code TAKE15."
+            },
+            "requirementId": "R21"
+          },
+          {
+            "id": "A2",
+            "description": "For the first customer after the refused re-apply, discountCents from GET /api/cart (firstRetryDiscount) is 0.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 0
+            },
+            "requirementId": "R29"
+          },
+          {
+            "id": "A3",
+            "description": "For the second customer after applying TAKE15, discountCents from GET /api/cart (secondDiscount) equals 1500.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 1500
+            },
+            "requirementId": "R22"
+          },
+          {
+            "id": "A4",
+            "description": "For the second customer after applying TAKE15, totalCents from GET /api/cart (secondTotal) equals secondSubtotal minus 1500.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "secondSubtotal - 1500"
+            },
+            "requirementId": "R22"
+          },
+          {
+            "id": "A5",
+            "description": "For the second customer's paid order in GET /api/account, discountCents (secondOrderDiscount) equals 1500.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 1500
+            },
+            "requirementId": "R22"
+          },
+          {
+            "id": "A6",
+            "description": "For the second customer's paid order in GET /api/account, totalCents (secondOrderTotal) equals secondSubtotal minus 1500.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "secondSubtotal - 1500"
+            },
+            "requirementId": "R19"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K9"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S7",
+        "title": "A declined payment does not use up the code: it stays, can be removed and re-applied",
+        "basis": "risk",
+        "requirementIds": [
+          "R23",
+          "R19"
+        ],
+        "intent": "Sign in as the customer. Add one Wool Throw Blanket ($129.95) to the cart and apply SAVE10. Call GET /api/cart and record discountCents (discBefore). Go to checkout and pay with card number 4000 0000 0000 0002 (declined). Return to the cart page, check that the applied code is still shown, and call GET /api/cart recording discountCents (discAfterDecline). Press Remove next to the code and call GET /api/cart recording discountCents (discRemoved). Apply SAVE10 again, look for any error message, and call GET /api/cart recording discountCents (discReapplied) and totalCents (totReapplied) and subtotalCents (subReapplied). Finally pay at checkout with card 4242 4242 4242 4242, call GET /api/account and record the paid order's totalCents (paidTotal) and discountCents (paidDiscount); if there is also a failed order, use the order whose status is paid.",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "After the declined payment, discountCents from GET /api/cart (discAfterDecline) equals discBefore: the code stays on the cart.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "discBefore"
+            },
+            "requirementId": "R23"
+          },
+          {
+            "id": "A2",
+            "description": "After the declined payment, the cart page's applied-code display contains SAVE10.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "SAVE10"
+            },
+            "requirementId": "R23"
+          },
+          {
+            "id": "A3",
+            "description": "After pressing Remove following the decline, discountCents from GET /api/cart (discRemoved) is 0.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 0
+            },
+            "requirementId": "R23"
+          },
+          {
+            "id": "A4",
+            "description": "After re-applying SAVE10 following the decline, no 'You have already used promo code' error is shown on the cart page.",
+            "kind": "absent",
+            "requirementId": "R23"
+          },
+          {
+            "id": "A5",
+            "description": "After re-applying SAVE10 following the decline, discountCents from GET /api/cart (discReapplied) equals discBefore.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "discBefore"
+            },
+            "requirementId": "R23"
+          },
+          {
+            "id": "A6",
+            "description": "The paid order's totalCents in GET /api/account (paidTotal) equals subReapplied minus discReapplied (the discounted total is charged).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "subReapplied - discReapplied"
+            },
+            "requirementId": "R19"
+          },
+          {
+            "id": "A7",
+            "description": "The paid order's discountCents in GET /api/account (paidDiscount) equals discBefore.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "discBefore"
+            },
+            "requirementId": "R25"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K3"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S8",
+        "title": "Loyalty points follow the charged amount: $108.00 after SAVE10 earns the same as $108.00 without a code",
+        "basis": "risk",
+        "requirementIds": [
+          "R27",
+          "R28",
+          "R25"
+        ],
+        "intent": "Sign in as the first customer. Put Notebook, Dotted A5 ($12.00) in the cart with quantity 10 (subtotal $120.00), apply SAVE10 (discounted total $108.00) and pay at checkout with card 4242 4242 4242 4242. Call GET /api/account and record the order's totalCents (firstOrderTotal). Open the account overview and record the loyalty balance (firstPoints). Sign out and sign in as the second customer. Put Notebook, Dotted A5 in the cart with quantity 9 (subtotal $108.00), apply no code, and pay with card 4242 4242 4242 4242. Call GET /api/account and record the order's totalCents (secondOrderTotal) and discountCents (secondOrderDiscount), and check its promoCode. Open the account overview and record the loyalty balance (secondPoints).",
+        "fixtures": {
+          "codeShopper": "customer",
+          "plainShopper": "customer"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "The first customer's order totalCents (firstOrderTotal) equals 10800 (12000 minus 10%).",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 10800
+            },
+            "requirementId": "R28"
+          },
+          {
+            "id": "A2",
+            "description": "The second customer's order totalCents (secondOrderTotal) equals firstOrderTotal: both were charged the same amount.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "firstOrderTotal"
+            },
+            "requirementId": "R28"
+          },
+          {
+            "id": "A3",
+            "description": "After both payments, the first customer's loyalty balance on the account overview (firstPoints) equals the second customer's loyalty balance (secondPoints): points are earned on the amount charged ($108.00 for both), not on the $120.00 pre-discount subtotal.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "secondPoints"
+            },
+            "requirementId": "R27"
+          },
+          {
+            "id": "A4",
+            "description": "The second customer's order (no code) has discountCents (secondOrderDiscount) equal to 0 in GET /api/account.",
+            "kind": "number_equals",
+            "expected": {
+              "literal": 0
+            },
+            "requirementId": "R25"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K5",
+        "K10"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S9",
+        "title": "SAVE10 and TAKE15 do not stack",
+        "basis": "requirement",
+        "requirementIds": [
+          "R18"
+        ],
+        "intent": "Sign in as the customer. Add one Wool Throw Blanket ($129.95) to the cart and open the cart page. Apply SAVE10 and call GET /api/cart recording discountCents (firstDiscount). Then apply TAKE15 (whatever the page does with it) and call GET /api/cart, recording subtotalCents (sub), discountCents (bothDiscount) and totalCents (tot).",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "After attempting to apply TAKE15 on top of SAVE10, discountCents from GET /api/cart (bothDiscount) is at most the larger of the two single discounts, max(firstDiscount, 1500), i.e. never their sum.",
+            "kind": "number_at_most",
+            "expected": {
+              "formula": "max(firstDiscount, 1500)"
+            },
+            "requirementId": "R18"
+          },
+          {
+            "id": "A2",
+            "description": "After attempting to apply TAKE15 on top of SAVE10, totalCents (tot) is at least sub minus max(firstDiscount, 1500).",
+            "kind": "number_at_least",
+            "expected": {
+              "formula": "sub - max(firstDiscount, 1500)"
+            },
+            "requirementId": "R18"
+          },
+          {
+            "id": "A3",
+            "description": "After attempting to apply TAKE15 on top of SAVE10, totalCents (tot) equals sub minus bothDiscount.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "sub - bothDiscount"
+            },
+            "requirementId": "R26"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K7"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S10",
+        "title": "Applying a second valid code over an applied one: replace or refuse?",
+        "basis": "requirement",
+        "requirementIds": [
+          "R18",
+          "R31"
+        ],
+        "intent": "Apply SAVE10, then TAKE15 on a qualifying cart, and check which code is on the cart afterwards and whether an error is shown.",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "The ticket says one code per order but not whether a second valid code replaces the applied one or is refused with an error; replacement (R31) is only inferred from the diff. Product must decide the expected cart state and message.",
+      "ambiguityIds": [
+        "Q1"
+      ],
+      "riskIds": [
+        "K7"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S11",
+        "title": "Applied code after a failed minimum or already-used attempt",
+        "basis": "requirement",
+        "requirementIds": [
+          "R14",
+          "R15",
+          "R21"
+        ],
+        "intent": "With SAVE10 applied to a cart under $60.00, try TAKE15 (minimum error), and with a code applied try a code already used; check whether the existing code stays applied.",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "The ticket only states that an unknown code leaves an applied code in place; for the minimum and already-used errors it is not said whether the existing code stays applied.",
+      "ambiguityIds": [
+        "Q2"
+      ],
+      "riskIds": [
+        "K8"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S12",
+        "title": "TAKE15 after the subtotal drops below and rises back above $60.00",
+        "basis": "requirement",
+        "requirementIds": [
+          "R16"
+        ],
+        "intent": "Apply TAKE15 at $60.00, lower the quantity so it is removed, raise it again and check whether the code returns and whether any message is shown on removal.",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "It is not specified whether removal is permanent (customer must re-apply) or whether the code returns automatically, nor whether removal is signalled to the customer.",
+      "ambiguityIds": [
+        "Q4"
+      ],
+      "riskIds": [
+        "K2"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S13",
+        "title": "Declined order later paid via the payment webhook: is the code used up and cleared?",
+        "basis": "risk",
+        "requirementIds": [
+          "R20",
+          "R21",
+          "R23",
+          "R29"
+        ],
+        "intent": "Pay with a declined card while SAVE10 is applied, then report payment.succeeded for that order through POST /api/webhooks/payment, and check whether the code is cleared from the cart and refused on re-apply.",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "The ticket does not cover a payment_failed order that later becomes paid through the webhook: whether that counts as using the code and whether the code must then be cleared from the cart needs a decision.",
+      "ambiguityIds": [
+        "Q5"
+      ],
+      "riskIds": [
+        "K11",
+        "K3"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S14",
+        "title": "Code applied in one session, used in another before paying here",
+        "basis": "risk",
+        "requirementIds": [
+          "R21",
+          "R29"
+        ],
+        "intent": "Apply SAVE10 in two browser sessions of the same customer, pay in one, then try to pay in the other and check whether the second order still gets the discount.",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "The ticket defines the already-used error only when applying; whether payment must reject or strip a code that became used in the meantime is undefined.",
+      "ambiguityIds": [
+        "Q7"
+      ],
+      "riskIds": [
+        "K6"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S15",
+        "title": "Applied code when the cart is emptied and refilled",
+        "basis": "risk",
+        "requirementIds": [
+          "R10",
+          "R16",
+          "R17"
+        ],
+        "intent": "Apply SAVE10, set all quantities to 0, add an item again and check whether the code is still applied.",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "It is not defined what happens to an applied code when the cart is emptied, or whether a code can be applied to an empty cart.",
+      "ambiguityIds": [
+        "Q6"
+      ],
+      "riskIds": [
+        "K12"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S16",
+        "title": "Code with internal spaces (e.g. 'SAVE 10')",
+        "basis": "risk",
+        "requirementIds": [
+          "R9",
+          "R13"
+        ],
+        "intent": "Apply 'SAVE 10' and check whether it is accepted or reported as unknown.",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "The ticket says spaces around the code are ignored; whether spaces inside the code are also ignored or make it unknown is not stated.",
+      "ambiguityIds": [
+        "Q8"
+      ],
+      "riskIds": [
+        "K13"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S17",
+        "title": "Cart loyalty-points estimate while a code is applied",
+        "basis": "requirement",
+        "requirementIds": [
+          "R30"
+        ],
+        "intent": "Apply SAVE10 and compare the 'You could earn N loyalty points' estimate on the cart before and after.",
+        "fixtures": {
+          "shopper": "customer"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "That the cart's points estimate must follow the discounted total (R30) is only inferred from the pull request; the ticket only states that earned points follow the amount charged. Product must confirm the estimate's expected behaviour.",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K5"
+      ]
+    }
+  ],
+  "notes": [],
+  "clarifications": []
+}

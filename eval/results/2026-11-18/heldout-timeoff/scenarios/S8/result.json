@@ -1,0 +1,110 @@
+{
+  "scenarioId": "S8",
+  "title": "Approved request starting today + 2 cannot be cancelled (boundary just inside window)",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "blocked",
+  "reason": "Not checked: A1, A2. The scenario requires today's date from the Date header of an application response, but api_request returns only status, body and responseId (no headers), and no page or API body seen (/, /api/me, /api/requests) shows the current date. D = today + 2 cannot be determined, so the request cannot be created and A1/A2 were not checked.",
+  "environment": {
+    "baseUrl": "http://localhost:3100",
+    "deployedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0",
+    "expectedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0"
+  },
+  "assertionResults": [],
+  "observations": {},
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "See the starting page to find sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "See the starting page to find sign-in."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s8-emp",
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Get a response with Date header to compute today."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"handle\":\"s8-emp\",\"name\":\"Employee s8-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Get a response with Date header to compute today."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/requests",
+        "rationale": "Look for any date information exposed by the application."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":[]}",
+      "rationale": "Look for any date information exposed by the application."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "blocked",
+        "reason": "The scenario requires today's date from the Date header of an application response, but api_request returns only status, body and responseId (no headers), and no page or API body seen (/, /api/me, /api/requests) shows the current date. D = today + 2 cannot be determined, so the request cannot be created and A1/A2 were not checked.",
+        "rationale": "Cannot reach the needed state without the date source the plan specifies."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Cannot reach the needed state without the date source the plan specifies."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "heldout-timeoff/scenarios/S8"
+  },
+  "startedAt": "2026-11-18T18:58:01.159Z",
+  "durationMs": 37738
+}

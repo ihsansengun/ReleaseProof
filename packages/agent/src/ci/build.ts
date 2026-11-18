@@ -1,0 +1,82 @@
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
+import { loadManifest } from "../env.ts";
+import { loadPullRequest } from "../ingest/github.ts";
+import { buildImage, IMAGE } from "./sandbox.ts";
+
+const run = promisify(execFile);
+const MANIFEST = "releaseproof.yml";
+
+/** The application directories (those holding a manifest) that a set of changed files belongs to. */
+export function appsTouched(changed: string[], hasManifest: (dir: string) => boolean): string[] {
+  const apps = new Set<string>();
+  for (const file of changed) {
+    for (let dir = path.posix.dirname(file); ; dir = path.posix.dirname(dir)) {
+      if (hasManifest(dir)) {
+        apps.add(dir);
+        break;
+      }
+      if (dir === "." || dir === "/") break;
+    }
+  }
+  return [...apps].sort();
+}
+
+export type BuildMeta = { pr: number; headSha: string; appDir?: string; skip?: string };
+
+/**
+ * Stage 1, the only stage that touches pull-request code. It runs with no
+ * secrets. It builds the application image and hands on three things, all of
+ * them treated as data by the next stage: the image, the manifest with the
+ * documents it lists, and a small description of what was built.
+ */
+export async function ciBuild(options: {
+  prDir: string;
+  repo: string;
+  pr: number;
+  outDir: string;
+  dockerfile: string;
+}): Promise<BuildMeta> {
+  const { prDir, outDir } = options;
+  await mkdir(path.join(outDir, "context"), { recursive: true });
+  const headSha = (await run("git", ["-C", prDir, "rev-parse", "HEAD"])).stdout.trim();
+  const meta: BuildMeta = { pr: options.pr, headSha };
+  const done = async (skip?: string) => {
+    if (skip) meta.skip = skip;
+    await writeFile(path.join(outDir, "meta.json"), JSON.stringify(meta, null, 2));
+    return meta;
+  };
+
+  const pullRequest = await loadPullRequest(options.repo, options.pr);
+  const apps = appsTouched(
+    pullRequest.files.map((f) => f.path),
+    (dir) => existsSync(path.join(prDir, dir, MANIFEST)),
+  );
+  if (apps.length === 0) return done("The pull request changes no application that has a releaseproof.yml manifest.");
+  if (apps.length > 1) return done(`The pull request changes more than one application (${apps.join(", ")}); one at a time is supported.`);
+  const appDir = apps[0]!;
+  meta.appDir = appDir;
+
+  const manifestFile = path.join(prDir, appDir, MANIFEST);
+  const manifest = await loadManifest(manifestFile).catch((error: Error) => error);
+  if (manifest instanceof Error) return done(`The manifest of ${appDir} is not valid: ${manifest.message.split("\n")[0]}`);
+  if (!manifest.start) return done(`The manifest of ${appDir} has no "start" section, so the application cannot be started in CI.`);
+
+  await buildImage({ contextDir: prDir, dockerfile: options.dockerfile, start: manifest.start, sha: headSha });
+  await run("docker", ["save", "--output", path.join(outDir, "image.tar"), IMAGE], { timeout: 10 * 60_000 });
+
+  // The manifest and the documents it lists travel as plain files.
+  const root = path.resolve(prDir, appDir);
+  await copyFile(manifestFile, path.join(outDir, "context", MANIFEST));
+  for (const relative of manifest.docs) {
+    const source = path.resolve(root, relative);
+    if (!source.startsWith(root + path.sep) || !existsSync(source)) continue;
+    const target = path.join(outDir, "context", path.relative(root, source));
+    await mkdir(path.dirname(target), { recursive: true });
+    await copyFile(source, target);
+  }
+  return done();
+}

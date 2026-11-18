@@ -1,0 +1,463 @@
+{
+  "analysis": {
+    "featureSummary": "NWG-342 adds promo codes to the Northwind Goods cart. A signed-in customer can apply one of two codes (SAVE10: 10% off the subtotal, rounded down to the cent; TAKE15: $15.00 off a subtotal of at least $60.00, per the 2026-11-05 comment that overrides the $50.00 in the description) on the cart page, see the code, a Discount line and a discounted Total, remove it, and pay the discounted total at checkout. Only one code applies per order. A successful payment clears the code from the cart and uses it up for that customer only; a declined payment does not use it up. Orders record the discount and code, shown on the account overview and returned by GET /api/account, and a new GET /api/cart returns the cart totals. Loyalty points are still earned on the amount actually charged.",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "The cart page has a \"Promo code\" input field and an \"Apply\" button.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "The cart page has a \"Promo code\" field and an \"Apply\" button."
+      },
+      {
+        "id": "R2",
+        "text": "Applying SAVE10 gives a discount of 10% of the cart subtotal.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "SAVE10 takes 10% off the cart subtotal"
+      },
+      {
+        "id": "R3",
+        "text": "A percentage discount (SAVE10) is rounded down to the whole cent (e.g. 10% of $24.99 = $2.49, not $2.50).",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "A percentage discount is rounded down to the whole cent."
+      },
+      {
+        "id": "R4",
+        "text": "Applying TAKE15 to a qualifying cart gives a fixed discount of $15.00.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "TAKE15 takes $15.00 off"
+      },
+      {
+        "id": "R5",
+        "text": "TAKE15 requires a minimum subtotal of $60.00 (overriding the $50.00 in the description).",
+        "kind": "documented",
+        "sourceType": "ticket-comment",
+        "quote": "the minimum for TAKE15 is $60.00, not $50.00."
+      },
+      {
+        "id": "R6",
+        "text": "A subtotal of exactly $60.00 qualifies for TAKE15.",
+        "kind": "documented",
+        "sourceType": "ticket-comment",
+        "quote": "A subtotal of exactly $60.00 qualifies."
+      },
+      {
+        "id": "R7",
+        "text": "The TAKE15 minimum is checked against the subtotal before any discount.",
+        "kind": "documented",
+        "sourceType": "ticket-comment",
+        "quote": "The minimum is checked against the subtotal before any discount."
+      },
+      {
+        "id": "R8",
+        "text": "Promo codes are accepted regardless of letter case (e.g. save10, Take15).",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Codes are not case-sensitive"
+      },
+      {
+        "id": "R9",
+        "text": "Leading and trailing spaces around an entered code are ignored.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "spaces around the code are ignored"
+      },
+      {
+        "id": "R10",
+        "text": "While a code is applied, the cart shows the applied code, a Discount line, and a Total equal to subtotal minus discount.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "While a code is applied, the cart shows the code, a Discount line and a Total that equals subtotal minus discount."
+      },
+      {
+        "id": "R11",
+        "text": "The checkout page shows the same discount as the cart.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "The checkout page shows the same discount"
+      },
+      {
+        "id": "R12",
+        "text": "The checkout page's Order total is the discounted total.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "its Order total is the discounted total."
+      },
+      {
+        "id": "R13",
+        "text": "Entering an unknown code shows the error \"That promo code is not valid.\"",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "An unknown code shows the error \"That promo code is not valid.\""
+      },
+      {
+        "id": "R14",
+        "text": "An unknown code changes nothing: a code that was already applied stays applied, with the same discount and total.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "changes nothing: a code that was already applied stays applied."
+      },
+      {
+        "id": "R15",
+        "text": "Applying TAKE15 to a cart below the minimum subtotal shows an error that names the minimum ($60.00), and the code is not applied.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Applying TAKE15 to a cart below its minimum subtotal shows an error that names the minimum, and the code is not applied."
+      },
+      {
+        "id": "R16",
+        "text": "If a later quantity change takes the subtotal below the TAKE15 minimum, the code is removed from the cart and the Total equals the subtotal again.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "If a later quantity change takes the subtotal below the minimum, the code is removed from the cart and the Total equals the subtotal again."
+      },
+      {
+        "id": "R17",
+        "text": "A \"Remove\" button next to the applied code removes it, after which the Total equals the subtotal.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "A \"Remove\" button next to the applied code removes it; the Total then equals the subtotal."
+      },
+      {
+        "id": "R18",
+        "text": "Only one promo code applies per order; the two codes do not stack.",
+        "kind": "documented",
+        "sourceType": "ticket-comment",
+        "quote": "One code per order."
+      },
+      {
+        "id": "R19",
+        "text": "The order is charged the discounted total.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "The order is charged the discounted total."
+      },
+      {
+        "id": "R20",
+        "text": "After a successful payment, the promo code is cleared from the cart.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "After a successful payment the code is cleared from the cart"
+      },
+      {
+        "id": "R21",
+        "text": "After a successful payment with a code, that customer cannot apply the same code again and sees the error \"You have already used promo code <CODE>.\"",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "that customer cannot apply the same code again (error: \"You have already used promo code <CODE>.\")"
+      },
+      {
+        "id": "R22",
+        "text": "One customer using a code does not prevent other customers from applying and using the same code.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Other customers are not affected."
+      },
+      {
+        "id": "R23",
+        "text": "A declined payment does not use up the code: the code stays on the cart, can be removed and can be applied again.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "A declined payment does not use up the code: it stays on the cart and can still be removed and applied again."
+      },
+      {
+        "id": "R24",
+        "text": "The account overview lists each order's discount and the total charged.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "The account overview lists each order's discount and the total charged."
+      },
+      {
+        "id": "R25",
+        "text": "GET /api/account returns discountCents and promoCode for each order, with 0 and null when no code was used.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "GET /api/account returns discountCents and promoCode for each order (0 and null when no code was used)"
+      },
+      {
+        "id": "R26",
+        "text": "GET /api/cart returns subtotalCents, promoCode, discountCents and totalCents for the current cart.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "GET /api/cart returns subtotalCents, promoCode, discountCents and totalCents for the current cart."
+      },
+      {
+        "id": "R27",
+        "text": "Loyalty points are earned on the amount actually charged (the discounted total), not on the pre-discount subtotal.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "points are still earned on the amount the customer is actually charged."
+      },
+      {
+        "id": "R28",
+        "text": "Each order's totalCents in GET /api/account is the amount charged (discounted total).",
+        "kind": "documented",
+        "sourceType": "doc",
+        "quote": "Each order carries `totalCents` (the amount charged)"
+      },
+      {
+        "id": "R29",
+        "text": "Each customer can use a given code on one paid order only.",
+        "kind": "documented",
+        "sourceType": "doc",
+        "quote": "each customer can use a code on one paid order only."
+      },
+      {
+        "id": "R30",
+        "text": "The \"You could earn N loyalty points\" estimate on the cart reflects the discounted total while a code is applied.",
+        "kind": "inferred",
+        "sourceType": "pull-request",
+        "quote": ""
+      },
+      {
+        "id": "R31",
+        "text": "Applying a valid code when another code is already applied replaces the existing code (the cart holds at most one code).",
+        "kind": "inferred",
+        "sourceType": "pull-request",
+        "quote": ""
+      },
+      {
+        "id": "R32",
+        "text": "The discount never exceeds the subtotal; the total is never negative.",
+        "kind": "inferred",
+        "sourceType": "pull-request",
+        "quote": ""
+      },
+      {
+        "id": "R33",
+        "text": "GET /api/cart returns 401 for a request that is not signed in.",
+        "kind": "inferred",
+        "sourceType": "pull-request",
+        "quote": ""
+      },
+      {
+        "id": "R34",
+        "text": "Orders placed without a code show no discount on the account overview (\"None\") and their totals are unchanged.",
+        "kind": "inferred",
+        "sourceType": "pull-request",
+        "quote": ""
+      },
+      {
+        "id": "R35",
+        "text": "A customer's applied code is per customer and is not visible on or applied to any other customer's cart.",
+        "kind": "inferred",
+        "sourceType": "none",
+        "quote": ""
+      }
+    ],
+    "ambiguities": [
+      {
+        "id": "Q1",
+        "question": "When a different valid code is applied while one is already on the cart, should it replace the existing code or be refused with an error?",
+        "why": "Comment 2 says one code per order but not what happens on a second Apply; the expected cart state after applying TAKE15 over SAVE10 (and vice versa) cannot be asserted.",
+        "relatedRequirementIds": [
+          "R18",
+          "R31"
+        ]
+      },
+      {
+        "id": "Q2",
+        "question": "If a code is already applied and the customer tries a code that fails for the minimum or already-used reason, should the existing code stay applied?",
+        "why": "The ticket only states that an unknown code leaves an applied code in place; for the minimum and used errors the effect on an existing code is unspecified, so the cart state after such a failure cannot be checked.",
+        "relatedRequirementIds": [
+          "R14",
+          "R15",
+          "R21"
+        ]
+      },
+      {
+        "id": "Q3",
+        "question": "What is the exact wording of the TAKE15 minimum-subtotal error message?",
+        "why": "The ticket only says the error 'names the minimum'; a tester can check that $60.00 appears but not the exact text.",
+        "relatedRequirementIds": [
+          "R15"
+        ]
+      },
+      {
+        "id": "Q4",
+        "question": "If the subtotal drops below $60.00 and then rises back above it, should TAKE15 come back automatically or must the customer re-apply it? And does the auto-removal show any message?",
+        "why": "The ticket says the code is removed but not whether removal is permanent or signalled to the customer, so the post-change UI cannot be fully specified.",
+        "relatedRequirementIds": [
+          "R16"
+        ]
+      },
+      {
+        "id": "Q5",
+        "question": "Does the 'already used' rule count only paid orders, or also orders that are pending or later reach paid through the payment webhook after an initial decline?",
+        "why": "The ticket says a declined payment does not use up the code and README says 'one paid order only', but the lifecycle of a payment_failed order that later succeeds via POST /api/webhooks/payment is not addressed.",
+        "relatedRequirementIds": [
+          "R21",
+          "R23",
+          "R29"
+        ]
+      },
+      {
+        "id": "Q6",
+        "question": "What should happen to an applied code when the cart is emptied (all quantities set to 0), and can a code be applied to an empty cart?",
+        "why": "The empty cart page shows no promo section; whether the code should persist invisibly and reappear when items are added is undefined, so the expected state after re-adding items cannot be asserted.",
+        "relatedRequirementIds": [
+          "R10",
+          "R16",
+          "R17"
+        ]
+      },
+      {
+        "id": "Q7",
+        "question": "Should the 'already used' check also be enforced at payment time (e.g. if the code was applied before it became used in another session), or only when applying?",
+        "why": "The ticket only defines the error on apply; whether checkout must reject or strip a no-longer-eligible code is undefined.",
+        "relatedRequirementIds": [
+          "R21",
+          "R29"
+        ]
+      },
+      {
+        "id": "Q8",
+        "question": "Does the 'spaces are ignored' rule cover only leading/trailing spaces, or also spaces inside the code (e.g. 'SAVE 10')?",
+        "why": "'Spaces around the code' suggests surrounding whitespace only, but whether internal spaces should be rejected as unknown is not stated.",
+        "relatedRequirementIds": [
+          "R9",
+          "R13"
+        ]
+      }
+    ],
+    "risks": [
+      {
+        "id": "K1",
+        "description": "Percentage discount may be rounded to nearest instead of rounded down, overstating the discount by a cent on some subtotals.",
+        "basis": "discountFor in lib/shop.ts uses Math.round((subtotalCents * promo.value) / 100); the ticket requires rounding down. E.g. 10% of $24.99 (2499 cents) gives 250 instead of 249.",
+        "relatedRequirementIds": [
+          "R2",
+          "R3",
+          "R10",
+          "R19"
+        ]
+      },
+      {
+        "id": "K2",
+        "description": "TAKE15 may stay applied (and keep discounting $15.00) after a quantity change drops the subtotal below $60.00.",
+        "basis": "The minimum is only checked in applyPromo; setQuantity is not changed in the diff and getCart/discountFor apply the fixed discount without re-checking minSubtotalCents, and nothing deletes the cart_promos row.",
+        "relatedRequirementIds": [
+          "R16",
+          "R5",
+          "R10",
+          "R12",
+          "R19"
+        ]
+      },
+      {
+        "id": "K3",
+        "description": "A declined payment may use up the code, so the customer gets 'You have already used promo code ...' when re-applying it after a decline.",
+        "basis": "checkout inserts the order with promo_code before the card check, so a payment_failed order carries the code; hasUsedPromo counts any order with that promo_code regardless of status.",
+        "relatedRequirementIds": [
+          "R23",
+          "R21",
+          "R29"
+        ]
+      },
+      {
+        "id": "K4",
+        "description": "Boundary at exactly $60.00 and the $50.00 vs $60.00 conflict between description and comment.",
+        "basis": "Description still says $50.00; code uses minSubtotalCents 6000 with a '<' comparison. Subtotals of $59.99, $60.00 and between $50 and $60 should be tested (e.g. Ceramic Pour-Over Set $59.50 alone, plus a Notebook).",
+        "relatedRequirementIds": [
+          "R5",
+          "R6",
+          "R7",
+          "R15"
+        ]
+      },
+      {
+        "id": "K5",
+        "description": "Loyalty points might be earned on the pre-discount subtotal rather than the charged amount.",
+        "basis": "The diff changes potentialPoints to use totalCents and stores total_cents as the discounted amount, but the earned-points logic in applyPaymentEvent is not in the diff and is not visible; it must be verified it uses the order's charged total.",
+        "relatedRequirementIds": [
+          "R27",
+          "R30",
+          "R19"
+        ]
+      },
+      {
+        "id": "K6",
+        "description": "Charged amount, checkout total, cart total and API totals could diverge, since each is computed from cart state at different times.",
+        "basis": "Checkout page, cart page, /api/cart and the order insert all call getCart independently; the order is created with cart.totalCents at pay time. Any state change between viewing checkout and paying (other tab) changes the charged amount.",
+        "relatedRequirementIds": [
+          "R11",
+          "R12",
+          "R19",
+          "R26"
+        ]
+      },
+      {
+        "id": "K7",
+        "description": "Applying a second valid code silently replaces the first, which may or may not be intended.",
+        "basis": "applyPromo upserts into cart_promos with ON CONFLICT DO UPDATE; the ticket does not say replacement is the intended behaviour.",
+        "relatedRequirementIds": [
+          "R18",
+          "R31"
+        ]
+      },
+      {
+        "id": "K8",
+        "description": "Failed apply attempts (used, minimum) leave a previously applied code in place, and error rendering depends on URL query parameters that can be crafted.",
+        "basis": "applyPromoAction redirects to /cart?promo=<reason>&code=<code> and the cart page renders promoProblemMessage from those parameters; any URL can display an error, and the existing code row is untouched on any failure.",
+        "relatedRequirementIds": [
+          "R14",
+          "R15",
+          "R21"
+        ]
+      },
+      {
+        "id": "K9",
+        "description": "Used-code tracking could leak across customers or fail to be case-normalised.",
+        "basis": "hasUsedPromo queries orders by customer_id and the upper-cased code; must verify a second customer can still use a code another customer used, and that a lower-case re-entry is still refused.",
+        "relatedRequirementIds": [
+          "R21",
+          "R22",
+          "R8"
+        ]
+      },
+      {
+        "id": "K10",
+        "description": "Orders from before the migration, or without a code, may return wrong discountCents/promoCode values.",
+        "basis": "db.ts adds discount_cents (DEFAULT 0) and promo_code via ALTER TABLE only when promo_code is missing; account page shows 'None' when promoCode is null. Requirement is 0 and null for no-code orders.",
+        "relatedRequirementIds": [
+          "R25",
+          "R24",
+          "R34"
+        ]
+      },
+      {
+        "id": "K11",
+        "description": "Code cleared from the cart only on the synchronous checkout success path, not when a payment succeeds via the webhook.",
+        "basis": "removePromo is called in checkout after applyPaymentEvent; a payment.succeeded webhook for a previously failed order would mark it paid without clearing the cart or the code, leaving the code on the cart and possibly allowing a second discounted order.",
+        "relatedRequirementIds": [
+          "R20",
+          "R21",
+          "R29"
+        ]
+      },
+      {
+        "id": "K12",
+        "description": "Discount capped at subtotal hides or masks edge cases; empty cart with an applied code may leave a stale code.",
+        "basis": "discountFor clamps with Math.min(discount, subtotalCents); the cart page returns early on empty carts so the applied code and Remove button are not shown though the cart_promos row remains.",
+        "relatedRequirementIds": [
+          "R32",
+          "R17",
+          "R10"
+        ]
+      },
+      {
+        "id": "K13",
+        "description": "Whitespace handling may be wider or narrower than intended.",
+        "basis": "applyPromo uses input.trim(), which removes all surrounding whitespace (tabs, newlines) but not internal spaces; the HTML input is 'required', so an all-spaces entry is trimmed to empty and reported as unknown.",
+        "relatedRequirementIds": [
+          "R9",
+          "R13"
+        ]
+      }
+    ]
+  },
+  "notes": []
+}

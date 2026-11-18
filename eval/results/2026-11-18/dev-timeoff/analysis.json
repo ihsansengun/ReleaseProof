@@ -1,0 +1,237 @@
+{
+  "analysis": {
+    "featureSummary": "Dayoff time-off tool: an employee's remaining leave days are shown on the \"My time off\" screen and change only when a manager decides a request. Submitting a request leaves the balance unchanged while it is Pending; approval deducts the request's day count (calendar days from first to last day, inclusive); rejection leaves the balance unchanged. A decided request cannot be decided again.",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "An employee sees their remaining leave days on the \"My time off\" screen.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "An employee sees their remaining leave days on the \"My time off\" screen."
+      },
+      {
+        "id": "R2",
+        "text": "Submitting a time-off request does not change the employee's remaining days while the request is pending.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Submitting a request does not change the remaining days while the request is pending."
+      },
+      {
+        "id": "R3",
+        "text": "When a manager approves a request, the request's number of days is deducted from that employee's remaining days.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "When a manager approves a request, the requested number of days is deducted from the employee's remaining days."
+      },
+      {
+        "id": "R4",
+        "text": "When a manager rejects a request, the employee's remaining days do not change.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "When a manager rejects a request, the employee's remaining days do not change."
+      },
+      {
+        "id": "R5",
+        "text": "A request's number of days is the count of calendar days from the first day to the last day, inclusive (e.g. a single-day request is 1 day; weekends are counted).",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "The number of days in a request is the count of calendar days from the first day to the last day, inclusive."
+      },
+      {
+        "id": "R6",
+        "text": "A newly submitted request starts with status Pending.",
+        "kind": "documented",
+        "sourceType": "doc",
+        "quote": "A request has a first day, a last day and a reason, and starts as Pending."
+      },
+      {
+        "id": "R7",
+        "text": "A manager can approve or reject each pending request.",
+        "kind": "documented",
+        "sourceType": "doc",
+        "quote": "A manager approves or rejects each pending request."
+      },
+      {
+        "id": "R8",
+        "text": "A request that has already been decided cannot be decided again (and so cannot change the balance a second time).",
+        "kind": "documented",
+        "sourceType": "doc",
+        "quote": "A decided request cannot be decided again."
+      },
+      {
+        "id": "R9",
+        "text": "GET /api/me returns the current user, including the balance for employees.",
+        "kind": "documented",
+        "sourceType": "doc",
+        "quote": "The current user, including `balance` for employees"
+      },
+      {
+        "id": "R10",
+        "text": "Only employees can create requests and only managers can decide them.",
+        "kind": "documented",
+        "sourceType": "doc",
+        "quote": "Employees request leave; managers decide requests."
+      },
+      {
+        "id": "R11",
+        "text": "After an approval, the employee's \"My time off\" screen shows the reduced remaining days the next time it is loaded.",
+        "kind": "inferred",
+        "sourceType": "none",
+        "quote": ""
+      },
+      {
+        "id": "R12",
+        "text": "A decision on one employee's request does not change any other employee's remaining days.",
+        "kind": "inferred",
+        "sourceType": "none",
+        "quote": ""
+      },
+      {
+        "id": "R13",
+        "text": "A request whose last day is before its first day is rejected and does not affect the balance.",
+        "kind": "inferred",
+        "sourceType": "pull-request",
+        "quote": ""
+      },
+      {
+        "id": "R14",
+        "text": "The Days value shown in the employee's and the manager's request lists equals the inclusive calendar-day count and is the amount deducted on approval.",
+        "kind": "inferred",
+        "sourceType": "none",
+        "quote": ""
+      }
+    ],
+    "ambiguities": [
+      {
+        "id": "Q1",
+        "question": "Can a manager approve a request for more days than the employee has remaining, and if so may the balance go negative?",
+        "why": "Neither the ticket nor the README sets a limit, so a test that approves more days than the balance has no expected outcome (block, cap, or negative balance).",
+        "relatedRequirementIds": [
+          "R3",
+          "R1"
+        ]
+      },
+      {
+        "id": "Q2",
+        "question": "Should an employee be able to submit a request for more days than they have remaining, or more than the remaining days minus their other pending requests?",
+        "why": "No source covers validation against the balance at submission time, so over-balance submissions cannot be judged pass or fail.",
+        "relatedRequirementIds": [
+          "R2",
+          "R5"
+        ]
+      },
+      {
+        "id": "Q3",
+        "question": "Should the \"My time off\" screen show pending days in any way (e.g. a 'pending' or 'reserved' figure), or only the remaining days?",
+        "why": "R2 says pending requests do not change the remaining days, but it does not say whether pending totals must be displayed. Expected screen content for an employee with pending requests is undefined.",
+        "relatedRequirementIds": [
+          "R1",
+          "R2"
+        ]
+      },
+      {
+        "id": "Q4",
+        "question": "Are requests with dates in the past, or requests that overlap an existing pending or approved request, allowed, and are their days deducted again on approval?",
+        "why": "Overlapping approvals could deduct the same calendar day twice. Without a rule, the expected balance after approving overlapping requests cannot be stated.",
+        "relatedRequirementIds": [
+          "R3",
+          "R5"
+        ]
+      },
+      {
+        "id": "Q5",
+        "question": "What should happen to a request with an impossible calendar date (e.g. 2026-02-30) or a very long range spanning months or years?",
+        "why": "R5 defines the count only for valid dates. The expected response for invalid dates, and any maximum length, cannot be tested until this is decided.",
+        "relatedRequirementIds": [
+          "R5"
+        ]
+      }
+    ],
+    "risks": [
+      {
+        "id": "K1",
+        "description": "Approval can drive the balance negative because there is no balance check at submission or decision time.",
+        "basis": "In the diff, POST /api/requests and decide() subtract request.days without comparing it to the balance.",
+        "relatedRequirementIds": [
+          "R3",
+          "R1"
+        ]
+      },
+      {
+        "id": "K2",
+        "description": "The day count may be wrong around month ends, leap years (29 Feb), year boundaries or invalid dates, since it is computed from Date.parse differences and rounded.",
+        "basis": "days = Math.round((Date.parse(end) - Date.parse(start)) / DAY) + 1. isDate uses a regex plus Date.parse, which may accept or roll over dates such as 2026-02-30 or 2026-02-31.",
+        "relatedRequirementIds": [
+          "R5",
+          "R14",
+          "R3"
+        ]
+      },
+      {
+        "id": "K3",
+        "description": "A request could be double-decided (e.g. approve then approve or reject, or two concurrent clicks), deducting twice or deducting then marking Rejected.",
+        "basis": "The only guard is the status !== 'Pending' check (409). It must hold for every ordering, including a rejected request that is approved later. The decided state is mutated in place.",
+        "relatedRequirementIds": [
+          "R8",
+          "R3",
+          "R4"
+        ]
+      },
+      {
+        "id": "K4",
+        "description": "Rejection, or an invalid decision value, might still change the balance or status.",
+        "basis": "decide() sets status from decision === 'approve'. Any non-approve value that passes validation becomes Rejected, and validation order is 404, then 409, then 400.",
+        "relatedRequirementIds": [
+          "R4",
+          "R7"
+        ]
+      },
+      {
+        "id": "K5",
+        "description": "The balance shown to the employee can be stale. It is fetched only when the page renders, so a decision made in another session does not appear until reload.",
+        "basis": "employeeScreen() reads /api/me once per render, and nothing refreshes it.",
+        "relatedRequirementIds": [
+          "R1",
+          "R11"
+        ]
+      },
+      {
+        "id": "K6",
+        "description": "Decision failures in the manager UI are not shown to the user.",
+        "basis": "In app.js, the managerScreen decide button's onclick awaits call() without try/catch, so a 409 or 404 rejects unhandled and no error message is shown.",
+        "relatedRequirementIds": [
+          "R7",
+          "R8"
+        ]
+      },
+      {
+        "id": "K7",
+        "description": "Deduction applies to the wrong employee, or affects other employees, if the request-to-user mapping is wrong.",
+        "basis": "decide() looks up users.get(request.employee), and the manager sees all employees' requests. Tests with several employees are needed.",
+        "relatedRequirementIds": [
+          "R3",
+          "R12"
+        ]
+      },
+      {
+        "id": "K8",
+        "description": "Authorization boundaries: an employee might decide requests, or a manager might create them.",
+        "basis": "Role checks in the diff return 403. They apply only to the API and should be verified, since the UI simply hides the controls.",
+        "relatedRequirementIds": [
+          "R10"
+        ]
+      },
+      {
+        "id": "K9",
+        "description": "Submission itself might alter the balance, or end-before-start ranges might be accepted.",
+        "basis": "The ticket explicitly requires no change while pending. Submission validates days < 1 only after parsing.",
+        "relatedRequirementIds": [
+          "R2",
+          "R13",
+          "R6"
+        ]
+      }
+    ]
+  },
+  "notes": []
+}
