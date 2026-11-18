@@ -73,3 +73,13 @@ Still open: substring matching in text locators; replay against
 app-generated identifiers and value-bearing locators; no fallback in
 discovery for screens behind a state change; replay "confirmation" does not
 distinguish a defect from a consistently wrong comparison.
+
+## CI integration (18 November 2026)
+
+- Workflow fixes needed after the merge to `main`: none.
+- Human interventions in the three CI runs: none.
+- Engine changes made for CI, all generic: run budgets; API driver timeouts,
+  retries and accounting; a recorded driver; manifest `start` section;
+  refusing document paths outside the application directory.
+- Recording corrected before use: two time-off scenarios replaced with their
+  post-fix re-runs, three date-relative ones removed.

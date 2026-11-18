@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { coverage } from "../report/run.ts";
+import { coverage, MODES } from "../report/run.ts";
 import type { RunReport } from "../schema.ts";
 import type { CiResult } from "./run.ts";
 
@@ -47,6 +47,8 @@ export const ReportInput = z.object({
     .object({
       ticketKey: z.string(),
       driver: z.string(),
+      // Absent in runs made before modes were recorded; those are treated as recorded.
+      executionMode: z.enum(["autonomous", "replay", "recorded"]).default("recorded"),
       stopped: z.string().optional(),
       environment: z.object({ deployedSha: z.string().optional() }),
       pullRequest: z.object({ headSha: z.string() }),
@@ -81,6 +83,7 @@ export const ReportInput = z.object({
       ),
       usage: z
         .object({
+          apiErrors: z.array(z.object({ stage: z.string(), error: z.string() })).default([]),
           estimatedUsd: z.number(),
           minutes: z.number(),
           total: z.object({
@@ -127,19 +130,39 @@ export function render(input: ReportInput, runUrl: string): Rendered {
   const notRun = run.plan.scenarios.filter((s) => s.status === "blocked");
   const { documented, covered } = coverage(run as unknown as RunReport);
   const commitVerified = run.environment.deployedSha === run.pullRequest.headSha;
-  const title = `${failed} failed, ${count("passed")} passed, ${inconclusive} not verified`;
-  const conclusion = failed > 0 ? "failure" : inconclusive > 0 || run.stopped || run.results.length === 0 ? "neutral" : "success";
+  const recorded = run.executionMode === "recorded";
+  const counts = `${failed} failed, ${count("passed")} passed, ${inconclusive} not verified`;
+  const title = recorded ? `Recorded replay, not an autonomous run: ${counts}` : `${counts} (${run.executionMode})`;
+  // A run in which no live model took part is never a pass or a fail of the
+  // pull request: it is reported, and the Check stays neutral.
+  const conclusion = recorded
+    ? "neutral"
+    : failed > 0
+      ? "failure"
+      : inconclusive > 0 || run.stopped || run.results.length === 0
+        ? "neutral"
+        : "success";
 
   lines.push(
     `## ReleaseProof QA: ${safe(run.ticketKey, 40)}`,
     "",
-    `**${title}** on \`${run.pullRequest.headSha.slice(0, 10)}\` (${commitVerified ? "the application under test reported this commit" : "**commit not confirmed by the application**"})`,
+    ...(recorded
+      ? [
+          "> **Recorded replay, not an autonomous run.** No live model was used. The analysis, plan and browser steps come from an earlier run; only the comparisons against this commit are new. This result is informational and never passes or fails the pull request.",
+          "",
+        ]
+      : []),
+    `**${counts}** on \`${run.pullRequest.headSha.slice(0, 10)}\` (${commitVerified ? "the application under test reported this commit" : "**commit not confirmed by the application**"})`,
     "",
     `- Documented requirements compared against the application: ${covered} of ${documented.length}`,
     `- Scenarios planned but not run, waiting on a decision: ${notRun.length}`,
     `- Questions for the ticket owner: ${run.analysis.ambiguities.length + run.plan.clarifications.length}`,
+    `- Execution mode: ${MODES[run.executionMode]}`,
     `- Model: ${safe(run.driver, 120)}`,
   );
+  if (run.usage?.apiErrors.length) {
+    lines.push(`- Model API errors after retries: ${run.usage.apiErrors.map((e) => safe(`${e.stage}: ${e.error}`, 200)).join("; ")}`);
+  }
   if (run.usage) {
     const t = run.usage.total;
     const tokens = t.inputTokens + t.outputTokens + t.cacheReadTokens + t.cacheWriteTokens;
@@ -249,6 +272,10 @@ export async function publish(raw: unknown, runUrl: string, token: string): Prom
     output: { title: rendered.title, summary: rendered.body },
   });
   posted.push("check run");
+
+  // A run that was skipped has nothing for a reader to act on: the Check run
+  // records it, and the pull request is left without a comment.
+  if (input.status === "skipped") return { ...rendered, posted };
 
   // Only comment while the tested commit is still the head; an older result
   // must not overwrite a newer one.

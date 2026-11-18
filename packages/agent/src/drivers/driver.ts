@@ -21,10 +21,22 @@ export type TaskJob<T> = {
  */
 export interface Driver {
   readonly label: string;
+  /** True if a model decides things as the run happens; false if earlier decisions are replayed. */
+  readonly live: boolean;
   task<T>(job: TaskJob<T>): Promise<T>;
   /** Runs until the session has an outcome. */
   session(session: Session, job: SessionJob & { name: string }): Promise<Usage | undefined>;
   close(): Promise<void>;
+}
+
+/** A model API failure in a few words, without any request content. */
+export function describeApiError(error: unknown): string {
+  if (error instanceof Anthropic.APIConnectionError) return "connection failed";
+  if (error instanceof Anthropic.APIError) {
+    const type = (error.error as { error?: { type?: string } } | undefined)?.error?.type;
+    return `HTTP ${error.status}${type ? ` ${type}` : ""}: ${error.message.split("\n")[0]!.slice(0, 200)}`;
+  }
+  return (error as Error).message.split("\n")[0]!.slice(0, 200);
 }
 
 export type ApiDriverOptions = {
@@ -49,6 +61,7 @@ const MAX_RETRIES = 4;
  */
 export class ApiDriver implements Driver {
   readonly label: string;
+  readonly live = true;
   private client: Anthropic;
 
   constructor(private options: ApiDriverOptions) {
@@ -69,7 +82,10 @@ export class ApiDriver implements Driver {
       },
       { timeout: TASK_TIMEOUT_MS },
     );
-    const response = await stream.finalMessage();
+    const response = await stream.finalMessage().catch((error: unknown) => {
+      this.options.budget.noteError(describeApiError(error));
+      throw error;
+    });
     this.options.budget.record(response.usage);
     if (response.stop_reason === "refusal") throw new Error(`The model declined the ${job.name} task.`);
     if (response.stop_reason === "max_tokens") throw new Error(`The ${job.name} output was cut off at the output limit.`);

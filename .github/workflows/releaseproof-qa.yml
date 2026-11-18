@@ -29,7 +29,14 @@ concurrency:
 
 jobs:
   qa:
-    if: github.event.workflow_run.conclusion == 'success'
+    # A manually started build is always tested. A build started by a
+    # pull-request event is tested only when the repository variable
+    # RELEASEPROOF_AUTO_TRIGGER is "on". That variable is the switch for
+    # automatic runs: a pull request can add a pull_request trigger to its own
+    # copy of the build workflow, but it cannot set a repository variable.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'workflow_dispatch' || vars.RELEASEPROOF_AUTO_TRIGGER == 'on')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

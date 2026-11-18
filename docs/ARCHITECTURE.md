@@ -170,9 +170,13 @@ Verified by execution (see `eval/results/`):
 - Pipeline: ticket and pull-request ingestion (GitHub REST live; Jira from files in its REST format), read-only discovery, requirements analysis with mechanically verified quotes, planning with code-enforced traceability, execution, run report, retest
 - Held-out evaluation on two unseen features, one per app: 4 of 5 planted defects found with the frozen pipeline, 2 false-positive scenarios, all 4 deliberately missing rules raised as questions; 5 of 5 and no false positives after two logged engine changes
 
+CI: a three-stage GitHub Actions integration runs on `main`, started manually, and has posted Check runs and comments on both fixture pull requests using recorded model responses (see `eval/results/2026-11-18-ci/` and `docs/CI-SECURITY.md`).
+
 Built but not run: the direct model API driver (`drivers/driver.ts`, `execute/loop.ts`). All model work so far went through the HTTP bridge. Jira's live REST API is likewise unexercised.
 
-Not built: GitHub Actions workflow and its isolation, posting the report to the pull request, posting questions to Jira, failure investigation beyond replay.
+Not enabled: the automatic pull-request trigger (prepared, awaiting review of the security boundaries).
+
+Not built: posting questions to Jira, failure investigation beyond replay, fork pull-request approval.
 
 Findings that change the design:
 - Replay confirms that a failure repeats, not that it is a defect. A second, independently chosen comparison is needed before calling a failure confirmed.

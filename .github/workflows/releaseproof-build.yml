@@ -8,9 +8,15 @@
 #
 # Do not add secrets, write permissions or `pull_request_target` here.
 name: ReleaseProof build
-run-name: ReleaseProof build for PR #${{ inputs.pr }}
+run-name: ReleaseProof build for PR #${{ inputs.pr || github.event.pull_request.number }}
 
 on:
+  # Automatic trigger. With this event GitHub takes THIS FILE from the pull
+  # request, so a pull request can change what this workflow does. That is
+  # acceptable only because it has nothing to protect: no secrets, a read-only
+  # token, and outputs the QA workflow re-checks. Keep it that way.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       pr:
@@ -21,35 +27,52 @@ on:
         description: Plan from scratch even if an earlier run of this pull request can be re-run
         type: boolean
         default: false
+      max_usd:
+        description: Lower this run's cost limit in US dollars (cannot raise the configured limit)
+        type: string
+      max_scenarios:
+        description: Lower this run's limit on executed scenarios
+        type: string
+      max_minutes:
+        description: Lower this run's time limit in minutes
+        type: string
+      disable_fallbacks:
+        description: Do not send the model-fallback parameters
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: releaseproof-build-${{ inputs.pr }}
+  # A newer commit on the same pull request cancels the build in progress.
+  group: releaseproof-build-${{ inputs.pr || github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   build:
+    # Draft pull requests wait until they are marked ready for review.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check the pull request number
         env:
-          PR: ${{ inputs.pr }}
+          PR: ${{ inputs.pr || github.event.pull_request.number }}
         run: |
           case "$PR" in (''|*[!0-9]*) echo "Not a pull request number"; exit 1;; esac
 
-      - name: Check out ReleaseProof (this workflow's own commit)
+      - name: Check out ReleaseProof (default branch)
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.repository.default_branch }}
           path: releaseproof
           persist-credentials: false
 
       - name: Check out the pull request (untrusted)
         uses: actions/checkout@v4
         with:
-          ref: refs/pull/${{ inputs.pr }}/head
+          ref: refs/pull/${{ inputs.pr || github.event.pull_request.number }}/head
           path: pr
           persist-credentials: false
 
@@ -64,14 +87,23 @@ jobs:
       - name: Build the application image
         working-directory: releaseproof
         env:
-          PR: ${{ inputs.pr }}
-          FULL: ${{ inputs.full }}
+          PR: ${{ inputs.pr || github.event.pull_request.number }}
+          FULL: ${{ inputs.full || false }}
+          MAX_USD: ${{ inputs.max_usd }}
+          MAX_SCENARIOS: ${{ inputs.max_scenarios }}
+          MAX_MINUTES: ${{ inputs.max_minutes }}
+          DISABLE_FALLBACKS: ${{ inputs.disable_fallbacks || false }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           npx tsx packages/agent/src/ci/cli.ts build \
             --pr-dir "$GITHUB_WORKSPACE/pr" --repo "$GITHUB_REPOSITORY" --pr "$PR" \
             --out "$GITHUB_WORKSPACE/handoff"
           echo "$FULL" > "$GITHUB_WORKSPACE/handoff/full"
+          # Requests to tighten this run's limits. The QA workflow validates
+          # them and will only ever lower its own limits, never raise them.
+          jq -n --arg usd "$MAX_USD" --arg scenarios "$MAX_SCENARIOS" --arg minutes "$MAX_MINUTES" --arg nofallback "$DISABLE_FALLBACKS" \
+            '{maxUsd: $usd, maxScenarios: $scenarios, maxMinutes: $minutes, disableFallbacks: $nofallback}
+             | with_entries(select(.value != ""))' > "$GITHUB_WORKSPACE/handoff/limits.json"
 
       - name: Hand over to the QA workflow
         uses: actions/upload-artifact@v4

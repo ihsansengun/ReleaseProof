@@ -83,7 +83,11 @@ async function main(): Promise<number> {
     });
     console.log(`${result.status}${result.reason ? `: ${result.reason}` : ""}`);
     if (result.isolation) console.log(`isolation: ${JSON.stringify(result.isolation)}`);
-    if (result.run?.usage) console.log(`usage: ${JSON.stringify(result.run.usage.total)} about $${result.run.usage.estimatedUsd}`);
+    if (result.run?.usage) {
+      console.log(`usage: ${JSON.stringify(result.run.usage.total)} about $${result.run.usage.estimatedUsd}`);
+      for (const e of result.run.usage.apiErrors) console.log(`api error in ${e.stage}: ${e.error}`);
+    }
+    if (result.run) console.log(`execution mode: ${result.run.executionMode}; timings: ${result.run.timings.map((t) => `${t.stage} ${t.seconds}s`).join(", ")}`);
     // The job succeeds whenever a result was produced; the verdict is the report's to give.
     return 0;
   }

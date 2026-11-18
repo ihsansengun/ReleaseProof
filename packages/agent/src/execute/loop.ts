@@ -55,6 +55,7 @@ export async function runAgentLoop(session: Session, job: SessionJob, options: L
     } catch (error) {
       // Bad credentials will not get better by carrying on: fail the run.
       if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) {
+        options.budget.noteError(`HTTP ${error.status}: credentials rejected`);
         throw error;
       }
       // Anything else has already been retried by the client where that helps.
@@ -64,6 +65,7 @@ export async function runAgentLoop(session: Session, job: SessionJob, options: L
           : error instanceof Anthropic.APIError
             ? `returned HTTP ${error.status}`
             : `failed (${(error as Error).message.split("\n")[0]})`;
+      options.budget.noteError(what);
       session.outcome = { kind: "stopped", reason: `The model API ${what} after retries.` };
       break;
     }

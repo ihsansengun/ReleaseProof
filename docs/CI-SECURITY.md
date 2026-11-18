@@ -110,6 +110,12 @@ result for a commit that is no longer the head does not replace the comment.
 - The API client retries rate limits, overload and connection errors up to
   four times with backoff. A scenario whose model calls still fail ends as
   unverified with the reason; bad credentials stop the run.
+- A manual run can ask for tighter limits (cost, minutes, scenarios) through
+  the build workflow's inputs. The QA stage validates the request and only
+  ever lowers its limits.
+- Every report states its execution mode. A run with no live model
+  ("recorded") always gets a neutral Check, whatever its scenarios did, and
+  is never the basis for a later re-run.
 - When a limit is reached, scenarios not yet started are recorded as
   unverified, and the report says the run ended early. Blocked and
   unverified scenarios make the Check neutral. Only failures make it fail,
@@ -144,6 +150,14 @@ result for a commit that is no longer the head does not replace the comment.
   not plan for behaviour a new commit introduces unless `full` is set.
 - Replay shows a failure repeats, not that the comparison was the right one.
 - Tickets are read from files in Jira's format. Jira's live API is untested.
-- The automatic `pull_request` trigger is not enabled. Enabling it changes
-  one thing: stage 1's workflow file then comes from the pull request. That
-  is why stage 1 has nothing to protect and stage 2 re-checks everything.
+- With the `pull_request` event GitHub takes stage 1's workflow file from
+  the pull request. Two consequences:
+  - Stage 1 can be changed by the pull request. That is why it has nothing
+    to protect and stage 2 re-checks everything it hands over.
+  - Leaving the trigger out of `main` does not keep automatic runs off: a
+    pull request can add the trigger to its own copy and start stage 1, and
+    stage 2 on `main` then runs for it. This happened when the pull request
+    that adds the trigger was opened. The switch is therefore in stage 2:
+    builds started by a pull-request event are tested only when the
+    repository variable `RELEASEPROOF_AUTO_TRIGGER` is `on`. A pull request
+    cannot set a repository variable.

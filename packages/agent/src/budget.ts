@@ -24,6 +24,8 @@ export type UsageSummary = {
   minutes: number;
   limits: Limits;
   prices: Prices;
+  /** Model API failures that were not cured by the client's retries. */
+  apiErrors: { stage: string; error: string }[];
 };
 
 const empty = (): StageUsage => ({
@@ -51,6 +53,7 @@ export type ReportedUsage = {
 export class Budget {
   private byStage: Record<string, StageUsage> = {};
   private stage = "setup";
+  private apiErrors: { stage: string; error: string }[] = [];
   private readonly startedAt = Date.now();
 
   constructor(
@@ -73,6 +76,10 @@ export class Budget {
     s.outputTokens += usage.output_tokens;
     s.cacheReadTokens += usage.cache_read_input_tokens ?? 0;
     s.cacheWriteTokens += usage.cache_creation_input_tokens ?? 0;
+  }
+
+  noteError(error: string) {
+    this.apiErrors.push({ stage: this.stage, error });
   }
 
   toolCall() {
@@ -120,6 +127,7 @@ export class Budget {
       minutes: Math.round(this.minutes() * 10) / 10,
       limits: this.limits,
       prices: this.prices,
+      apiErrors: this.apiErrors,
     };
   }
 }

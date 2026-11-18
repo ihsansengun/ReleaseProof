@@ -20,6 +20,12 @@ export function coverage(run: RunReport) {
   return { documented, compared, covered: documented.filter((r) => compared.has(r.id)).length };
 }
 
+export const MODES = {
+  autonomous: "autonomous (a live model analysed, planned and executed this run)",
+  replay: "replay (scenarios from an earlier autonomous run, re-run on this commit)",
+  recorded: "recorded (no live model; an earlier run's decisions were replayed)",
+} as const;
+
 /** The QA report for one ticket and pull request. */
 export function renderRunReport(run: RunReport): string {
   const { documented, compared, covered } = coverage(run);
@@ -39,8 +45,12 @@ export function renderRunReport(run: RunReport): string {
     `- Documented requirements compared against the application: ${covered} of ${documented.length}`,
     `- Clarification requests: ${run.analysis.ambiguities.length + run.plan.clarifications.length}`,
     `- Environment: ${run.environment.baseUrl}, commit \`${run.environment.deployedSha ?? "not reported"}\``,
+    `- Execution mode: ${MODES[run.executionMode ?? "recorded"]}`,
     `- Model work done by: ${run.driver}`,
   );
+  if (run.usage?.apiErrors?.length) {
+    lines.push(`- Model API errors after retries: ${run.usage.apiErrors.map((e) => `${e.stage}: ${e.error}`).join("; ")}`);
+  }
   if (run.usage) {
     const t = run.usage.total;
     lines.push(
