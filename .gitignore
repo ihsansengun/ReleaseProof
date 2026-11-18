@@ -1,0 +1,9 @@
+node_modules/
+.next/
+*.db
+*.db-*
+runs/
+next-env.d.ts
+*.tsbuildinfo
+.next-*/
+.claude/worktrees/

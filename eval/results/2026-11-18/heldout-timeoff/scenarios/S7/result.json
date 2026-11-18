@@ -1,0 +1,474 @@
+{
+  "scenarioId": "S7",
+  "title": "Approved request starting tomorrow cannot be cancelled (inside notice window)",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "passed",
+  "reason": "All 3 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3100",
+    "deployedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0",
+    "expectedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": "Approved",
+      "actual": "Approved",
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R6",
+        "field": "body",
+        "jsonPath": "0.status",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 19,
+      "actual": 19,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R5",
+        "field": "body",
+        "jsonPath": "balance",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": "3",
+      "actual": "Approved leave can only be cancelled at least 3 days before its first day.",
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R4",
+        "field": "body",
+        "jsonPath": "error",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    }
+  ],
+  "observations": {
+    "balanceApproved": 19,
+    "balanceAfter": 19
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the application landing page and sign-in form."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the application landing page and sign-in form."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s7-emp",
+        "rationale": "Enter employee username to sign in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee username to sign in."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Enter employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit the sign-in form as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit the sign-in form as employee."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Read current user and look for a Date header to determine today."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"handle\":\"s7-emp\",\"name\":\"Employee s7-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Read current user and look for a Date header to determine today."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "First day"
+        },
+        "text": "2026-11-19",
+        "rationale": "Set first day to tomorrow."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set first day to tomorrow."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Last day"
+        },
+        "text": "2026-11-19",
+        "rationale": "Set last day to tomorrow."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set last day to tomorrow."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Reason"
+        },
+        "text": "S7 test",
+        "rationale": "Provide a reason in case it is required."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Provide a reason in case it is required."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Submit request"
+        },
+        "rationale": "Create the request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Create the request."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/requests",
+        "rationale": "Find the new request id."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":[{\"id\":9,\"employee\":\"s7-emp\",\"employeeName\":\"Employee s7-emp\",\"start\":\"2026-11-19\",\"end\":\"2026-11-19\",\"days\":1,\"reason\":\"S7 test\",\"status\":\"Pending\"}]}",
+      "rationale": "Find the new request id."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out the employee so the manager can approve."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign out the employee so the manager can approve."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s7-mgr",
+        "rationale": "Enter manager username."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter manager username."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:mgr.password}}",
+        "rationale": "Enter manager password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter manager password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Sign in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as manager."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Approve request 9 from Employee s7-emp"
+        },
+        "rationale": "Approve the scenario request #9."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Approve the scenario request #9."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out the manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign out the manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s7-emp",
+        "rationale": "Enter employee username."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee username."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Enter employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Enter employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Sign in as employee again."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee again."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Read balance after approval."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R3\",\"status\":200,\"body\":{\"handle\":\"s7-emp\",\"name\":\"Employee s7-emp\",\"role\":\"employee\",\"balance\":19}}",
+      "rationale": "Read balance after approval."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceApproved",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record balance after approval."
+      },
+      "ok": true,
+      "summary": "Recorded balanceApproved = 19",
+      "rationale": "Record balance after approval."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "POST",
+        "path": "/api/requests/9/cancel",
+        "rationale": "Attempt to cancel the approved request starting tomorrow."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R4\",\"status\":409,\"body\":{\"error\":\"Approved leave can only be cancelled at least 3 days before its first day.\"}}",
+      "rationale": "Attempt to cancel the approved request starting tomorrow."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Read balance after refused cancel."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R5\",\"status\":200,\"body\":{\"handle\":\"s7-emp\",\"name\":\"Employee s7-emp\",\"role\":\"employee\",\"balance\":19}}",
+      "rationale": "Read balance after refused cancel."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/requests",
+        "rationale": "Read request status after refused cancel."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R6\",\"status\":200,\"body\":[{\"id\":9,\"employee\":\"s7-emp\",\"employeeName\":\"Employee s7-emp\",\"start\":\"2026-11-19\",\"end\":\"2026-11-19\",\"days\":1,\"reason\":\"S7 test\",\"status\":\"Approved\"}]}",
+      "rationale": "Read request status after refused cancel."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceAfter",
+        "target": {
+          "source": "api",
+          "responseId": "R5",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record balance after refused cancel."
+      },
+      "ok": true,
+      "summary": "Recorded balanceAfter = 19",
+      "rationale": "Record balance after refused cancel."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "api",
+          "responseId": "R6",
+          "field": "body",
+          "jsonPath": "0.status",
+          "count": false
+        },
+        "rationale": "Request 9 status after refused cancel."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected Approved, actual Approved -> match. This result is final.",
+      "rationale": "Request 9 status after refused cancel."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R5",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "balanceAfter compared with balanceApproved."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 19, actual 19 -> match. This result is final.",
+      "rationale": "balanceAfter compared with balanceApproved."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "error",
+          "count": false
+        },
+        "rationale": "Error message of the refused cancel."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected 3, actual Approved leave can only be cancelled at least 3 days before its first day. -> match. This result is final.",
+      "rationale": "Error message of the refused cancel."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All assertions A1-A3 checked: request 9 (2026-11-19) approved, API cancel refused with 409, status and balance unchanged.",
+        "rationale": "Every assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "heldout-timeoff/scenarios/S7"
+  },
+  "startedAt": "2026-11-18T18:57:59.589Z",
+  "durationMs": 71009
+}

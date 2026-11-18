@@ -1,0 +1,32 @@
+# Environment manifest: what ReleaseProof may assume about the test target.
+# The agent verifies these at run time; it does not discover them.
+baseUrl: http://localhost:3000
+version:
+  path: /api/version
+fixtures:
+  customer:
+    description: A customer with no orders and no loyalty history. Returns id, email, password and name.
+    method: POST
+    path: /api/test/customers
+    account: true
+    body:
+      key: "{{key}}"
+integrations:
+  payments:
+    mode: simulated
+    notes: Card number 4242 4242 4242 4242 is accepted. Any other card number is declined.
+docs:
+  - README.md
+signIn:
+  allow:
+    - POST /login
+start:
+  install: npm ci
+  build: npm run build -w apps/shop
+  run: node_modules/.bin/next start apps/shop
+  port: 3000
+  commitEnv: GIT_SHA
+  env:
+    PORT: "3000"
+    TEST_MODE: "1"
+    DATABASE_FILE: /tmp/shop.db

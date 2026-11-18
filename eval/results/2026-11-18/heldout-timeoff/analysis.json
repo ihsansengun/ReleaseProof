@@ -1,0 +1,398 @@
+{
+  "analysis": {
+    "featureSummary": "LEAVE-58: employees can cancel their own Pending or Approved time-off requests in Dayoff via a Cancel button in \"My requests\" and POST /api/requests/:id/cancel. Cancelling sets status Cancelled; cancelling Approved leave returns its days to the balance but (per the later payroll comment, overriding the original 'any time before the first day') is only allowed when the first day is at least 3 days after today. Only the requesting employee may cancel (others get 403); cancelled requests cannot be decided (409) and appear under the manager's Decided list; repeated cancel returns 409 without refunding twice.",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "In \"My requests\" every Pending request has a Cancel button.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "In \"My requests\" every Pending and every Approved request has a Cancel button whose accessible name includes the request's first and last day."
+      },
+      {
+        "id": "R2",
+        "text": "In \"My requests\" every Approved request has a Cancel button.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "In \"My requests\" every Pending and every Approved request has a Cancel button whose accessible name includes the request's first and last day."
+      },
+      {
+        "id": "R3",
+        "text": "The Cancel button's accessible name includes the request's first day and last day.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "In \"My requests\" every Pending and every Approved request has a Cancel button whose accessible name includes the request's first and last day."
+      },
+      {
+        "id": "R4",
+        "text": "Rejected requests have no Cancel button.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Rejected and Cancelled requests have no Cancel button."
+      },
+      {
+        "id": "R5",
+        "text": "Cancelled requests have no Cancel button.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Rejected and Cancelled requests have no Cancel button."
+      },
+      {
+        "id": "R6",
+        "text": "Cancelling a Pending request sets its status to Cancelled.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Cancelling a Pending request sets its status to Cancelled."
+      },
+      {
+        "id": "R7",
+        "text": "Cancelling a Pending request does not change the employee's days remaining.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "The employee's days remaining do not change."
+      },
+      {
+        "id": "R8",
+        "text": "A Pending request can be cancelled at any time (the 3-day notice rule does not apply to it).",
+        "kind": "documented",
+        "sourceType": "ticket-comment",
+        "quote": "This only applies to Approved requests; a Pending request can be cancelled whenever, since payroll has not seen it yet."
+      },
+      {
+        "id": "R9",
+        "text": "Cancelling an Approved request (outside the notice window) sets its status to Cancelled.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Cancelling an Approved request sets its status to Cancelled and returns the request's days to the employee's balance."
+      },
+      {
+        "id": "R10",
+        "text": "Cancelling an Approved request returns the request's days to the employee's balance.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Cancelling an Approved request sets its status to Cancelled and returns the request's days to the employee's balance."
+      },
+      {
+        "id": "R11",
+        "text": "\"Days remaining\" shows the new balance immediately after cancelling, without a reload.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "\"Days remaining\" shows the new balance straight away and after a reload."
+      },
+      {
+        "id": "R12",
+        "text": "\"Days remaining\" still shows the new balance after a page reload.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "\"Days remaining\" shows the new balance straight away and after a reload."
+      },
+      {
+        "id": "R13",
+        "text": "An Approved request whose first day is exactly today + 3 days (or later) can be cancelled. This overrides the original 'any time before its first day' criterion.",
+        "kind": "documented",
+        "sourceType": "ticket-comment",
+        "quote": "So an Approved request can be cancelled only when its first day is 3 or more days after today (first day today + 3 is fine, today + 2 is not)."
+      },
+      {
+        "id": "R14",
+        "text": "Cancelling an Approved request whose first day is today + 2 days or sooner (including today and past first days) is refused.",
+        "kind": "documented",
+        "sourceType": "ticket-comment",
+        "quote": "So an Approved request can be cancelled only when its first day is 3 or more days after today (first day today + 3 is fine, today + 2 is not)."
+      },
+      {
+        "id": "R15",
+        "text": "When an Approved cancel is refused inside the notice window, an error message is shown that states the 3 days.",
+        "kind": "documented",
+        "sourceType": "ticket-comment",
+        "quote": "Inside that window the cancel is refused with a message that states the 3 days."
+      },
+      {
+        "id": "R16",
+        "text": "When an Approved cancel is refused, the request stays Approved.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "cancelling is refused with an error message, the request stays Approved and the balance does not change."
+      },
+      {
+        "id": "R17",
+        "text": "When an Approved cancel is refused, the balance does not change.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "cancelling is refused with an error message, the request stays Approved and the balance does not change."
+      },
+      {
+        "id": "R18",
+        "text": "Another employee who tries to cancel a request they did not make gets 403 from the API.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Only the employee who made a request can cancel it. Another employee or a manager who tries gets 403 from the API and nothing changes."
+      },
+      {
+        "id": "R19",
+        "text": "A manager who tries to cancel a request gets 403 from the API.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Only the employee who made a request can cancel it. Another employee or a manager who tries gets 403 from the API and nothing changes."
+      },
+      {
+        "id": "R20",
+        "text": "After a refused (403) cancel attempt by a non-owner, the request status and the owner's balance are unchanged.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Another employee or a manager who tries gets 403 from the API and nothing changes."
+      },
+      {
+        "id": "R21",
+        "text": "A Cancelled request cannot be approved: the decision endpoint returns 409.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "A Cancelled request can no longer be approved or rejected (409)."
+      },
+      {
+        "id": "R22",
+        "text": "A Cancelled request cannot be rejected: the decision endpoint returns 409.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "A Cancelled request can no longer be approved or rejected (409)."
+      },
+      {
+        "id": "R23",
+        "text": "For the manager, a cancelled request no longer appears under \"Requests awaiting a decision\".",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "For the manager it leaves \"Requests awaiting a decision\" and is listed under \"Decided\" with status Cancelled."
+      },
+      {
+        "id": "R24",
+        "text": "For the manager, a cancelled request is listed under \"Decided\" with status Cancelled.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "For the manager it leaves \"Requests awaiting a decision\" and is listed under \"Decided\" with status Cancelled."
+      },
+      {
+        "id": "R25",
+        "text": "POST /api/requests/:id/cancel returns the updated request (with status Cancelled) on success.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "The API is POST /api/requests/:id/cancel and returns the updated request."
+      },
+      {
+        "id": "R26",
+        "text": "Cancelling a request that is already Cancelled returns 409.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Cancelling a request that is already Cancelled returns 409 and does not change the balance a second time."
+      },
+      {
+        "id": "R27",
+        "text": "Cancelling an already-Cancelled (formerly Approved) request does not return the days to the balance a second time.",
+        "kind": "documented",
+        "sourceType": "ticket-description",
+        "quote": "Cancelling a request that is already Cancelled returns 409 and does not change the balance a second time."
+      },
+      {
+        "id": "R28",
+        "text": "A cancelled request shows as Cancelled in the employee's \"My requests\" list.",
+        "kind": "documented",
+        "sourceType": "doc",
+        "quote": "A cancelled request shows as Cancelled and can no longer be decided."
+      },
+      {
+        "id": "R29",
+        "text": "No notification is sent to the manager when approved leave is cancelled; seeing it under Decided is sufficient.",
+        "kind": "documented",
+        "sourceType": "ticket-comment",
+        "quote": "Seeing it under Decided is enough for this ticket. Notifications are a separate piece of work."
+      },
+      {
+        "id": "R30",
+        "text": "Attempting to cancel a Rejected request via the API is refused and leaves the request Rejected and the balance unchanged.",
+        "kind": "inferred",
+        "sourceType": "pull-request",
+        "quote": ""
+      },
+      {
+        "id": "R31",
+        "text": "Cancelling a non-existent request id returns 404.",
+        "kind": "inferred",
+        "sourceType": "pull-request",
+        "quote": ""
+      },
+      {
+        "id": "R32",
+        "text": "When an Approved cancel is refused in the UI, the error message is displayed on the \"My requests\" screen (alert above the table) and the row keeps its Cancel button and Approved status.",
+        "kind": "inferred",
+        "sourceType": "pull-request",
+        "quote": ""
+      },
+      {
+        "id": "R33",
+        "text": "An unauthenticated call to POST /api/requests/:id/cancel is rejected (401) and changes nothing.",
+        "kind": "inferred",
+        "sourceType": "none",
+        "quote": ""
+      }
+    ],
+    "ambiguities": [
+      {
+        "id": "Q1",
+        "question": "What HTTP status should the API return when an Approved cancel is refused because of the 3-day notice rule (409, 400, 422)?",
+        "why": "The ticket only says the cancel is refused with a message; the PR returns 409. A tester cannot assert the status code of the notice refusal until this is decided.",
+        "relatedRequirementIds": [
+          "R14",
+          "R15"
+        ]
+      },
+      {
+        "id": "Q2",
+        "question": "Which time zone defines 'today' for the 3-day notice rule: the employee's local date, the company's time zone, or the server's UTC date?",
+        "why": "Near midnight the date differs between zones, so the boundary case (first day = today + 3 vs today + 2) cannot be given a definite expected outcome until the reference clock is fixed.",
+        "relatedRequirementIds": [
+          "R13",
+          "R14"
+        ]
+      },
+      {
+        "id": "Q3",
+        "question": "Are the 3 days of notice calendar days, or working days (excluding weekends/holidays)?",
+        "why": "The comment says 'today + 3' which reads as calendar days, but 'days' is used elsewhere for leave days which may be working days; boundary tests over a weekend have no defined expected result.",
+        "relatedRequirementIds": [
+          "R13",
+          "R14"
+        ]
+      },
+      {
+        "id": "Q4",
+        "question": "Should a Cancel button still be shown on an Approved request that is already inside the 3-day window (or already started/past), or should it be hidden or disabled?",
+        "why": "The description says every Approved request has a Cancel button, while the comment makes such cancels always fail; the expected UI for in-window Approved rows cannot be asserted until clarified.",
+        "relatedRequirementIds": [
+          "R2",
+          "R14",
+          "R32"
+        ]
+      },
+      {
+        "id": "Q5",
+        "question": "What should the API return when an employee tries to cancel another employee's request: 403 (as the ticket says) even though that reveals the request exists, or 404?",
+        "why": "The ticket says 403 for another employee; confirming this avoids a dispute if the implementation chooses 404 to hide other people's requests.",
+        "relatedRequirementIds": [
+          "R18"
+        ]
+      },
+      {
+        "id": "Q6",
+        "question": "What exact status code and message are expected when cancelling a Rejected request through the API?",
+        "why": "The ticket only says Rejected requests have no Cancel button; it does not define the API response for a direct call, so the test can only be inferred.",
+        "relatedRequirementIds": [
+          "R30"
+        ]
+      },
+      {
+        "id": "Q7",
+        "question": "Does a Cancelled request still count against overlap/duplicate checks when the employee creates a new request for the same dates?",
+        "why": "The ticket does not say whether cancelled leave frees the dates for a new request; a tester cannot know whether re-requesting the same days should succeed.",
+        "relatedRequirementIds": [
+          "R6",
+          "R9"
+        ]
+      }
+    ],
+    "risks": [
+      {
+        "id": "K1",
+        "description": "Off-by-one in the notice check: an Approved request starting today + 2 is allowed to be cancelled (and its days refunded), contradicting the payroll rule.",
+        "basis": "noticeDays() returns Math.round((start - today)/DAY) + 1 and refuses only when that is < 3. For start = today + 2 it returns 3, so the cancel succeeds; only today + 1 and earlier are refused. The comment explicitly says 'today + 2 is not' fine.",
+        "relatedRequirementIds": [
+          "R13",
+          "R14",
+          "R16",
+          "R17"
+        ]
+      },
+      {
+        "id": "K2",
+        "description": "No ownership check: any employee can cancel another employee's request, and for Approved leave the days are refunded to the owner without their action.",
+        "basis": "The cancel route only checks user.role !== 'employee' for 403; it finds the request by id across all requests and never compares request.employee to the signed-in user.",
+        "relatedRequirementIds": [
+          "R18",
+          "R20"
+        ]
+      },
+      {
+        "id": "K3",
+        "description": "Time zone mismatch on 'today': the server uses the UTC date while employees and payroll likely think in local dates, so the boundary may shift by a day near midnight.",
+        "basis": "noticeDays() computes today as new Date().toISOString().slice(0,10) (UTC) and Date.parse on YYYY-MM-DD (UTC midnight).",
+        "relatedRequirementIds": [
+          "R13",
+          "R14"
+        ]
+      },
+      {
+        "id": "K4",
+        "description": "Manager's Decided list may not show Cancelled requests (or may show them still awaiting decision) if the existing manager screen filters on Approved/Rejected or on status !== Pending in ways that were not checked.",
+        "basis": "The PR states the Decided list works 'without any change to that screen'; app.js manager code was not changed or shown in the diff.",
+        "relatedRequirementIds": [
+          "R23",
+          "R24"
+        ]
+      },
+      {
+        "id": "K5",
+        "description": "Decision endpoint behaviour for Cancelled requests is assumed, not changed: if decide() checks only for 'Approved'/'Rejected' rather than 'not Pending', a manager could approve a Cancelled request and deduct days again.",
+        "basis": "The PR relies on 'the decision endpoint only accepts Pending requests'; the decision code was not modified in the diff.",
+        "relatedRequirementIds": [
+          "R21",
+          "R22"
+        ]
+      },
+      {
+        "id": "K6",
+        "description": "Balance display may be stale after cancel if render() does not re-fetch /api/me, or the cancel error alert may persist after a later successful action.",
+        "basis": "The Cancel onclick calls render() after the POST; whether render re-reads the balance is not visible in the diff. cancelError is set on failure and never explicitly cleared.",
+        "relatedRequirementIds": [
+          "R11",
+          "R12",
+          "R15",
+          "R32"
+        ]
+      },
+      {
+        "id": "K7",
+        "description": "Balance consistency: double cancels, concurrent cancels, or cancel racing with a manager decision could refund days twice or leave status and balance inconsistent.",
+        "basis": "cancel() mutates users.balance and request.status in memory; the already-cancelled guard exists but concurrent requests and approve-vs-cancel ordering are untested.",
+        "relatedRequirementIds": [
+          "R10",
+          "R26",
+          "R27"
+        ]
+      },
+      {
+        "id": "K8",
+        "description": "Refusal message wording must state the 3 days; a change to CANCEL_NOTICE_DAYS or message text could break this requirement.",
+        "basis": "Message is 'Approved leave can only be cancelled at least 3 days before its first day.' built from CANCEL_NOTICE_DAYS.",
+        "relatedRequirementIds": [
+          "R15"
+        ]
+      },
+      {
+        "id": "K9",
+        "description": "Accessible name uses raw ISO dates ('Cancel request from YYYY-MM-DD to YYYY-MM-DD'); screen-reader tests that look for the dates as displayed must match the same format, and identical date ranges would give duplicate names.",
+        "basis": "ariaLabel: `Cancel request from ${request.start} to ${request.end}` in app.js.",
+        "relatedRequirementIds": [
+          "R3"
+        ]
+      },
+      {
+        "id": "K10",
+        "description": "Pending requests whose dates are already in the past can be cancelled; also a Pending cancel must not touch the balance, which depends on balance being deducted only on approval.",
+        "basis": "cancel() skips the notice and balance logic entirely for Pending; correctness of R7 depends on when the existing code deducts days.",
+        "relatedRequirementIds": [
+          "R7",
+          "R8"
+        ]
+      }
+    ]
+  },
+  "notes": []
+}

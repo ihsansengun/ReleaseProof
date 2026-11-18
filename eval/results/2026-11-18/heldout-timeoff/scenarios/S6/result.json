@@ -1,0 +1,555 @@
+{
+  "scenarioId": "S6",
+  "title": "Double cancel of an Approved request via API: 409 and no second refund",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "passed",
+  "reason": "All 4 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3100",
+    "deployedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0",
+    "expectedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": "Cancelled",
+      "actual": "Cancelled",
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R4",
+        "field": "body",
+        "jsonPath": "status",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 18,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R5",
+        "field": "body",
+        "jsonPath": "balance",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": 409,
+      "actual": 409,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R6",
+        "field": "status",
+        "jsonPath": "",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    },
+    {
+      "assertionId": "A4",
+      "expected": 20,
+      "actual": 20,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R7",
+        "field": "body",
+        "jsonPath": "balance",
+        "count": false
+      },
+      "screenshot": "check-A4.png"
+    }
+  ],
+  "observations": {
+    "balanceApproved": 17,
+    "firstCancelStatus": 200,
+    "balanceAfterFirst": 20,
+    "secondCancelStatus": 409,
+    "balanceAfterSecond": 20
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the app entry page and sign-in form."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the app entry page and sign-in form."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s6-emp",
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "First day"
+        },
+        "text": "2027-03-08",
+        "rationale": "Set first day."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set first day."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Last day"
+        },
+        "text": "2027-03-10",
+        "rationale": "Set last day."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Set last day."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Submit request"
+        },
+        "rationale": "Create the request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Create the request."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Look at the API shape for the employee."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"handle\":\"s6-emp\",\"name\":\"Employee s6-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Look at the API shape for the employee."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/requests",
+        "rationale": "Find the id of the new request."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":[{\"id\":6,\"employee\":\"s6-emp\",\"employeeName\":\"Employee s6-emp\",\"start\":\"2027-03-08\",\"end\":\"2027-03-10\",\"days\":3,\"reason\":\"\",\"status\":\"Pending\"}]}",
+      "rationale": "Find the id of the new request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch to manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch to manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s6-mgr",
+        "rationale": "Manager username."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Manager username."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:mgr.password}}",
+        "rationale": "Manager password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Manager password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit manager sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit manager sign-in."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Approve request 6 from Employee s6-emp"
+        },
+        "rationale": "Approve the scenario request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Approve the scenario request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Switch back to employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Switch back to employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s6-emp",
+        "rationale": "Employee username."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Employee username."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Balance after approval."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R3\",\"status\":200,\"body\":{\"handle\":\"s6-emp\",\"name\":\"Employee s6-emp\",\"role\":\"employee\",\"balance\":17}}",
+      "rationale": "Balance after approval."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceApproved",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record balance after approval."
+      },
+      "ok": true,
+      "summary": "Recorded balanceApproved = 17",
+      "rationale": "Record balance after approval."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "POST",
+        "path": "/api/requests/6/cancel",
+        "rationale": "First cancel of the approved request."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R4\",\"status\":200,\"body\":{\"id\":6,\"employee\":\"s6-emp\",\"employeeName\":\"Employee s6-emp\",\"start\":\"2027-03-08\",\"end\":\"2027-03-10\",\"days\":3,\"reason\":\"\",\"status\":\"Cancelled\"}}",
+      "rationale": "First cancel of the approved request."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "firstCancelStatus",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "status",
+          "jsonPath": "",
+          "count": false
+        },
+        "rationale": "Record HTTP status of first cancel as the scenario asks."
+      },
+      "ok": true,
+      "summary": "Recorded firstCancelStatus = 200",
+      "rationale": "Record HTTP status of first cancel as the scenario asks."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "api",
+          "responseId": "R4",
+          "field": "body",
+          "jsonPath": "status",
+          "count": false
+        },
+        "rationale": "First cancel response status field."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected Cancelled, actual Cancelled -> match. This result is final.",
+      "rationale": "First cancel response status field."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Balance after first cancel."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R5\",\"status\":200,\"body\":{\"handle\":\"s6-emp\",\"name\":\"Employee s6-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Balance after first cancel."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceAfterFirst",
+        "target": {
+          "source": "api",
+          "responseId": "R5",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record balance after first cancel."
+      },
+      "ok": true,
+      "summary": "Recorded balanceAfterFirst = 20",
+      "rationale": "Record balance after first cancel."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R5",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Balance after first cancel vs balanceApproved+1."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 18, actual 20 -> match. This result is final.",
+      "rationale": "Balance after first cancel vs balanceApproved+1."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "POST",
+        "path": "/api/requests/6/cancel",
+        "rationale": "Second cancel of the same request."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R6\",\"status\":409,\"body\":{\"error\":\"This request was already cancelled.\"}}",
+      "rationale": "Second cancel of the same request."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "secondCancelStatus",
+        "target": {
+          "source": "api",
+          "responseId": "R6",
+          "field": "status",
+          "jsonPath": "",
+          "count": false
+        },
+        "rationale": "Record second cancel HTTP status."
+      },
+      "ok": true,
+      "summary": "Recorded secondCancelStatus = 409",
+      "rationale": "Record second cancel HTTP status."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "api",
+          "responseId": "R6",
+          "field": "status",
+          "jsonPath": "",
+          "count": false
+        },
+        "rationale": "Second cancel status should be 409."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected 409, actual 409 -> match. This result is final.",
+      "rationale": "Second cancel status should be 409."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/me",
+        "rationale": "Balance after second cancel."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R7\",\"status\":200,\"body\":{\"handle\":\"s6-emp\",\"name\":\"Employee s6-emp\",\"role\":\"employee\",\"balance\":20}}",
+      "rationale": "Balance after second cancel."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "balanceAfterSecond",
+        "target": {
+          "source": "api",
+          "responseId": "R7",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Record balance after second cancel."
+      },
+      "ok": true,
+      "summary": "Recorded balanceAfterSecond = 20",
+      "rationale": "Record balance after second cancel."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A4",
+        "target": {
+          "source": "api",
+          "responseId": "R7",
+          "field": "body",
+          "jsonPath": "balance",
+          "count": false
+        },
+        "rationale": "Balance after second cancel should equal balanceAfterFirst."
+      },
+      "ok": true,
+      "summary": "Recorded A4: expected 20, actual 20 -> match. This result is final.",
+      "rationale": "Balance after second cancel should equal balanceAfterFirst."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All four assertions A1-A4 checked at the states the scenario specifies.",
+        "rationale": "Every assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "heldout-timeoff/scenarios/S6"
+  },
+  "startedAt": "2026-11-18T18:57:52.972Z",
+  "durationMs": 89741
+}

@@ -1,0 +1,400 @@
+{
+  "scenarioId": "S9",
+  "title": "Rejected request has no Cancel button while a Pending one does",
+  "mode": "agent",
+  "driver": "external model via HTTP bridge",
+  "verdict": "passed",
+  "reason": "All 3 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3100",
+    "deployedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0",
+    "expectedSha": "08e7842a56d2988b058d3e07853d2da1601a42f0"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": "Rejected",
+      "actual": "2027-03-08 2027-03-10 3 Rejected",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "role",
+        "role": "row",
+        "value": "2027-03-08 2027-03-10 3 Rejected",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": "absent",
+      "actual": "absent",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "role",
+        "role": "button",
+        "value": "Cancel request from 2027-03-08 to 2027-03-10",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": "present",
+      "actual": "present",
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "role",
+        "role": "button",
+        "value": "Cancel request from 2027-04-12 to 2027-04-14",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    }
+  ],
+  "observations": {},
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the application start page and sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the application start page and sign-in."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s9-emp",
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "First day"
+        },
+        "text": "2027-03-08",
+        "rationale": "First request start date."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "First request start date."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Last day"
+        },
+        "text": "2027-03-10",
+        "rationale": "First request end date."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "First request end date."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Submit request"
+        },
+        "rationale": "Submit first request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit first request."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "First day"
+        },
+        "text": "2027-04-12",
+        "rationale": "Second request start date."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Second request start date."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Last day"
+        },
+        "text": "2027-04-14",
+        "rationale": "Second request end date."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Second request end date."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Submit request"
+        },
+        "rationale": "Submit second request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit second request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out to switch to manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign out to switch to manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s9-mgr",
+        "rationale": "Sign in as manager."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as manager."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:mgr.password}}",
+        "rationale": "Manager password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Manager password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Reject request 7 from Employee s9-emp"
+        },
+        "rationale": "Reject only the s9-emp 2027-03-08 request."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Reject only the s9-emp 2027-03-08 request."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign out"
+        },
+        "rationale": "Sign out to return as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign out to return as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Username"
+        },
+        "text": "s9-emp",
+        "rationale": "Sign in as employee."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Sign in as employee."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "textbox",
+          "value": "Password"
+        },
+        "text": "{{secret:emp.password}}",
+        "rationale": "Employee password."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Employee password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit sign-in to view My requests."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Submit sign-in to view My requests."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "page",
+          "by": "role",
+          "role": "row",
+          "value": "2027-03-08 2027-03-10 3 Rejected",
+          "count": false
+        },
+        "rationale": "Read the row for 2027-03-08 to 2027-03-10, which includes its status cell."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected Rejected, actual 2027-03-08 2027-03-10 3 Rejected -> match. This result is final.",
+      "rationale": "Read the row for 2027-03-08 to 2027-03-10, which includes its status cell."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "page",
+          "by": "role",
+          "role": "button",
+          "value": "Cancel request from 2027-03-08 to 2027-03-10",
+          "count": false
+        },
+        "rationale": "The Cancel button for the rejected row should not exist."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected absent, actual absent -> match. This result is final.",
+      "rationale": "The Cancel button for the rejected row should not exist."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "page",
+          "by": "role",
+          "role": "button",
+          "value": "Cancel request from 2027-04-12 to 2027-04-14",
+          "count": false
+        },
+        "rationale": "The Cancel button for the Pending row should exist."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected present, actual present -> match. This result is final.",
+      "rationale": "The Cancel button for the Pending row should exist."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All three assertions (A1, A2, A3) were checked after the manager rejected request #7 (2027-03-08 to 2027-03-10) and the employee reopened My requests.",
+        "rationale": "Every planned assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every planned assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "heldout-timeoff/scenarios/S9"
+  },
+  "startedAt": "2026-11-18T18:58:03.314Z",
+  "durationMs": 56558
+}

@@ -1,0 +1,385 @@
+{
+  "scenarioId": "S9",
+  "title": "SAVE10 and TAKE15 do not stack",
+  "mode": "replay",
+  "verdict": "passed",
+  "reason": "All 3 assertions matched.",
+  "environment": {
+    "baseUrl": "http://localhost:3000",
+    "deployedSha": "608909953f5ee06a34141dcbeea03fffc4bae337",
+    "expectedSha": "608909953f5ee06a34141dcbeea03fffc4bae337"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": 1500,
+      "actual": 1500,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R3",
+        "field": "body",
+        "jsonPath": "discountCents",
+        "count": false
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 11495,
+      "actual": 11495,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R3",
+        "field": "body",
+        "jsonPath": "totalCents",
+        "count": false
+      },
+      "screenshot": "check-A2.png"
+    },
+    {
+      "assertionId": "A3",
+      "expected": 11495,
+      "actual": 11495,
+      "pass": true,
+      "target": {
+        "source": "api",
+        "responseId": "R3",
+        "field": "body",
+        "jsonPath": "totalCents",
+        "count": false
+      },
+      "screenshot": "check-A3.png"
+    }
+  ],
+  "observations": {
+    "firstDiscount": 1299,
+    "sub": 12995,
+    "bothDiscount": 1500,
+    "tot": 11495
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the application entry point and sign-in link."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the application entry point and sign-in link."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Sign in as the customer first."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign in as the customer first."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "s9-shopper@fixtures.test",
+        "rationale": "Enter the shopper email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter the shopper email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "{{secret:shopper.password}}",
+        "rationale": "Enter the shopper password placeholder."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter the shopper password placeholder."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit the sign-in form."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Submit the sign-in form."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Confirm the cart starts empty before adding the blanket."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R1\",\"status\":200,\"body\":{\"lines\":[],\"subtotalCents\":0,\"promoCode\":null,\"discountCents\":0,\"totalCents\":0}}",
+      "rationale": "Confirm the cart starts empty before adding the blanket."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to the product list to add the blanket."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to the product list to add the blanket."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Wool Throw Blanket to cart"
+        },
+        "rationale": "Add one Wool Throw Blanket to the cart."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Add one Wool Throw Blanket to the cart."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Open the cart page to apply promo codes."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Open the cart page to apply promo codes."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "SAVE10",
+        "rationale": "Enter the first promo code."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter the first promo code."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Apply SAVE10."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Apply SAVE10."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read the cart discount after SAVE10."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R2\",\"status\":200,\"body\":{\"lines\":[{\"productId\":4,\"name\":\"Wool Throw Blanket\",\"priceCents\":12995,\"quantity\":1,\"lineCents\":12995}],\"subtotalCents\":12995,\"promoCode\":\"SAVE10\",\"discountCents\":1299,\"totalCents\":11696}}",
+      "rationale": "Read the cart discount after SAVE10."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "firstDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R2",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record the SAVE10 discount."
+      },
+      "ok": true,
+      "summary": "Recorded firstDiscount = 1299",
+      "rationale": "Record the SAVE10 discount."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Promo code"
+        },
+        "text": "TAKE15",
+        "rationale": "Enter the second promo code on top of SAVE10."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Enter the second promo code on top of SAVE10."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Apply"
+        },
+        "rationale": "Attempt to apply TAKE15."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Attempt to apply TAKE15."
+    },
+    {
+      "tool": "api_request",
+      "input": {
+        "method": "GET",
+        "path": "/api/cart",
+        "rationale": "Read the cart after attempting TAKE15."
+      },
+      "ok": true,
+      "summary": "{\"responseId\":\"R3\",\"status\":200,\"body\":{\"lines\":[{\"productId\":4,\"name\":\"Wool Throw Blanket\",\"priceCents\":12995,\"quantity\":1,\"lineCents\":12995}],\"subtotalCents\":12995,\"promoCode\":\"TAKE15\",\"discountCents\":1500,\"totalCents\":11495}}",
+      "rationale": "Read the cart after attempting TAKE15."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "sub",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "subtotalCents",
+          "count": false
+        },
+        "rationale": "Record subtotalCents after attempting TAKE15."
+      },
+      "ok": true,
+      "summary": "Recorded sub = 12995",
+      "rationale": "Record subtotalCents after attempting TAKE15."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "bothDiscount",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Record discountCents after attempting TAKE15."
+      },
+      "ok": true,
+      "summary": "Recorded bothDiscount = 1500",
+      "rationale": "Record discountCents after attempting TAKE15."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "tot",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Record totalCents after attempting TAKE15."
+      },
+      "ok": true,
+      "summary": "Recorded tot = 11495",
+      "rationale": "Record totalCents after attempting TAKE15."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "discountCents",
+          "count": false
+        },
+        "rationale": "Discount after TAKE15 attempt must not exceed the larger single discount."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected 1500, actual 1500 -> match. This result is final.",
+      "rationale": "Discount after TAKE15 attempt must not exceed the larger single discount."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Total after TAKE15 attempt must be at least sub minus the larger single discount."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 11495, actual 11495 -> match. This result is final.",
+      "rationale": "Total after TAKE15 attempt must be at least sub minus the larger single discount."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A3",
+        "target": {
+          "source": "api",
+          "responseId": "R3",
+          "field": "body",
+          "jsonPath": "totalCents",
+          "count": false
+        },
+        "rationale": "Total must equal sub minus the applied discount."
+      },
+      "ok": true,
+      "summary": "Recorded A3: expected 11495, actual 11495 -> match. This result is final.",
+      "rationale": "Total must equal sub minus the applied discount."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "All three assertions (A1, A2, A3) were checked against GET /api/cart after attempting TAKE15 on top of SAVE10; the app replaced SAVE10 with TAKE15.",
+        "rationale": "Every planned assertion has been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "Every planned assertion has been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "retest-shop/replay/S9"
+  },
+  "startedAt": "2026-11-18T19:06:04.311Z",
+  "durationMs": 6143
+}

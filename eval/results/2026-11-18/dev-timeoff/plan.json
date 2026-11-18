@@ -1,0 +1,250 @@
+{
+  "scenarios": [
+    {
+      "scenario": {
+        "id": "S1",
+        "title": "Submitting leaves the balance unchanged; approving a 3-day range that includes a weekend deducts 3 days",
+        "basis": "requirement",
+        "requirementIds": [
+          "R1",
+          "R2",
+          "R3",
+          "R5",
+          "R6",
+          "R7",
+          "R9"
+        ],
+        "intent": "Sign in as the employee 'emp'. On the \"My time off\" screen, record the displayed days remaining as observation screenBalanceBefore. Call GET /api/me and record its balance field as apiBalanceBefore. Submit a time-off request with first day 2027-01-08, last day 2027-01-10 (Friday to Sunday) and any reason. Then call GET /api/me again and record balance as apiBalanceAfterSubmit. Call GET /api/requests and find the new request; keep its id and check its status field. Sign out, sign in as the manager 'mgr', and approve that request (in the UI or via POST /api/requests/:id/decision with decision approve). Sign out, sign in again as 'emp', call GET /api/me and record balance as apiBalanceAfterApprove.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "Before any request: the days-remaining number shown on the employee's \"My time off\" screen (screenBalanceBefore) equals the balance returned by GET /api/me at the same moment (apiBalanceBefore).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "apiBalanceBefore"
+            },
+            "requirementId": "R1"
+          },
+          {
+            "id": "A2",
+            "description": "Right after submitting the 2027-01-08..2027-01-10 request (still pending): GET /api/me balance (apiBalanceAfterSubmit) equals apiBalanceBefore.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "apiBalanceBefore"
+            },
+            "requirementId": "R2"
+          },
+          {
+            "id": "A3",
+            "description": "Right after submitting, before any manager action: the status field of the new request in GET /api/requests (employee session) contains the text Pending.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "Pending"
+            },
+            "requirementId": "R6"
+          },
+          {
+            "id": "A4",
+            "description": "After the manager approved the request: GET /api/me balance in a fresh employee session (apiBalanceAfterApprove) equals apiBalanceBefore minus 3 (2027-01-08 to 2027-01-10 inclusive is 3 calendar days, weekend counted).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "apiBalanceBefore - 3"
+            },
+            "requirementId": "R3"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K2",
+        "K9"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S2",
+        "title": "Rejecting leaves the balance unchanged, and a rejected request cannot later be approved",
+        "basis": "risk",
+        "requirementIds": [
+          "R4",
+          "R7",
+          "R8",
+          "R9"
+        ],
+        "intent": "Sign in as the employee 'emp', call GET /api/me and record balance as apiBalanceBefore. Submit a single-day request with first and last day 2027-02-03 and any reason. Call GET /api/requests and keep the new request's id. Sign out, sign in as the manager 'mgr' and reject that request (in the UI or via POST /api/requests/:id/decision with decision reject). Sign out, sign in as 'emp', call GET /api/me and record balance as apiBalanceAfterReject. Sign out, sign in as 'mgr' again and send POST /api/requests/:id/decision with decision approve for the same request (a second decision; its response is not itself asserted). Sign out, sign in as 'emp', call GET /api/me and record balance as apiBalanceAfterSecondDecision.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "After the manager rejected the request (before the second decision attempt): GET /api/me balance in a fresh employee session (apiBalanceAfterReject) equals apiBalanceBefore.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "apiBalanceBefore"
+            },
+            "requirementId": "R4"
+          },
+          {
+            "id": "A2",
+            "description": "After the manager's later approve attempt on the already-rejected request: GET /api/me balance in a fresh employee session (apiBalanceAfterSecondDecision) equals apiBalanceAfterReject (a decided request cannot be decided again, so no deduction happens).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "apiBalanceAfterReject"
+            },
+            "requirementId": "R8"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K3",
+        "K4"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S3",
+        "title": "Employee cannot decide own request; approval deducts once even if approved twice",
+        "basis": "risk",
+        "requirementIds": [
+          "R3",
+          "R5",
+          "R8",
+          "R10",
+          "R9"
+        ],
+        "intent": "Sign in as the employee 'emp', call GET /api/me and record balance as apiBalanceBefore. Submit a single-day request with first and last day 2027-03-10 and any reason, then read GET /api/requests and keep the new request's id. Still as the employee, send POST /api/requests/:id/decision with decision approve for that request. Then call GET /api/me and record balance as apiBalanceAfterEmployeeDecide, and read the request's status in GET /api/requests. Sign out, sign in as the manager 'mgr' and approve the request. Then, still as manager, send POST /api/requests/:id/decision with decision approve again for the same request. Sign out, sign in as 'emp', call GET /api/me and record balance as apiBalanceFinal.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": [
+          {
+            "id": "A1",
+            "description": "After the employee tried to approve their own request via the API: GET /api/me balance (apiBalanceAfterEmployeeDecide) equals apiBalanceBefore.",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "apiBalanceBefore"
+            },
+            "requirementId": "R10"
+          },
+          {
+            "id": "A2",
+            "description": "After the employee's own decision attempt: the request's status field in GET /api/requests (employee session) still contains the text Pending.",
+            "kind": "text_contains",
+            "expected": {
+              "literal": "Pending"
+            },
+            "requirementId": "R10"
+          },
+          {
+            "id": "A3",
+            "description": "After the manager approved the single-day request and then sent a second approve: GET /api/me balance in a fresh employee session (apiBalanceFinal) equals apiBalanceBefore minus 1 (one calendar day deducted exactly once).",
+            "kind": "number_equals",
+            "expected": {
+              "formula": "apiBalanceBefore - 1"
+            },
+            "requirementId": "R8"
+          }
+        ]
+      },
+      "status": "runnable",
+      "blockedReason": "",
+      "ambiguityIds": [],
+      "riskIds": [
+        "K3",
+        "K8"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S4",
+        "title": "Approving a request for more days than the employee has remaining",
+        "basis": "risk",
+        "requirementIds": [
+          "R1",
+          "R3"
+        ],
+        "intent": "Employee with 20 days submits a request spanning more than 20 calendar days; manager approves it; inspect the resulting balance.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "It is not decided whether submitting or approving a request larger than the remaining balance is allowed, and whether the balance may go negative, be capped, or the action be refused.",
+      "ambiguityIds": [
+        "Q1",
+        "Q2"
+      ],
+      "riskIds": [
+        "K1"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S5",
+        "title": "Overlapping or past-dated requests both approved",
+        "basis": "risk",
+        "requirementIds": [
+          "R3",
+          "R5"
+        ],
+        "intent": "Employee submits two requests covering overlapping dates (or a past-dated request); manager approves both; inspect the balance.",
+        "fixtures": {
+          "emp": "employee",
+          "mgr": "manager"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "It is not decided whether overlapping or past-dated requests are allowed, or whether shared days are deducted twice on approval.",
+      "ambiguityIds": [
+        "Q4"
+      ],
+      "riskIds": [
+        "K2"
+      ]
+    },
+    {
+      "scenario": {
+        "id": "S6",
+        "title": "Invalid calendar dates, very long ranges, and end-before-start ranges",
+        "basis": "risk",
+        "requirementIds": [
+          "R5",
+          "R13"
+        ],
+        "intent": "Employee submits requests with an impossible date (e.g. 2027-02-30), a range spanning many months, and a last day before the first day; inspect the responses and the balance.",
+        "fixtures": {
+          "emp": "employee"
+        },
+        "assertions": []
+      },
+      "status": "blocked",
+      "blockedReason": "The expected handling of invalid dates and very long ranges is undecided (Q5), and refusing end-before-start ranges (R13) is only an inferred requirement, not documented.",
+      "ambiguityIds": [
+        "Q5"
+      ],
+      "riskIds": [
+        "K2",
+        "K9"
+      ]
+    }
+  ],
+  "notes": [
+    "First draft: Scenario S7 was dropped: the plan is limited to 3 blocked scenarios."
+  ],
+  "clarifications": []
+}

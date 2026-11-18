@@ -1,0 +1,64 @@
+import type { SessionJob } from "../execute/loop.ts";
+import { replaySteps } from "../execute/replay.ts";
+import type { Session } from "../execute/tools.ts";
+import type { PlanDraft, RunReport, Usage } from "../schema.ts";
+import type { Driver, TaskJob } from "./driver.ts";
+
+/** Turns a validated plan back into the flat shape a model would have produced. */
+export function planToDraft(plan: RunReport["plan"]): PlanDraft {
+  return {
+    scenarios: plan.scenarios.map((p) => ({
+      id: p.scenario.id,
+      title: p.scenario.title,
+      basis: p.scenario.basis === "risk" ? "risk" : "requirement",
+      requirementIds: p.scenario.requirementIds,
+      riskIds: p.riskIds,
+      intent: p.scenario.intent,
+      fixtures: Object.entries(p.scenario.fixtures).map(([alias, type]) => ({ alias, type })),
+      status: p.status,
+      blockedReason: p.blockedReason,
+      ambiguityIds: p.ambiguityIds,
+      assertions: p.scenario.assertions.map((a) => ({
+        id: a.id,
+        description: a.description,
+        kind: a.kind,
+        expectedNumber: a.expected && "literal" in a.expected && typeof a.expected.literal === "number" ? a.expected.literal : null,
+        expectedText: a.expected && "literal" in a.expected && typeof a.expected.literal === "string" ? a.expected.literal : null,
+        expectedFormula: a.expected && "formula" in a.expected ? a.expected.formula : null,
+        requirementId: a.requirementId ?? "",
+      })),
+    })),
+  };
+}
+
+/**
+ * Stands in for a model by replaying what a model did in an earlier real run:
+ * its analysis, its plan and each scenario's recorded steps. No model is
+ * involved, so nothing here adapts to the application: a recording that no
+ * longer fits ends as unverified. Reports must say this driver was used.
+ */
+export class RecordedDriver implements Driver {
+  readonly label: string;
+
+  constructor(private recording: RunReport) {
+    this.label = `recorded responses from the ${recording.ticketKey} run of ${recording.startedAt.slice(0, 10)} (no live model)`;
+  }
+
+  async task<T>(job: TaskJob<T>): Promise<T> {
+    if (job.name === "analyse") return job.schema.parse(this.recording.analysis);
+    if (job.name === "plan" || job.name === "plan-repair") return job.schema.parse(planToDraft(this.recording.plan));
+    throw new Error(`The recording has no answer for task "${job.name}".`);
+  }
+
+  async session(session: Session, job: SessionJob & { name: string }): Promise<Usage | undefined> {
+    const recorded = this.recording.results.find((r) => r.scenarioId === job.name);
+    if (!recorded) {
+      session.outcome = { kind: "blocked", reason: `The recording holds no steps for "${job.name}".` };
+      return undefined;
+    }
+    await replaySteps(session, recorded.steps);
+    return undefined;
+  }
+
+  async close(): Promise<void> {}
+}

@@ -1,0 +1,211 @@
+[
+  {
+    "tool": "navigate",
+    "input": {
+      "path": "/login"
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "fill",
+    "input": {
+      "element": {
+        "by": "label",
+        "value": "Email"
+      },
+      "text": "sc-001-customer@fixtures.test"
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "fill",
+    "input": {
+      "element": {
+        "by": "label",
+        "value": "Password"
+      },
+      "text": "pw-sc-001-customer"
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "click",
+    "input": {
+      "element": {
+        "by": "role",
+        "role": "button",
+        "value": "Sign in"
+      }
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "navigate",
+    "input": {
+      "path": "/"
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "click",
+    "input": {
+      "element": {
+        "by": "role",
+        "role": "button",
+        "value": "Add Canvas Tote Bag to cart"
+      }
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "navigate",
+    "input": {
+      "path": "/checkout"
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "observe",
+    "input": {
+      "name": "firstOrderTotal",
+      "target": {
+        "source": "page",
+        "by": "testid",
+        "value": "order-total"
+      }
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "fill",
+    "input": {
+      "element": {
+        "by": "label",
+        "value": "Card number"
+      },
+      "text": "4242 4242 4242 4242"
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "click",
+    "input": {
+      "element": {
+        "by": "role",
+        "role": "button",
+        "value": "Pay now"
+      }
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "check",
+    "input": {
+      "assertionId": "A1",
+      "target": {
+        "source": "page",
+        "by": "testid",
+        "value": "loyalty-balance"
+      }
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "navigate",
+    "input": {
+      "path": "/"
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "click",
+    "input": {
+      "element": {
+        "by": "role",
+        "role": "button",
+        "value": "Add Notebook, Dotted A5 to cart"
+      }
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "navigate",
+    "input": {
+      "path": "/checkout"
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "observe",
+    "input": {
+      "name": "secondOrderTotal",
+      "target": {
+        "source": "page",
+        "by": "testid",
+        "value": "order-total"
+      }
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "fill",
+    "input": {
+      "element": {
+        "by": "label",
+        "value": "Card number"
+      },
+      "text": "4242 4242 4242 4242"
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "click",
+    "input": {
+      "element": {
+        "by": "role",
+        "role": "button",
+        "value": "Pay now"
+      }
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "check",
+    "input": {
+      "assertionId": "A2",
+      "target": {
+        "source": "page",
+        "by": "testid",
+        "value": "loyalty-balance"
+      }
+    },
+    "ok": true,
+    "summary": "hand-written"
+  },
+  {
+    "tool": "finish",
+    "input": {
+      "outcome": "completed",
+      "reason": "All assertions checked."
+    },
+    "ok": true,
+    "summary": "hand-written"
+  }
+]

@@ -1,0 +1,391 @@
+{
+  "scenarioId": "SC-001",
+  "title": "Welcome points are granted on the first order only",
+  "mode": "agent",
+  "driver": "Claude subagent (Opus) via HTTP bridge",
+  "verdict": "failed",
+  "reason": "A2: expected 136, got 236",
+  "environment": {
+    "baseUrl": "http://localhost:3001",
+    "deployedSha": "seeded-bug"
+  },
+  "assertionResults": [
+    {
+      "assertionId": "A1",
+      "expected": 124,
+      "actual": 124,
+      "pass": true,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Loyalty balance:",
+        "pattern": "Loyalty balance:\\s*([0-9]+)"
+      },
+      "screenshot": "check-A1.png"
+    },
+    {
+      "assertionId": "A2",
+      "expected": 136,
+      "actual": 236,
+      "pass": false,
+      "target": {
+        "source": "page",
+        "by": "text",
+        "value": "Loyalty balance:",
+        "pattern": "Loyalty balance:\\s*([0-9]+)"
+      },
+      "screenshot": "check-A2.png"
+    }
+  ],
+  "observations": {
+    "firstOrderTotal": 24.99,
+    "secondOrderTotal": 12
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Discover the app entry page."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Discover the app entry page."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/login",
+        "rationale": "Sign in as the fixture customer."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Sign in as the fixture customer."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Email"
+        },
+        "text": "sc-001-customer@fixtures.test",
+        "rationale": "Enter fixture email."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter fixture email."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Password"
+        },
+        "text": "pw-sc-001-customer",
+        "rationale": "Enter fixture password."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Enter fixture password."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Sign in"
+        },
+        "rationale": "Submit login."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Submit login."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/account",
+        "rationale": "See starting account overview."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "See starting account overview."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "link",
+          "value": "Account"
+        },
+        "rationale": "Open account overview to see starting state."
+      },
+      "ok": true,
+      "summary": "URL: /login",
+      "rationale": "Open account overview to see starting state."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Go to products to build first order."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Go to products to build first order."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Canvas Tote Bag to cart"
+        },
+        "rationale": "Add an item for the first order."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Add an item for the first order."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Proceed to cart for checkout."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Proceed to cart for checkout."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "link",
+          "value": "Proceed to checkout"
+        },
+        "rationale": "Go to checkout where the order total is shown before payment."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Go to checkout where the order total is shown before payment."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/checkout",
+        "rationale": "Open checkout page to see order total before payment."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Open checkout page to see order total before payment."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "firstOrderTotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Order total:",
+          "pattern": "Order total:\\s*\\$?([0-9.]+)"
+        },
+        "rationale": "Record the first order total shown before payment."
+      },
+      "ok": true,
+      "summary": "Recorded firstOrderTotal = 24.99",
+      "rationale": "Record the first order total shown before payment."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Card number"
+        },
+        "text": "4242 4242 4242 4242",
+        "rationale": "Enter the accepted simulated card."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Enter the accepted simulated card."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Pay now"
+        },
+        "rationale": "Pay the first order."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Pay the first order."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/account",
+        "rationale": "Check loyalty balance after first paid order."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Check loyalty balance after first paid order."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A1",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Loyalty balance:",
+          "pattern": "Loyalty balance:\\s*([0-9]+)"
+        },
+        "rationale": "First order is paid; account overview shows loyalty balance."
+      },
+      "ok": true,
+      "summary": "Recorded A1: expected 124, actual 124 -> match. This result is final.",
+      "rationale": "First order is paid; account overview shows loyalty balance."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/",
+        "rationale": "Build second order."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Build second order."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Add Notebook, Dotted A5 to cart"
+        },
+        "rationale": "Add an item for the second order."
+      },
+      "ok": true,
+      "summary": "URL: /",
+      "rationale": "Add an item for the second order."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/cart",
+        "rationale": "Verify cart contents for second order."
+      },
+      "ok": true,
+      "summary": "URL: /cart",
+      "rationale": "Verify cart contents for second order."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/checkout",
+        "rationale": "See second order total before payment."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "See second order total before payment."
+    },
+    {
+      "tool": "observe",
+      "input": {
+        "name": "secondOrderTotal",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Order total:",
+          "pattern": "Order total:\\s*\\$?([0-9.]+)"
+        },
+        "rationale": "Record the second order total shown before payment."
+      },
+      "ok": true,
+      "summary": "Recorded secondOrderTotal = 12",
+      "rationale": "Record the second order total shown before payment."
+    },
+    {
+      "tool": "fill",
+      "input": {
+        "element": {
+          "by": "label",
+          "value": "Card number"
+        },
+        "text": "4242 4242 4242 4242",
+        "rationale": "Enter the accepted simulated card."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Enter the accepted simulated card."
+    },
+    {
+      "tool": "click",
+      "input": {
+        "element": {
+          "by": "role",
+          "role": "button",
+          "value": "Pay now"
+        },
+        "rationale": "Pay the second order."
+      },
+      "ok": true,
+      "summary": "URL: /checkout",
+      "rationale": "Pay the second order."
+    },
+    {
+      "tool": "navigate",
+      "input": {
+        "path": "/account",
+        "rationale": "Check loyalty balance after second paid order."
+      },
+      "ok": true,
+      "summary": "URL: /account",
+      "rationale": "Check loyalty balance after second paid order."
+    },
+    {
+      "tool": "check",
+      "input": {
+        "assertionId": "A2",
+        "target": {
+          "source": "page",
+          "by": "text",
+          "value": "Loyalty balance:",
+          "pattern": "Loyalty balance:\\s*([0-9]+)"
+        },
+        "rationale": "Second order is paid; account overview shows loyalty balance."
+      },
+      "ok": true,
+      "summary": "Recorded A2: expected 136, actual 236 -> MISMATCH. This result is final.",
+      "rationale": "Second order is paid; account overview shows loyalty balance."
+    },
+    {
+      "tool": "finish",
+      "input": {
+        "outcome": "completed",
+        "reason": "Both orders paid with card 4242; A1 and A2 checked against the account overview loyalty balance.",
+        "rationale": "All assertions have been checked."
+      },
+      "ok": true,
+      "summary": "Scenario ended.",
+      "rationale": "All assertions have been checked."
+    }
+  ],
+  "evidence": {
+    "trace": "trace.zip",
+    "dir": "A-bug-1/SC-001"
+  },
+  "startedAt": "2026-11-17T23:44:21.416Z",
+  "durationMs": 75776
+}

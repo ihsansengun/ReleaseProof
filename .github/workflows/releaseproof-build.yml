@@ -1,0 +1,82 @@
+# Stage 1 of 3: build the application from a pull request.
+#
+# TRUST: this is the only workflow that touches pull-request code, and it has
+# no secrets and a read-only token. The code is built inside `docker build`;
+# nothing from the pull request is executed on the runner itself. Its outputs
+# (an image, the app's manifest and listed documents, a small description)
+# are artifacts that the QA workflow treats as untrusted data.
+#
+# Do not add secrets, write permissions or `pull_request_target` here.
+name: ReleaseProof build
+run-name: ReleaseProof build for PR #${{ inputs.pr }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to test
+        required: true
+        type: string
+      full:
+        description: Plan from scratch even if an earlier run of this pull request can be re-run
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: releaseproof-build-${{ inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check the pull request number
+        env:
+          PR: ${{ inputs.pr }}
+        run: |
+          case "$PR" in (''|*[!0-9]*) echo "Not a pull request number"; exit 1;; esac
+
+      - name: Check out ReleaseProof (this workflow's own commit)
+        uses: actions/checkout@v4
+        with:
+          path: releaseproof
+          persist-credentials: false
+
+      - name: Check out the pull request (untrusted)
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ inputs.pr }}/head
+          path: pr
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install ReleaseProof
+        working-directory: releaseproof
+        run: npm ci --ignore-scripts
+
+      - name: Build the application image
+        working-directory: releaseproof
+        env:
+          PR: ${{ inputs.pr }}
+          FULL: ${{ inputs.full }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          npx tsx packages/agent/src/ci/cli.ts build \
+            --pr-dir "$GITHUB_WORKSPACE/pr" --repo "$GITHUB_REPOSITORY" --pr "$PR" \
+            --out "$GITHUB_WORKSPACE/handoff"
+          echo "$FULL" > "$GITHUB_WORKSPACE/handoff/full"
+
+      - name: Hand over to the QA workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: releaseproof-handoff
+          path: handoff
+          retention-days: 1
+          if-no-files-found: error

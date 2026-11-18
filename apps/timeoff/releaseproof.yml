@@ -1,0 +1,34 @@
+# Environment manifest for demonstration app B.
+baseUrl: http://localhost:3100
+version:
+  path: /api/version
+fixtures:
+  employee:
+    description: An employee with 20 days of leave remaining and no requests. Returns handle, password, name, role and balance.
+    method: POST
+    path: /api/test/users
+    body:
+      handle: "{{key}}"
+      role: employee
+      balance: 20
+    account: true
+  manager:
+    description: A manager who can decide requests from any employee. Returns handle, password, name and role.
+    method: POST
+    path: /api/test/users
+    body:
+      handle: "{{key}}"
+      role: manager
+    account: true
+docs:
+  - README.md
+signIn:
+  allow:
+    - POST /api/session
+start:
+  run: node apps/timeoff/server.mjs
+  port: 3100
+  commitEnv: GIT_SHA
+  env:
+    PORT: "3100"
+    TEST_MODE: "1"
