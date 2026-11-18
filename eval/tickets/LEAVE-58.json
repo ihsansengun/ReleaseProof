@@ -1,0 +1,215 @@
+{
+  "key": "LEAVE-58",
+  "fields": {
+    "summary": "Employees can cancel their own time-off requests",
+    "description": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Background"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Today an employee who no longer needs their leave has to ask a manager to reject the request, and for leave that was already approved there is no way to get the days back. Employees should be able to cancel their own requests in Dayoff."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Acceptance criteria"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "In \"My requests\" every Pending and every Approved request has a Cancel button whose accessible name includes the request's first and last day. Rejected and Cancelled requests have no Cancel button."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Cancelling a Pending request sets its status to Cancelled. The employee's days remaining do not change."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Cancelling an Approved request sets its status to Cancelled and returns the request's days to the employee's balance. \"Days remaining\" shows the new balance straight away and after a reload."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "An Approved request can be cancelled at any time before its first day. From the first day on, cancelling is refused with an error message, the request stays Approved and the balance does not change."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Only the employee who made a request can cancel it. Another employee or a manager who tries gets 403 from the API and nothing changes."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "A Cancelled request can no longer be approved or rejected (409). For the manager it leaves \"Requests awaiting a decision\" and is listed under \"Decided\" with status Cancelled."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "The API is POST /api/requests/:id/cancel and returns the updated request. Cancelling a request that is already Cancelled returns 409 and does not change the balance a second time."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "comment": {
+      "comments": [
+        {
+          "author": {
+            "displayName": "Tomasz Wieczorek"
+          },
+          "created": "2026-10-27T08:31:10.000+0000",
+          "body": {
+            "type": "doc",
+            "version": 1,
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Should the manager get any kind of notification when approved leave is cancelled, or is seeing it under Decided enough for now?"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "author": {
+            "displayName": "Helen Abara"
+          },
+          "created": "2026-10-27T10:05:44.000+0000",
+          "body": {
+            "type": "doc",
+            "version": 1,
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Seeing it under Decided is enough for this ticket. Notifications are a separate piece of work."
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "author": {
+            "displayName": "Helen Abara"
+          },
+          "created": "2026-10-29T13:48:29.000+0000",
+          "body": {
+            "type": "doc",
+            "version": 1,
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Payroll came back on the cut-off for approved leave. \"Any time before the first day\" is too late for them: approved leave needs at least 3 days' notice. So an Approved request can be cancelled only when its first day is 3 or more days after today (first day today + 3 is fine, today + 2 is not). Inside that window the cancel is refused with a message that states the 3 days. This only applies to Approved requests; a Pending request can be cancelled whenever, since payroll has not seen it yet."
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
