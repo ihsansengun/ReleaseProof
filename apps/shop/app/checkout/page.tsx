@@ -21,8 +21,18 @@ export default async function CheckoutPage({
           Payment declined. Your card was not charged.
         </p>
       )}
+      {cart.promoCode && (
+        <>
+          <p>
+            Subtotal: <strong data-testid="order-subtotal">{money(cart.subtotalCents)}</strong>
+          </p>
+          <p>
+            Discount ({cart.promoCode}): <strong data-testid="order-discount">-{money(cart.discountCents)}</strong>
+          </p>
+        </>
+      )}
       <p>
-        Order total: <strong data-testid="order-total">{money(cart.subtotalCents)}</strong>
+        Order total: <strong data-testid="order-total">{money(cart.totalCents)}</strong>
       </p>
       <form action={payAction}>
         <label htmlFor="card">Card number</label>
