@@ -54,6 +54,10 @@ const PageTarget = z.object({
     .boolean()
     .default(false)
     .describe("Read how many elements match, instead of one element's text. Use for rows, items, entries."),
+  read: z
+    .enum(["text", "name"])
+    .default("text")
+    .describe('What to read from the element: its visible text, or its accessible name (the quoted name in the page tree, e.g. of a button).'),
   pattern: z
     .string()
     .optional()
@@ -232,7 +236,15 @@ async function readTarget(session: Session, target: Target): Promise<{ text: str
 
   if (target.count) return { text: String(await buildLocator(session.page, target).count()) };
   const locator = await locate(session.page, target);
-  let text = squash(await locator.innerText());
+  let text: string;
+  if (target.read === "name") {
+    // The accessible name is what the page tree shows in quotes after the role.
+    const name = /^-\s+\S+\s+"((?:[^"\\]|\\.)*)"/.exec(await locator.ariaSnapshot());
+    if (!name) throw new Error("The selected element has no accessible name.");
+    text = squash(name[1]!.replace(/\\(.)/g, "$1"));
+  } else {
+    text = squash(await locator.innerText());
+  }
   if (target.pattern) {
     const match = new RegExp(target.pattern).exec(text);
     if (!match || match[1] === undefined) {
