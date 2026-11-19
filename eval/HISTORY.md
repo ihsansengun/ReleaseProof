@@ -51,6 +51,7 @@ Notes:
 |---|---|---|---|---|---|---|
 | 19 Nov | Opus 5.5 everywhere (baseline) | time-off and shop, fixed and defective | 5 of 5 | 0 | $6.88 | [live](results/2026-11-19-live/README.md), [shop defects](results/2026-11-19-shop-defects/README.md) |
 | 19 Nov | Sonnet 5.5 analysis and planning at medium effort, Haiku 5.5 execution, Sonnet escalation | the same four | 3 of 5 | 3 | $1.13 | [benchmark A](results/2026-11-19-routing-benchmark/README.md) |
+| 19 Nov | Opus 5.5 analysis and planning at high effort, Haiku 5.5 execution, Sonnet escalation (`opus-planning`) | the same four | 4 of 5 | 3 | $4.24 | [benchmark C](results/2026-11-19-routing-benchmark-c/README.md) |
 
 ## What the history does not yet contain
 
