@@ -43,7 +43,7 @@ from 5 of 5 to 3 of 5, and false-positive scenarios rose from 0 to 3.
 | 4 [44596436243](https://github.com/ihsansengun/ReleaseProof/actions/runs/44596436243) | Shop, 3 defects (PR #8) | defects detected | 3 of 3 | **2 of 3** |
 | | | scenarios executed / passed / failed | 8 / 1 / 7 | 8 / 5 / 3 |
 | | | false-positive scenarios | 0 | **1 (S7)** |
-| | | requirements found / compared | 33 / 25 | 21 / 16 |
+| | | requirements found / compared | 33 / 31 | 21 / 16 |
 | | | failures reproduced without a model | 7 of 7 | 3 of 3 |
 | | | escalated | – | 1 (blocked, then failed) |
 | | | cost | $2.11 | $0.26 |
