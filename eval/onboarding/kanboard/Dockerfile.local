@@ -1,0 +1,9 @@
+# Local spike variant. The package mirrors are not reachable from this
+# environment, so the upstream image is used only for its PHP runtime; the
+# application files are the pinned commit, copied in unchanged.
+FROM kanboard/kanboard:latest
+WORKDIR /app
+COPY . .
+USER 10001:10001
+ENTRYPOINT []
+CMD ["php", "-S", "0.0.0.0:8080", "-t", "/app"]
