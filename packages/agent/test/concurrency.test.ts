@@ -128,4 +128,10 @@ test("only the QA job's test step is given the model key", () => {
     for (const step of job.steps) if (JSON.stringify(step.env ?? {}).includes("secrets.")) holders.push(`${name}/${step.name}`);
   }
   assert.deepEqual(holders, ["qa/Test the application"]);
+  // The Jira token and account email come from secrets; the site address is a plain variable.
+  const env = (qa.jobs.qa.steps as { name?: string; env?: Record<string, string> }[]).find((s) => s.name === "Test the application")!.env!;
+  assert.equal(env.JIRA_API_TOKEN, "${{ secrets.JIRA_API_TOKEN }}");
+  assert.match(env.JIRA_EMAIL!, /^\$\{\{ secrets\.JIRA_EMAIL \|\| vars\.JIRA_EMAIL \}\}$/);
+  assert.equal(env.JIRA_BASE_URL, "${{ vars.JIRA_BASE_URL }}");
+  assert.equal(env.ANTHROPIC_API_KEY, "${{ secrets.ANTHROPIC_API_KEY }}");
 });
