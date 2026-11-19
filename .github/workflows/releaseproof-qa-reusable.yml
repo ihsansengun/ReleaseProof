@@ -1,0 +1,431 @@
+# Stages 2 to 4 of 4: build the pull request's application, test it, report.
+#
+# Called from a `workflow_run` workflow on the default branch of the
+# repository that holds the application: this repository's own
+# releaseproof-qa.yml, or two short files in another repository (see
+# docs/ONBOARDING.md). Because the caller is triggered by `workflow_run`, the
+# caller's file and everything named here come from default branches; a pull
+# request cannot change what runs.
+#
+# TRUST, job by job:
+#
+#   identify  Decides the concurrency key. No secret.
+#   build     No secret, read-only token. Asks GitHub which commit the pull
+#             request is at, fetches exactly that commit and builds it inside
+#             `docker build`. Pull-request files are never executed on the
+#             runner. Because trusted code fetched the commit and set the
+#             image's label, the label is this workflow's statement, not the
+#             pull request's.
+#   qa        Trusted code only. Holds the model and Jira credentials, in one
+#             step. The pull request is not checked out here; its image is
+#             loaded and run in a container with no route out, a read-only
+#             filesystem and no credentials in its environment. The image
+#             file is checked against the digest the build job reported.
+#   report    Holds the permission to write a Check run and a comment, and
+#             nothing else. Reads one JSON file, validates it, displays it.
+#
+# The request from stage 1 and everything in an artifact is data. Do not
+# `run:` it, source it, or interpolate it into a script.
+name: ReleaseProof QA (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      releaseproof_repository:
+        description: Repository that holds the ReleaseProof engine
+        type: string
+        default: ihsansengun/ReleaseProof
+      releaseproof_ref:
+        description: Full commit SHA of the engine to run. A branch or tag is refused
+        type: string
+        required: true
+      tickets_dir:
+        description: Directory of ticket files on the application repository's default branch
+        type: string
+        default: eval/tickets
+      recordings_dir:
+        description: Directory of recorded runs on the application repository's default branch
+        type: string
+        default: eval/recordings
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+      JIRA_API_TOKEN:
+        required: false
+      JIRA_EMAIL:
+        required: false
+
+permissions: {}
+
+jobs:
+  # Works out which pull request this request is for, so that the later jobs
+  # can be put in a concurrency group of their own pull request. There is
+  # deliberately no workflow-level concurrency: a group there is joined by
+  # every request that completes, including ones that are then skipped, and
+  # would let any pull request event cancel another pull request's run.
+  identify:
+    # A manually started request is always handled. A request started by a
+    # pull-request event is handled only when the repository variable
+    # RELEASEPROOF_AUTO_TRIGGER is "on". That variable is the switch for
+    # automatic runs: a pull request can change its own copy of the request
+    # workflow, but it cannot set a repository variable.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'workflow_dispatch' || vars.RELEASEPROOF_AUTO_TRIGGER == 'on')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - name: Require a pinned engine commit
+        env:
+          REF: ${{ inputs.releaseproof_ref }}
+        run: |
+          case "$REF" in (*[!0-9a-f]*|'') echo "releaseproof_ref must be a full commit SHA"; exit 1;; esac
+          [ "${#REF}" -eq 40 ] || { echo "releaseproof_ref must be a full commit SHA"; exit 1; }
+
+      - name: Check out ReleaseProof
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ inputs.releaseproof_repository }}
+          ref: ${{ inputs.releaseproof_ref }}
+          persist-credentials: false
+          sparse-checkout: ci
+
+      - name: Download the request (untrusted data)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: releaseproof-request
+          path: request
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Choose the concurrency key
+        id: key
+        env:
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          EVENT_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          key=$(node ci/qa-concurrency.mjs request/meta.json)
+          case "$key" in (pr-[0-9]*|run-[0-9]*) ;; (*) echo "unexpected key"; exit 1;; esac
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "QA concurrency key: $key"
+
+  build:
+    needs: identify
+    # One run per pull request; a newer request for the same pull request
+    # replaces an older run. Runs for different pull requests never share a
+    # group. Only runs that passed the gate above ever join one.
+    concurrency:
+      group: releaseproof-build-${{ needs.identify.outputs.key }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.request.outputs.pr }}
+      full: ${{ steps.request.outputs.full }}
+      verify_only: ${{ steps.request.outputs.verify_only }}
+      built: ${{ steps.digest.outputs.built }}
+      image_sha256: ${{ steps.digest.outputs.sha256 }}
+    steps:
+      - name: Check out ReleaseProof
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ inputs.releaseproof_repository }}
+          ref: ${{ inputs.releaseproof_ref }}
+          path: releaseproof
+          persist-credentials: false
+
+      - name: Download the request (untrusted data)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: releaseproof-request
+          path: request
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Read the request
+        id: request
+        run: |
+          pr=$(jq -r '.pr | tostring' request/meta.json)
+          case "$pr" in (''|*[!0-9]*) echo "The request has no numeric pull request"; exit 1;; esac
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          if [ "$(cat request/full 2>/dev/null)" = "true" ]; then echo "full=true" >> "$GITHUB_OUTPUT"; else echo "full=false" >> "$GITHUB_OUTPUT"; fi
+          if [ "$(cat request/verify-only 2>/dev/null)" = "true" ]; then echo "verify_only=true" >> "$GITHUB_OUTPUT"; else echo "verify_only=false" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Install ReleaseProof
+        working-directory: releaseproof
+        run: npm ci --ignore-scripts
+
+      - name: Ask GitHub which commit the pull request is at
+        id: head
+        working-directory: releaseproof
+        env:
+          PR: ${{ steps.request.outputs.pr }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          sha=$(npx tsx packages/agent/src/ci/cli.ts head --repo "$GITHUB_REPOSITORY" --pr "$PR")
+          case "$sha" in (*[!0-9a-f]*|'') echo "No commit reported for the pull request"; exit 1;; esac
+          [ "${#sha}" -eq 40 ] || { echo "No commit reported for the pull request"; exit 1; }
+          # A request started by a pull-request event must be for the commit of that event.
+          if [ "$TRIGGER_EVENT" = "pull_request" ] && [ "$sha" != "$TRIGGER_SHA" ]; then
+            echo "The request is not for the commit of the event that started it"; exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Pull request #$PR is at $sha"
+
+      # The pull request's files, as data. Nothing in this directory is run on
+      # the runner; it is the context of a container build and nothing else.
+      - name: Fetch exactly that commit (untrusted files)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ steps.head.outputs.sha }}
+          path: pr
+          persist-credentials: false
+
+      - name: Build the application image
+        working-directory: releaseproof
+        env:
+          PR: ${{ steps.request.outputs.pr }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          npx tsx packages/agent/src/ci/cli.ts build \
+            --pr-dir "$GITHUB_WORKSPACE/pr" --repo "$GITHUB_REPOSITORY" --pr "$PR" \
+            --out "$GITHUB_WORKSPACE/handoff"
+
+      - name: Carry the requested limits along (as data)
+        run: |
+          # Re-written field by field; only strings survive, and the next job
+          # can only ever lower its own limits with them.
+          jq '{maxUsd, maxScenarios, maxMinutes, disableFallbacks, executorModel}
+              | with_entries(select(.value != null and (.value | type) == "string"))' request/limits.json > handoff/limits.json \
+            || echo '{}' > handoff/limits.json
+
+      - name: Measure the image
+        id: digest
+        run: |
+          if [ -f handoff/image.tar ]; then
+            echo "sha256=$(sha256sum handoff/image.tar | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "built=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat handoff/meta.json
+
+      - name: Hand over to the QA job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: releaseproof-built
+          path: handoff
+          retention-days: 1
+          if-no-files-found: error
+
+  qa:
+    needs: [identify, build]
+    concurrency:
+      group: releaseproof-qa-${{ needs.identify.outputs.key }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      produced: ${{ steps.run.outputs.produced }}
+    steps:
+      - name: Check out ReleaseProof
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ inputs.releaseproof_repository }}
+          ref: ${{ inputs.releaseproof_ref }}
+          path: releaseproof
+          persist-credentials: false
+
+      # Tickets, the requirement-owner list and the approved documents are
+      # read from here: the application repository's default branch.
+      - name: Check out the application repository's default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: protected
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Install ReleaseProof and its browser
+        working-directory: releaseproof
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+
+      - name: Download what the build job produced
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: releaseproof-built
+          path: incoming
+
+      - name: Restore the previous run of this pull request
+        if: needs.build.outputs.verify_only != 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: previous
+          key: releaseproof-pr-${{ needs.build.outputs.pr }}-${{ github.run_id }}
+          restore-keys: releaseproof-pr-${{ needs.build.outputs.pr }}-
+
+      # No credential of any kind is in this step's environment.
+      - name: Verify that the application starts isolated (no model, no ticket)
+        if: needs.build.outputs.verify_only == 'true'
+        working-directory: releaseproof
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          IMAGE_SHA256: ${{ needs.build.outputs.image_sha256 }}
+        run: |
+          npx tsx packages/agent/src/ci/cli.ts run --verify-only \
+            --incoming "$GITHUB_WORKSPACE/incoming" --out "$GITHUB_WORKSPACE/out" --repo "$GITHUB_REPOSITORY" \
+            --event "$TRIGGER_EVENT" --head-branch "$TRIGGER_BRANCH" --head-sha "$TRIGGER_SHA" \
+            --default-branch "$DEFAULT_BRANCH" --trusted-root "$GITHUB_WORKSPACE/protected" \
+            --image-sha256 "$IMAGE_SHA256"
+
+      - name: Test the application
+        id: run
+        if: needs.build.outputs.verify_only != 'true'
+        working-directory: releaseproof
+        env:
+          # The only step that sees the model key. The application container
+          # is started by this step with an explicit, separate environment.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          # Optional: live Jira as the ticket source. Without all three, only
+          # ticket files on the default branch are used. The token and the
+          # account email are read once by the engine and removed from its
+          # environment, like the model key; they are never passed to a child
+          # process or a container. The email is taken from a secret, or from
+          # a variable of the same name where one was set instead.
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL || vars.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          RELEASEPROOF_MODEL: ${{ vars.RELEASEPROOF_MODEL }}
+          RELEASEPROOF_EFFORT: ${{ vars.RELEASEPROOF_EFFORT }}
+          RELEASEPROOF_FALLBACKS: ${{ vars.RELEASEPROOF_FALLBACKS }}
+          MAX_USD: ${{ vars.RELEASEPROOF_MAX_USD }}
+          MAX_TOKENS: ${{ vars.RELEASEPROOF_MAX_TOKENS }}
+          MAX_MINUTES: ${{ vars.RELEASEPROOF_MAX_MINUTES }}
+          MAX_SCENARIOS: ${{ vars.RELEASEPROOF_MAX_SCENARIOS }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FULL: ${{ needs.build.outputs.full == 'true' && '--full' || '' }}
+          IMAGE_SHA256: ${{ needs.build.outputs.image_sha256 }}
+          TICKETS_DIR: ${{ inputs.tickets_dir }}
+          RECORDINGS_DIR: ${{ inputs.recordings_dir }}
+        run: |
+          npx tsx packages/agent/src/ci/cli.ts run \
+            --incoming "$GITHUB_WORKSPACE/incoming" --out "$GITHUB_WORKSPACE/out" --repo "$GITHUB_REPOSITORY" \
+            --event "$TRIGGER_EVENT" --head-branch "$TRIGGER_BRANCH" --head-sha "$TRIGGER_SHA" \
+            --default-branch "$DEFAULT_BRANCH" --previous "$GITHUB_WORKSPACE/previous/run.json" $FULL \
+            --trusted-root "$GITHUB_WORKSPACE/protected" \
+            --tickets "$GITHUB_WORKSPACE/protected/$TICKETS_DIR" --recordings "$GITHUB_WORKSPACE/protected/$RECORDINGS_DIR" \
+            --image-sha256 "$IMAGE_SHA256" \
+            --max-usd "$MAX_USD" --max-tokens "$MAX_TOKENS" --max-minutes "$MAX_MINUTES" \
+            --max-scenarios "$MAX_SCENARIOS"
+          echo "produced=true" >> "$GITHUB_OUTPUT"
+
+      - name: Remove the application containers
+        if: always()
+        run: |
+          docker ps --all --quiet --filter label=releaseproof.sandbox=1 | xargs --no-run-if-empty docker rm --force || true
+          docker rm --force releaseproof-app || true
+          docker network rm releaseproof-net || true
+
+      - name: Keep this run for the next commit
+        if: steps.run.outputs.produced == 'true' && hashFiles('out/run/run.json') != ''
+        run: mkdir -p previous && cp out/run/run.json previous/run.json
+
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        if: steps.run.outputs.produced == 'true' && hashFiles('previous/run.json') != ''
+        with:
+          path: previous
+          key: releaseproof-pr-${{ needs.build.outputs.pr }}-${{ github.run_id }}
+
+      - name: Store evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: releaseproof-evidence
+          # Browser traces are left out: they record typed values.
+          path: |
+            out
+            !out/**/trace.zip
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Hand the result to the report job
+        if: steps.run.outputs.produced == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: releaseproof-result
+          path: out/ci-result.json
+          retention-days: 14
+          if-no-files-found: error
+
+  report:
+    needs: qa
+    if: needs.qa.outputs.produced == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+    steps:
+      - name: Check out ReleaseProof
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ inputs.releaseproof_repository }}
+          ref: ${{ inputs.releaseproof_ref }}
+          path: releaseproof
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - working-directory: releaseproof
+        run: npm ci --ignore-scripts
+
+      - name: Download the result (data only)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: releaseproof-result
+          path: result
+
+      - name: Publish the Check run and the comment
+        working-directory: releaseproof
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          npx tsx packages/agent/src/ci/cli.ts report --result "$GITHUB_WORKSPACE/result/ci-result.json" --run-url "$RUN_URL"
+          cat "$GITHUB_WORKSPACE/result/comment.md" >> "$GITHUB_STEP_SUMMARY"

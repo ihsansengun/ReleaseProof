@@ -94,15 +94,22 @@ test("simultaneous runs: only a newer build of the same pull request replaces a 
   });
 });
 
+type Step = { name?: string; uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, unknown>; if?: string };
+type Job = { steps: Step[]; needs?: string | string[]; permissions?: Record<string, string>; concurrency?: { group: string; "cancel-in-progress": boolean }; if?: string };
+const jobsOf = (file: { jobs: Record<string, Job> }) => Object.entries(file.jobs);
+
 test("the workflows are wired so that the key is the only thing that groups QA runs", () => {
-  const qa = workflow("releaseproof-qa.yml");
-  // No workflow-level group: that one is joined before any gate, by every completed build.
+  const qa = workflow("releaseproof-qa-reusable.yml");
+  // No workflow-level group: that one is joined before any gate, by every completed request.
   assert.equal(qa.concurrency, undefined);
+  assert.equal(workflow("releaseproof-qa.yml").concurrency, undefined);
   assert.equal(qa.jobs.qa.concurrency.group, "releaseproof-qa-${{ needs.identify.outputs.key }}");
   assert.equal(qa.jobs.qa.concurrency["cancel-in-progress"], true);
-  assert.deepEqual([qa.jobs.qa.needs].flat(), ["identify"]);
+  assert.equal(qa.jobs.build.concurrency.group, "releaseproof-build-${{ needs.identify.outputs.key }}");
+  assert.deepEqual([qa.jobs.build.needs].flat(), ["identify"]);
+  assert.deepEqual([qa.jobs.qa.needs].flat(), ["identify", "build"]);
   assert.equal(qa.jobs.report.concurrency, undefined);
-  // The gate sits on the first job, so a skipped run never reaches the group.
+  // The gate sits on the first job, so a skipped run never reaches a group.
   assert.match(qa.jobs.identify.if, /workflow_dispatch' \|\| vars\.RELEASEPROOF_AUTO_TRIGGER == 'on'/);
   // The identifying job holds no secret and cannot write.
   const identify = JSON.stringify(qa.jobs.identify);
@@ -110,28 +117,106 @@ test("the workflows are wired so that the key is the only thing that groups QA r
   assert.deepEqual(qa.jobs.identify.permissions, { contents: "read", actions: "read" });
   // Nothing a pull request controls is interpolated into a group or a script.
   assert.doesNotMatch(JSON.stringify(qa.jobs), /concurrency[^}]*display_title/);
-  for (const job of Object.values(qa.jobs) as { steps: { run?: string }[] }[]) {
-    for (const step of job.steps) assert.doesNotMatch(step.run ?? "", /\$\{\{\s*github\.event\.workflow_run\.(display_title|head_branch|head_commit)/);
+  for (const [, job] of jobsOf(qa)) {
+    for (const step of job.steps) assert.doesNotMatch(step.run ?? "", /\$\{\{/, "scripts take their inputs from the environment, never by interpolation");
   }
 
-  const build = workflow("releaseproof-build.yml");
-  assert.match(build["run-name"], /#\$\{\{/, "the pull request number must survive YAML parsing");
-  assert.equal(build.concurrency.group, "releaseproof-build-${{ inputs.pr || github.event.pull_request.number }}");
-  assert.equal(JSON.stringify(build).includes("secrets."), false);
-  assert.equal(JSON.stringify(build).includes("pull_request_target"), false);
+  const request = workflow("releaseproof-request.yml");
+  assert.match(request["run-name"], /#\$\{\{/, "the pull request number must survive YAML parsing");
+  assert.equal(request.concurrency.group, "releaseproof-request-${{ inputs.pr || github.event.pull_request.number }}");
+  assert.equal(JSON.stringify(request).includes("secrets."), false);
+  assert.equal(JSON.stringify(request).includes("pull_request_target"), false);
+  // The request stage holds nothing worth taking and touches no code: it checks out nothing.
+  assert.deepEqual(request.permissions, { contents: "read" });
+  for (const [, job] of jobsOf(request)) {
+    for (const step of job.steps) {
+      assert.doesNotMatch(step.uses ?? "", /checkout/);
+      assert.doesNotMatch(step.run ?? "", /\$\{\{/);
+    }
+  }
+});
+
+test("the image is built by trusted code from the commit GitHub reports, in a job with no secret", () => {
+  const qa = workflow("releaseproof-qa-reusable.yml");
+  const build: Job = qa.jobs.build;
+  assert.doesNotMatch(JSON.stringify(build), /secrets\./);
+  assert.deepEqual(build.permissions, { contents: "read", actions: "read", "pull-requests": "read" });
+
+  const names = build.steps.map((s) => s.name ?? s.uses ?? "");
+  const at = (name: string) => {
+    const index = names.findIndex((n) => n.startsWith(name));
+    assert.notEqual(index, -1, name);
+    return index;
+  };
+  // The commit comes from GitHub's answer to trusted code, then exactly that commit is fetched, then built.
+  const head = build.steps[at("Ask GitHub which commit")]!;
+  assert.match(head.run!, /cli\.ts head --repo "\$GITHUB_REPOSITORY" --pr "\$PR"/);
+  assert.match(head.run!, /"\$TRIGGER_EVENT" = "pull_request" \] && \[ "\$sha" != "\$TRIGGER_SHA"/);
+  const fetched = build.steps[at("Fetch exactly that commit")]!;
+  assert.equal(fetched.with!.ref, "${{ steps.head.outputs.sha }}");
+  assert.equal(fetched.with!["persist-credentials"], false);
+  assert.equal(fetched.with!.path, "pr");
+  assert.ok(at("Ask GitHub which commit") < at("Fetch exactly that commit") && at("Fetch exactly that commit") < at("Build the application image"));
+  // Pull-request files are a build context only: no step runs from that directory.
+  for (const step of build.steps) {
+    assert.notEqual((step as { "working-directory"?: string })["working-directory"], "pr");
+    assert.doesNotMatch(step.run ?? "", /(^|\s)(sh|bash|node|npm|npx|\.)\s+"?\$?\{?GITHUB_WORKSPACE\}?\/pr/);
+  }
+  // The digest travels as a job output, outside the artifact, and both test steps require it.
+  assert.equal(qa.jobs.build.outputs.image_sha256, "${{ steps.digest.outputs.sha256 }}");
+  for (const name of ["Test the application", "Verify that the application starts isolated"]) {
+    const step = (qa.jobs.qa.steps as Step[]).find((s) => (s.name ?? "").startsWith(name))!;
+    assert.equal(step.env!.IMAGE_SHA256, "${{ needs.build.outputs.image_sha256 }}");
+    assert.match(step.run!, /--image-sha256 "\$IMAGE_SHA256"/);
+    assert.match(step.run!, /--trusted-root "\$GITHUB_WORKSPACE\/protected"/);
+  }
+  // The QA job never fetches the pull request.
+  for (const step of qa.jobs.qa.steps as Step[]) assert.doesNotMatch(JSON.stringify(step.with ?? {}), /head\.outputs|refs\/pull/);
+});
+
+test("every third-party action is pinned to a full commit, and the engine to one as well", () => {
+  for (const file of ["releaseproof-request.yml", "releaseproof-qa.yml", "releaseproof-qa-reusable.yml"]) {
+    const parsed = workflow(file);
+    for (const [name, job] of Object.entries(parsed.jobs) as [string, Job & { uses?: string }][]) {
+      if (job.uses) assert.match(job.uses, /^\.\/\.github\/workflows\//, `${file}/${name} calls a workflow outside this commit`);
+      for (const step of job.steps ?? []) {
+        if (step.uses) assert.match(step.uses, /^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/, `${file}/${name}: ${step.uses}`);
+      }
+    }
+  }
+  const reusable = workflow("releaseproof-qa-reusable.yml");
+  const first = reusable.jobs.identify.steps[0] as Step;
+  assert.match(first.run!, /releaseproof_ref must be a full commit SHA/);
+  for (const [, job] of jobsOf(reusable)) {
+    for (const step of job.steps) {
+      if (step.with?.repository) assert.equal(step.with.ref, "${{ inputs.releaseproof_ref }}");
+    }
+  }
 });
 
 test("only the QA job's test step is given the model key", () => {
-  const qa = workflow("releaseproof-qa.yml");
+  const qa = workflow("releaseproof-qa-reusable.yml");
   const holders: string[] = [];
-  for (const [name, job] of Object.entries(qa.jobs) as [string, { steps: { name?: string; env?: Record<string, string> }[] }][]) {
+  for (const [name, job] of jobsOf(qa)) {
     for (const step of job.steps) if (JSON.stringify(step.env ?? {}).includes("secrets.")) holders.push(`${name}/${step.name}`);
   }
   assert.deepEqual(holders, ["qa/Test the application"]);
   // The Jira token and account email come from secrets; the site address is a plain variable.
-  const env = (qa.jobs.qa.steps as { name?: string; env?: Record<string, string> }[]).find((s) => s.name === "Test the application")!.env!;
+  const steps = qa.jobs.qa.steps as Step[];
+  const env = steps.find((s) => s.name === "Test the application")!.env!;
   assert.equal(env.JIRA_API_TOKEN, "${{ secrets.JIRA_API_TOKEN }}");
   assert.match(env.JIRA_EMAIL!, /^\$\{\{ secrets\.JIRA_EMAIL \|\| vars\.JIRA_EMAIL \}\}$/);
   assert.equal(env.JIRA_BASE_URL, "${{ vars.JIRA_BASE_URL }}");
   assert.equal(env.ANTHROPIC_API_KEY, "${{ secrets.ANTHROPIC_API_KEY }}");
+  // Verification runs instead of the test step, never beside it, and with no credential but the read-only token.
+  const verify = steps.find((s) => (s.name ?? "").startsWith("Verify that the application starts isolated"))!;
+  assert.equal(verify.if, "needs.build.outputs.verify_only == 'true'");
+  assert.equal(steps.find((s) => s.name === "Test the application")!.if, "needs.build.outputs.verify_only != 'true'");
+  assert.match(verify.run!, /run --verify-only/);
+  assert.deepEqual(Object.keys(verify.env!).filter((k) => /KEY|TOKEN|EMAIL|SECRET/.test(k)), ["GITHUB_TOKEN"]);
+  // This repository's caller passes on exactly the three secrets and grants no more than the jobs ask for.
+  const caller = workflow("releaseproof-qa.yml").jobs.releaseproof;
+  assert.deepEqual(Object.keys(caller.secrets).sort(), ["ANTHROPIC_API_KEY", "JIRA_API_TOKEN", "JIRA_EMAIL"]);
+  assert.deepEqual(caller.permissions, { contents: "read", actions: "read", "pull-requests": "write", checks: "write" });
+  assert.equal(caller.with.releaseproof_ref, "${{ github.sha }}");
 });

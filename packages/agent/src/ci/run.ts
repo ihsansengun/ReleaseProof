@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { createReadStream, existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -130,7 +131,32 @@ export type CiRunOptions = {
   limits: Limits;
   maxScenarios: number;
   concurrency: number;
+  /**
+   * SHA-256 of the image file as the build job computed it, passed outside
+   * the artifact. When given, an image file that does not match is refused.
+   */
+  imageSha256?: string;
+  /** Build, start and check isolation only. No ticket is read and no model is involved. */
+  verifyOnly?: boolean;
 };
+
+/**
+ * Says why an image file may not be loaded, if the build job's digest was
+ * given and the file does not match it. An empty or malformed digest counts
+ * as a mismatch: once a digest is expected, nothing loads without one.
+ */
+export async function imageFileProblem(file: string, expected: string | undefined): Promise<string | undefined> {
+  if (expected === undefined) return undefined;
+  const digest = await fileSha256(file).catch(() => "");
+  return /^[0-9a-f]{64}$/.test(expected) && digest === expected ? undefined : "The application image is not the file the build job produced; it was not loaded.";
+}
+
+/** SHA-256 of a file, read as a stream. */
+async function fileSha256(file: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
 
 /** The first symbolic link (or other non-regular entry) under a directory, if any. */
 export async function firstSymlink(dir: string): Promise<string | undefined> {
@@ -206,6 +232,40 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
       return finish("error", "The build names an application directory the pull request does not change.");
     }
 
+    // The image must be the file the build job produced, and must carry the
+    // commit the code host reports. It is loaded and run; never unpacked or
+    // executed on this machine.
+    const loadImage = async (): Promise<string | undefined> => {
+      const imageFile = path.join(options.incoming, "image.tar");
+      const tampered = await imageFileProblem(imageFile, options.imageSha256);
+      if (tampered) return tampered;
+      await run("docker", ["load", "--input", imageFile], { timeout: 10 * 60_000, env: hostEnv(process.env) });
+      const label = (
+        await run("docker", ["inspect", "--format", '{{index .Config.Labels "releaseproof.sha"}}', IMAGE], { env: hostEnv(process.env) })
+      ).stdout.trim();
+      return label === meta.headSha ? undefined : "The application image is not labelled with the pull request's commit.";
+    };
+
+    if (options.verifyOnly) {
+      delete process.env.GITHUB_TOKEN;
+      const refused = await loadImage();
+      if (refused) return finish("error", refused);
+      const declared = await loadManifest(path.join(options.incoming, "context", "releaseproof.yml")).catch(() => null);
+      if (!declared?.start) return finish("error", "The application's manifest is not valid or has no start section.");
+      await startSandbox({ start: declared.start, sha: meta.headSha });
+      result.isolation = await probeIsolation(declared.start);
+      if (!result.isolation.ok) return finish("error", "The sandbox isolation check failed.");
+      let second = "";
+      if (declared.start.instances === "per-scenario") {
+        const extra = await startInstance({ start: declared.start, sha: meta.headSha, label: "verify-2" });
+        const problems = await checkInstance(declared.start, extra.container);
+        await stopInstance(extra.container);
+        if (problems.length > 0) return finish("error", `A second application container was not isolated as required: ${problems.slice(0, 3).join("; ")}`);
+        second = " A second, separate container started with the same settings.";
+      }
+      return finish("skipped", `Verification only: the application was built from commit ${meta.headSha.slice(0, 12)}, started, and passed the isolation check.${second} No ticket was read and no model was called.`);
+    }
+
     const key = TICKET_KEY.exec(pullRequest.title)?.[0];
     if (!key) return finish("skipped", "The pull request title names no ticket (expected a key such as ABC-123).");
 
@@ -243,12 +303,8 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     delete process.env.GITHUB_TOKEN;
     console.log(`requirements: protected revision ${protectedMaterial.revision.slice(0, 12)}, ${protectedMaterial.approvedDocs.length} approved document(s), ${protectedMaterial.authority.requirementOwners.github.length} GitHub and ${protectedMaterial.authority.requirementOwners.jira.length} Jira requirement owner(s)`);
 
-    // The image is loaded and run; it is never unpacked or executed on the host.
-    await run("docker", ["load", "--input", path.join(options.incoming, "image.tar")], { timeout: 10 * 60_000, env: hostEnv(process.env) });
-    const label = (
-      await run("docker", ["inspect", "--format", '{{index .Config.Labels "releaseproof.sha"}}', IMAGE], { env: hostEnv(process.env) })
-    ).stdout.trim();
-    if (label !== meta.headSha) return finish("error", "The application image is not labelled with the pull request's commit.");
+    const refused = await loadImage();
+    if (refused) return finish("error", refused);
 
     const manifestFile = path.join(options.incoming, "context", "releaseproof.yml");
     const declared = await loadManifest(manifestFile).catch(() => null);
@@ -268,7 +324,9 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     let started = 0;
     let unsafe: string | undefined;
     const app: AppAccess = {
-      commitEstablished: `this stage started the image labelled with commit ${meta.headSha}, which is the commit the code host reports for the pull request`,
+      commitEstablished: options.imageSha256
+        ? `the build job fetched commit ${meta.headSha} from the code host and built the image from it; this stage checked the image file against that job's digest and started it`
+        : `this stage started the image labelled with commit ${meta.headSha}, which is the commit the code host reports for the pull request`,
       instance:
         start.instances !== "per-scenario"
           ? undefined

@@ -9,6 +9,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { DEFAULT_LIMITS } from "../budget.ts";
+import { loadPullRequest } from "../ingest/github.ts";
 import { ciBuild } from "./build.ts";
 import { publish } from "./report.ts";
 import { ciRun } from "./run.ts";
@@ -43,9 +44,21 @@ async function main(): Promise<number> {
       concurrency: { type: "string" },
       result: { type: "string" },
       "run-url": { type: "string", default: "" },
+      "trusted-root": { type: "string" },
+      "image-sha256": { type: "string" },
+      "verify-only": { type: "boolean", default: false },
     },
   });
   const command = positionals[0];
+
+  // The commit the code host reports for a pull request, for the build job to fetch.
+  if (command === "head") {
+    if (!/^[1-9]\d{0,8}$/.test(values.pr ?? "")) throw new Error("Not a pull request number.");
+    const pullRequest = await loadPullRequest(values.repo!, Number(values.pr));
+    if (!/^[0-9a-f]{40}$/.test(pullRequest.headSha)) throw new Error("The code host reported no commit for the pull request.");
+    console.log(pullRequest.headSha);
+    return 0;
+  }
 
   if (command === "build") {
     const meta = await ciBuild({
@@ -71,8 +84,12 @@ async function main(): Promise<number> {
         defaultBranch: values["default-branch"]!,
       },
       ticketsDir: values.tickets,
-      // The QA workflow runs this from its working copy of the default branch.
-      trustedRoot: process.cwd(),
+      // The application repository's default branch, checked out by the QA
+      // workflow. Where the engine and the application share a repository,
+      // that is the directory this runs from.
+      trustedRoot: values["trusted-root"] ? path.resolve(values["trusted-root"]) : process.cwd(),
+      imageSha256: values["image-sha256"],
+      verifyOnly: values["verify-only"],
       recordingsDir: values.recordings,
       previousRun: values.previous,
       full: values.full,
@@ -101,7 +118,9 @@ async function main(): Promise<number> {
       for (const [id, outcome] of Object.entries(result.run.confirmations ?? {})) console.log(`replay of ${id}: ${outcome}`);
     }
     if (result.run) console.log(`execution mode: ${result.run.executionMode}; timings: ${result.run.timings.map((t) => `${t.stage} ${t.seconds}s`).join(", ")}`);
-    // The job succeeds whenever a result was produced; the verdict is the report's to give.
+    // A verification that did not pass must be visible as a failed job: nothing else reports it.
+    if (values["verify-only"] && result.status === "error") return 1;
+    // Otherwise the job succeeds whenever a result was produced; the verdict is the report's to give.
     return 0;
   }
 
@@ -115,7 +134,7 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  console.error("Usage: ci build | run | report (see .github/workflows/releaseproof-*.yml)");
+  console.error("Usage: ci head | build | run | report (see .github/workflows/releaseproof-*.yml)");
   return 2;
 }
 

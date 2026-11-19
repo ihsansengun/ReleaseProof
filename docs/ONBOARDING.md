@@ -4,8 +4,9 @@ What a team adds to its repository so ReleaseProof can test it. Everything
 is configuration beside the application; nothing in the application's own
 code changes, and nothing about the application goes into ReleaseProof.
 
-Status: the manifest fields below are implemented and tested. Running from
-another repository's workflows is not yet implemented (see the end).
+Status: the manifest fields below are implemented and tested. The workflows
+for another repository are written and checked for structure by tests; they
+have not yet run on a GitHub runner.
 
 ## The manifest: `releaseproof.yml`
 
@@ -74,11 +75,64 @@ Who may state or amend requirements, by GitHub numeric id and Jira account
 id. Read from the default branch only. See
 [design/REQUIREMENT-AUTHORITY.md](design/REQUIREMENT-AUTHORITY.md).
 
+## The two workflow files
+
+Both go on the application repository's default branch. `<commit>` is a
+full ReleaseProof commit SHA, the same in both places; a branch or tag is
+refused.
+
+`.github/workflows/releaseproof-request.yml`: a copy of ReleaseProof's file
+of that name. It holds no secret, checks out nothing and builds nothing; it
+writes the pull request number for the next workflow.
+
+`.github/workflows/releaseproof-qa.yml`:
+
+```yaml
+name: ReleaseProof QA
+on:
+  workflow_run:
+    workflows: ["ReleaseProof request"]
+    types: [completed]
+permissions: {}
+jobs:
+  releaseproof:
+    uses: ihsansengun/ReleaseProof/.github/workflows/releaseproof-qa-reusable.yml@<commit>
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      checks: write
+    with:
+      releaseproof_ref: <commit>
+      tickets_dir: .releaseproof/tickets      # only if ticket files are used
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+```
+
+Repository settings the application's owner makes: the three secrets, the
+variable `JIRA_BASE_URL`, and, only when automatic runs are wanted, the
+variable `RELEASEPROOF_AUTO_TRIGGER` set to `on`. Without that variable only
+manually started requests are handled.
+
+What is read from where:
+
+| | Read from |
+|---|---|
+| The engine | ReleaseProof at `<commit>` |
+| Requirement owners, approved documents, ticket files | the application repository's default branch |
+| The code under test | the commit GitHub reports for the pull request, fetched and built by the build job |
+| Tickets | Jira's API, with the repository's credentials |
+
+To check the set-up without spending anything: Actions → "ReleaseProof
+request" → Run workflow, with a pull request number and `verify_only`
+ticked. It builds the image, starts it, runs the isolation check and stops.
+No ticket is read, no model is called, and the step has no credential in
+its environment.
+
 ## Not implemented yet
 
-- **Workflows in another repository.** Today the build and QA workflows run
-  in ReleaseProof's own repository against applications inside it. Calling
-  them from an application's repository is the next change.
 - **Other services.** One container only: no database, cache or mail server
   beside the application.
 - **Sign-in other than a form** the executor can fill in.

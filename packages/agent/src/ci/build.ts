@@ -29,10 +29,14 @@ export function appsTouched(changed: string[], hasManifest: (dir: string) => boo
 export type BuildMeta = { pr: number; headSha: string; appDir?: string; skip?: string };
 
 /**
- * Stage 1, the only stage that touches pull-request code. It runs with no
- * secrets. It builds the application image and hands on three things, all of
- * them treated as data by the next stage: the image, the manifest with the
- * documents it lists, and a small description of what was built.
+ * The build: the only place pull-request code is touched, and only inside
+ * `docker build`. It runs with no secrets. It is run by trusted code, which
+ * first establishes that the files in front of it are exactly the commit the
+ * code host reports for the pull request, so that the commit label it puts
+ * on the image is a statement by this code and not by the pull request.
+ *
+ * It hands on the image, the manifest with the documents it lists, and a
+ * small description of what was built.
  */
 export async function ciBuild(options: {
   prDir: string;
@@ -52,6 +56,12 @@ export async function ciBuild(options: {
   };
 
   const pullRequest = await loadPullRequest(options.repo, options.pr);
+  if (pullRequest.headSha !== headSha) {
+    return done(`The files to build are at commit ${headSha.slice(0, 12)}, which is not the commit the code host reports for pull request #${options.pr}. Nothing was built.`);
+  }
+  if (pullRequest.headRepo !== options.repo) {
+    return done("Pull requests from forks need a maintainer's go-ahead, which is not implemented yet.");
+  }
   const apps = appsTouched(
     pullRequest.files.map((f) => f.path),
     (dir) => existsSync(path.join(prDir, dir, MANIFEST)),
