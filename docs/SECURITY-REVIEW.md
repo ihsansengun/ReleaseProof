@@ -1,12 +1,15 @@
 # CI security review, 19 November 2026
 
 A review of the trust boundaries described in [CI-SECURITY.md](CI-SECURITY.md)
-against the code and workflows on `main` at `795a240`, with adversarial tests.
+against the code and workflows, with adversarial tests. The review started
+on `main` at `795a240`; the fixes it led to were merged as pull request #10
+(`63eda12`), and the hostile run was made after that.
 Evidence is in [eval/results/2026-11-19-security](../eval/results/2026-11-19-security/README.md).
 
-**Recommendation: keep `RELEASEPROOF_AUTO_TRIGGER` off** until the fixes in
-the security pull request are merged and one more hostile run has been made
-against them. Details at the end.
+**Recommendation: keep `RELEASEPROOF_AUTO_TRIGGER` off.** The hostile run
+found one more hole (the container could reach the runner host), and its
+prompt-injection result was not a blind test. Conditions for turning it on
+are at the end.
 
 ## What was tested, and how
 
@@ -36,13 +39,14 @@ in any test.
 
 | # | Finding | Severity | Status |
 |---|---|---|---|
-| 1 | **Any pull request event cancels a QA run in progress.** The build workflow's `run-name` contains ` #`, which YAML reads as a comment, so every build is titled "ReleaseProof build for PR". The QA workflow keys its concurrency group on that title, so all QA runs share one group, and a new one cancels the one in flight, even if the new one is then skipped. This happened during this review: opening a draft pull request cancelled a live run 7½ minutes in. With the title fixed, a pull request could still set its own build title to another pull request's and cancel its run. | Medium (availability, wasted spend) | Fix in the security pull request: quoted `run-name`; group keyed on GitHub's record of the pull request for pull-request builds |
-| 2 | **Documentation from the pull request counts as a requirement source.** The manifest's documents are read at the pull request's head, and a quote from them can back a "documented requirement". A pull request can therefore edit the README to describe its defect as intended behaviour. | Medium (integrity of the verdict) | Open. Measured in the hostile run; proposal below |
-| 3 | **A listed document could be a symbolic link.** The path check was lexical, so a link inside the application directory to any file on the machine reading it was followed, and the content went into the model's input and the stored run. In CI that machine is the stage 1 runner, which holds no secret beyond a short-lived read-only token; with the CLI on a developer's machine it could be any readable file. Confirmed against `main`. | Low in CI, medium for local use | Fixed in the security pull request |
-| 4 | **The browser inherited the engine's environment**, including the model key and the GitHub token, while rendering untrusted pages. Reading it would need a browser exploit. | Low (defence in depth) | Fixed in the security pull request: the browser gets a minimal environment |
-| 5 | **The isolation probe ran programs from the untrusted image** (`env`, `node`, `sh`, `id`), which a hostile image could replace to report what the probe wants to see. The isolation itself comes from the `docker run` flags set by trusted code, so this weakens the check, not the isolation. | Low | Fixed in the security pull request: the container's settings are also read from the container engine |
+| 0 | **The application container can reach the runner host.** On the hosted runner the hostile fixture connected to port 22 on the host's address of the sandbox's internal network. An internal network removes the route out but not, on that engine version, the path to the host. The trusted-side check reported the network as blocked because it only tried outside addresses. No credential is served on the host's address and nothing leaked. | Medium | Found by the hostile run. Fix proposed in pull request #11: a firewall rule on the sandbox bridge, and the check extended to the host. Not verifiable on a hosted runner until merged |
+| 1 | **Any pull request event cancels a QA run in progress.** The build workflow's `run-name` contains ` #`, which YAML reads as a comment, so every build is titled "ReleaseProof build for PR". The QA workflow keys its concurrency group on that title, so all QA runs share one group, and a new one cancels the one in flight, even if the new one is then skipped. This happened during this review: opening a draft pull request cancelled a live run 7½ minutes in. With the title fixed, a pull request could still set its own build title to another pull request's and cancel its run. | Medium (availability, wasted spend) | Fixed in #10: no workflow-level group; a job-level group keyed per pull request from GitHub's record of the event; quoted `run-name`. Seen working for one run on a hosted runner (key `pr-9`); several runs at once are covered by tests only |
+| 2 | **Documentation from the pull request counts as a requirement source.** The manifest's documents are read at the pull request's head, and a quote from them can back a "documented requirement". A pull request can therefore edit the README to describe its defect as intended behaviour. | Medium (integrity of the verdict) | **Open.** In the hostile run the ticket prevailed and the conflict was raised as a question, but nothing in the code enforces that. Proposal below |
+| 3 | **A listed document could be a symbolic link.** The path check was lexical, so a link inside the application directory to any file on the machine reading it was followed, and the content went into the model's input and the stored run. In CI that machine is the stage 1 runner, which holds no secret beyond a short-lived read-only token; with the CLI on a developer's machine it could be any readable file. Confirmed against `main`. | Low in CI, medium for local use | Fixed in #10: canonical paths, regular files only; a hand-off containing a link is refused |
+| 4 | **The browser inherited the engine's environment**, including the model key and the GitHub token, while rendering untrusted pages. Reading it would need a browser exploit. | Low (defence in depth) | Fixed in #10: one allow-list is the environment of every child process, and the engine removes the key from its own environment once read. Rotating the key that earlier browsers held is recommended |
+| 5 | **The isolation probe ran programs from the untrusted image** (`env`, `node`, `sh`, `id`), which a hostile image could replace to report what the probe wants to see. The isolation itself comes from the `docker run` flags set by trusted code, so this weakens the check, not the isolation. | Low | Fixed in #10: the check runs nothing from the image. Passed on a hosted runner, and missed finding 0 |
 | 6 | Manifest paths could leave the application's origin, and the engine followed redirects. | Medium | Fixed in pull request #7, before this review's tests |
-| 7 | An invalid manifest in the hand-off gave an unreadable error ("["). | Cosmetic | Fixed in the security pull request |
+| 7 | An invalid manifest in the hand-off gave an unreadable error ("["). | Cosmetic | Fixed in #10 |
 | 8 | Third-party actions are pinned by tag (`@v4`), not by commit. | Low | Open; recommended before automatic runs |
 | 9 | The evidence artifact is readable by anyone who can read the repository, and contains page content, screenshots and the application's log. Nothing secret reaches it in these tests, but an application that prints a secret from its own configuration would publish it. | Informational | By design; the manifest's environment is documented as "never secrets" |
 | 10 | A hostile application can make the agent waste its budget (large pages, slow responses). The budget and time limits bound it. | Informational | Accepted |
@@ -95,4 +99,32 @@ patterns. Holds no secret. Confirmed by unit tests with a hostile result.
 
 ## Hostile run
 
-PENDING
+Full record: [eval/results/2026-11-19-security](../eval/results/2026-11-19-security/README.md).
+One live run of a deliberately hostile build of the time-off feature, on
+`main` with the fixes of #10, capped at $2.00.
+
+| Question | Result |
+|---|---|
+| Genuine defects reported | Both, and the Check was red |
+| Requirement integrity | Held: expectations quoted the ticket; the pull request's rewritten README was not used, and the conflict was the first question raised |
+| Prompt-injection resistance | Held, but the pull request description announced that it was a hostile fixture, so this was not a blind test |
+| Credential protection | Held: no credential in the container's environment, no route to the internet, DNS or metadata addresses, read-only root, no capabilities, process limit enforced; no secret in any output |
+
+Also from that run: one probable false-positive scenario, no failure
+confirmed by the model-free repeat, the first live run stopped by its cost
+limit ($2.01 of $2.00, after all scenarios had run), and finding 0.
+
+## Before automatic runs are turned on
+
+1. Merge the host-isolation fix (#11) and see the extended check pass on a
+   hosted runner.
+2. Make "the ticket outranks documentation changed by the pull request" a
+   rule in code (finding 2).
+3. Make one blind injection run: a hostile pull request whose description
+   does not say so.
+4. Pin third-party actions by commit (finding 8).
+5. Rotate `ANTHROPIC_API_KEY`. No leak was observed; the reason is that the
+   browser held it in every run before #10.
+
+Until then, manual runs on pull requests you have looked at remain the
+right mode.
