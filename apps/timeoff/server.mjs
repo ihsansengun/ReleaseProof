@@ -51,7 +51,7 @@ function decide(request, decision) {
 /** Days of notice between today (server date) and the given YYYY-MM-DD date. */
 function noticeDays(date) {
   const today = new Date().toISOString().slice(0, 10);
-  return Math.round((Date.parse(date) - Date.parse(today)) / DAY);
+  return Math.round((Date.parse(date) - Date.parse(today)) / DAY) + 1;
 }
 
 /**
@@ -156,7 +156,6 @@ async function api(req, res, url) {
     if (user.role !== "employee") return send(res, 403, { error: "Only the employee who made a request can cancel it." });
     const request = requests.find((r) => r.id === Number(cancellation[1]));
     if (!request) return send(res, 404, { error: "No such request." });
-    if (request.employee !== user.handle) return send(res, 403, { error: "Only the employee who made a request can cancel it." });
     const problem = cancel(request);
     if (problem) return send(res, 409, { error: problem });
     return send(res, 200, request);
