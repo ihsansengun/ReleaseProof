@@ -148,3 +148,50 @@ test("the allow-list passes nothing that looks like a credential", () => {
   assert.deepEqual(Object.keys(env).sort(), ["DOCKER_HOST", "HOME", "PATH"]);
   assert.doesNotMatch(JSON.stringify(env), new RegExp(SECRET));
 });
+
+test("a container that can reach this machine is caught, and the firewall rule closes that path", { skip: !haveDocker }, async () => {
+  const rule = ["INPUT", "-i", "rpsandbox0", "-m", "conntrack", "--ctstate", "NEW,INVALID", "-j", "DROP"];
+  const iptables = (...args: string[]) => execFileSync("iptables", args, { stdio: ["ignore", "pipe", "pipe"] });
+  await stopSandbox();
+  try {
+    // The sandbox's container, but on an ordinary bridge with the same names and no firewall rule:
+    // on such a network a container can reach services on the machine that runs it.
+    docker("network", "create", "--opt", "com.docker.network.bridge.name=rpsandbox0", "releaseproof-net");
+    docker(
+      "run", "--detach", "--name", "releaseproof-app", "--network", "releaseproof-net",
+      "--read-only", "--tmpfs", "/tmp", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+      "--pids-limit", "256", "--memory", "1g", "--user", "10001:10001",
+      "--env", "PORT=3100", "--env", "TEST_MODE=1", IMAGE,
+    );
+    await new Promise((r) => setTimeout(r, 1500));
+    const open = await probeIsolation(start);
+    const gateway = docker("network", "inspect", "releaseproof-net", "--format", "{{(index .IPAM.Config 0).Gateway}}");
+    const toHost = (urls: string[]) => urls.filter((url) => url.startsWith(`http://${gateway}:`) || url.startsWith("http://172.17.0.1:"));
+    assert.equal(open.outboundNetwork, "REACHABLE");
+    assert.equal(open.ok, false);
+    assert.ok(toHost(open.reached).length >= 1, `the probe must notice that this machine can be reached: ${open.reached.join(" ")}`);
+
+    // With the rule the sandbox installs, the same container can no longer open a connection to this machine.
+    iptables("-I", rule[0]!, "1", ...rule.slice(1));
+    const closed = await probeIsolation(start);
+    assert.deepEqual(toHost(closed.reached), [], "no address of this machine answers once the rule is in place");
+    // The engine can still reach the application: replies are not new connections.
+    const address = docker("inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "releaseproof-app");
+    assert.equal((await fetch(`http://${address}:3100/api/version`, { signal: AbortSignal.timeout(5000) })).status, 200);
+  } finally {
+    await stopSandbox();
+  }
+  assert.doesNotMatch(execFileSync("iptables", ["-S", "INPUT"], { encoding: "utf8" }), /rpsandbox0/, "the rule is removed with the sandbox");
+});
+
+test("the sandbox installs the rule on start and leaves nothing behind", { skip: !haveDocker }, async () => {
+  try {
+    await startSandbox({ start, sha: "a".repeat(40) });
+    assert.match(execFileSync("iptables", ["-S", "INPUT"], { encoding: "utf8" }), /-i rpsandbox0 .*NEW.*-j DROP/);
+    const isolation = await probeIsolation(start);
+    assert.equal(isolation.ok, true, JSON.stringify(isolation));
+  } finally {
+    await stopSandbox();
+  }
+  assert.doesNotMatch(execFileSync("iptables", ["-S", "INPUT"], { encoding: "utf8" }), /rpsandbox0/);
+});
