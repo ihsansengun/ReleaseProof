@@ -83,7 +83,7 @@ const req = (over: Partial<AnalysisDraft["requirements"][number]> & { id: string
   relatedRequirementId: "",
   ...over,
 });
-const draftOf = (requirements: AnalysisDraft["requirements"]): AnalysisDraft => ({ featureSummary: "x", requirements, ambiguities: [], risks: [] });
+const draftOf = (requirements: AnalysisDraft["requirements"]): AnalysisDraft => ({ featureSummary: "x", requirements, ambiguities: [], risks: [], supersessions: [], contradictions: [] });
 
 async function hostileContext(extra: Partial<AuthorityInputs> = {}, body?: string) {
   const { manifestFile, manifest: m } = workingCopy({ "README.md": HOSTILE_README }, ["README.md"]);
@@ -278,7 +278,7 @@ test("changes to approved documents are always surfaced, and conflicts keep a ru
   });
   assert.equal(assess(passedRun(false)).readiness, "ready");
   assert.equal(assess(passedRun(true)).readiness, "incomplete");
-  assert.match(assess(passedRun(true)).reasons.join("; "), /conflicts? between this pull request's own statements and the approved requirements/);
+  assert.match(assess(passedRun(true)).reasons.join("; "), /conflicts? about the approved requirements/);
   assert.equal(assess(passedRun(true, false)).readiness, "not ready");
 });
 

@@ -59,6 +59,9 @@ export class RecordedDriver implements Driver {
           relation: r.relation ?? "none",
           relatedRequirementId: r.relatedRequirementId ?? "",
         })),
+        // Only what the model proposed is replayed; owners' own lines are found again by code.
+        supersessions: (a.supersessions ?? []).filter((s) => s.how === "inferred"),
+        contradictions: a.contradictions ?? [],
       });
     }
     if (job.name === "plan" || job.name === "plan-repair") return job.schema.parse(planToDraft(this.recording.plan));

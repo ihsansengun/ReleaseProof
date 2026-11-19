@@ -57,6 +57,8 @@ export type AuditTrail = {
       | { compared: false; why: string };
   }[];
   conflicts: { id: string; kind: string; description: string }[];
+  /** Rules replaced by a later approved source, and how that was established. */
+  supersessions: { retiredText: string; retiredSourceId: string; bySourceId: string; how: string }[];
   questions: string[];
 };
 
@@ -138,6 +140,7 @@ export function buildAuditTrail(run: RunReport): AuditTrail {
     })),
     assertions,
     conflicts: run.analysis.conflicts ?? [],
+    supersessions: run.analysis.supersessions ?? [],
     questions: [...run.analysis.ambiguities.map((q) => q.question), ...run.plan.clarifications.map((q) => q.question)],
   };
 }
@@ -176,6 +179,12 @@ export function renderAuditTrail(trail: AuditTrail): string {
   }
   for (const a of trail.amendments.notApproved) lines.push(`- **Not approved, not used:** change \`${a.changeHash.slice(0, 16)}\` to \`${cell(a.path)}\` (${cell(a.kind)}, +${a.linesAdded} / -${a.linesRemoved} lines)`);
   for (const c of trail.amendments.commands) lines.push(`- Command in comment ${c.commentId} by ${cell(c.author, 40)}: ${c.accepted ? "accepted" : "refused"}: ${cell(c.reason)}`);
+
+  lines.push("", "### Rules replaced by later approved sources", "");
+  if (trail.supersessions.length === 0) lines.push("None.");
+  for (const s of trail.supersessions) {
+    lines.push(`- "${cell(s.retiredText)}" in ${cell(s.retiredSourceId)}, replaced by ${cell(s.bySourceId)} (${s.how === "owner-line" ? "stated by the requirement owner" : "read by the analyst, not confirmed by the owner"}). Not quotable; no expected value rests on it.`);
+  }
 
   lines.push("", "## 3. Requirements", "", "| Id | Standing | Verified quote | Source |", "|---|---|---|---|");
   for (const r of trail.requirements) lines.push(`| ${cell(r.id)} | ${cell(r.standing)} | ${r.quote ? `"${cell(r.quote)}"` : "(none)"} | ${r.sourceId ? `${cell(r.sourceId)}: ${cell(r.sourceOrigin)}` : "(none)"} |`);

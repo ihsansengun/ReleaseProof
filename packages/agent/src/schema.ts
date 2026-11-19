@@ -1,5 +1,5 @@
 import type { ApprovalDecision } from "./approval.ts";
-import type { Authority, DocChange, SourceRecord, Trust } from "./sources.ts";
+import type { Authority, DocChange, SourceRecord, Supersession, Trust } from "./sources.ts";
 import { z } from "zod";
 import type { UsageSummary } from "./budget.ts";
 
@@ -271,6 +271,28 @@ export const AnalysisDraft = z.object({
       relatedRequirementIds: z.array(z.string()),
     }),
   ),
+  /**
+   * Rules in an earlier approved source that a later approved source
+   * replaces. A proposal only: code checks the sources, their sequence and
+   * the text before anything is retired.
+   */
+  supersessions: z.array(
+    z.object({
+      /** Exact text of the replaced rule, copied from the earlier source. */
+      retiredText: z.string(),
+      retiredSourceId: z.string(),
+      /** The later approved source that replaces it. */
+      bySourceId: z.string(),
+    }),
+  ),
+  /** Pairs of approved requirements that cannot both hold and that no supersession settles. */
+  contradictions: z.array(
+    z.object({
+      firstRequirementId: z.string(),
+      secondRequirementId: z.string(),
+      why: z.string(),
+    }),
+  ),
 });
 export type AnalysisDraft = z.infer<typeof AnalysisDraft>;
 
@@ -292,20 +314,40 @@ export type Requirement = {
   relatedRequirementId?: string;
   /** Present only in analyses recorded before sources had ids. */
   sourceType?: string;
+  /**
+   * Set by code when this approved requirement contradicts another and no
+   * verified supersession says which holds. It cannot set an expected value
+   * until a requirement owner settles it.
+   */
+  contested?: boolean;
 };
 
 /** A disagreement between pull-request material and the approved requirements, or a change nobody accounted for. */
 export type Conflict = {
   id: string;
-  kind: "contradiction" | "unstated-addition" | "removal" | "unclassified" | "rule-changed" | "change-not-analysed";
+  kind:
+    | "contradiction"
+    | "unstated-addition"
+    | "removal"
+    | "unclassified"
+    | "rule-changed"
+    | "change-not-analysed"
+    /** Two approved requirements disagree and nothing verified says which holds. */
+    | "authoritative-contradiction"
+    /** A "Supersedes:" line that could not be honoured. */
+    | "supersession-invalid";
   description: string;
   claimId?: string;
   requirementId?: string;
   docPath?: string;
 };
 
-export type Analysis = Omit<AnalysisDraft, "requirements"> & {
+export type Analysis = Omit<AnalysisDraft, "requirements" | "supersessions" | "contradictions"> & {
   requirements: Requirement[];
+  /** Approved requirements the analyst reported as disagreeing. Kept so a replay finds the same conflicts. */
+  contradictions?: AnalysisDraft["contradictions"];
+  /** Every rule taken as replaced, after code checked it. Absent in runs made before precedence was enforced. */
+  supersessions?: Supersession[];
   /** Computed by code. A run with any entry here cannot be reported as ready. */
   conflicts?: Conflict[];
 };

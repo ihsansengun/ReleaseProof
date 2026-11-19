@@ -101,6 +101,7 @@ export const ReportInput = z.object({
           }),
         ),
         conflicts: z.array(z.object({ id: z.string(), kind: z.string(), description: z.string() })).optional(),
+        supersessions: z.array(z.object({ retiredText: z.string(), retiredSourceId: z.string(), bySourceId: z.string(), how: z.string() })).optional(),
         ambiguities: z.array(z.object({ id: z.string(), question: z.string() })),
       }),
       plan: z.object({

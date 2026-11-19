@@ -20,6 +20,8 @@ Each scenario:
 
 Where expected values may come from:
 - Every assertion cites, in requirementId, the documented requirement its expected value follows from. A documented rule combined with observed values through a formula is fine.
+- The analysis lists the rules in force. A rule under SUPERSEDED RULES was replaced by a later approved source and is not in force: never test against it, and do not treat the application as wrong for not following it. Test the rule that replaced it.
+- A requirement marked "contested": true contradicts another approved requirement and nobody has said which holds. It cannot back an assertion. Block scenarios whose outcome depends on it and say what must be decided.
 - Never take an expected value from the diff, from how the application currently behaves, from an inferred requirement, or from your own sense of what is reasonable. If the diff shows a number or rule that the documented requirements do not state, it is not an expectation.
 - When a rule is only partly pinned down, assert the part that is: a change between two observations, a lower or upper bound, or presence. Do not leave a documented requirement untested because one detail around it is open, and do not assert the open detail.
 - If a scenario is worth running but its expected outcome depends on an unanswered ambiguity or only on an inferred requirement, give it status "blocked", list the ambiguity ids, explain in blockedReason what must be decided, and give it no assertions. A blocked scenario with a clear question is a useful result. An invented expectation is a defect in your plan.
@@ -42,8 +44,12 @@ export async function plan(
   driver: Driver,
   maxScenarios: number,
 ): Promise<Plan> {
+  const retired = (analysis.supersessions ?? []).map(
+    (s) => `- "${s.retiredText}" (in ${s.retiredSourceId}) was replaced by ${s.bySourceId}; ${s.how === "owner-line" ? "stated by the requirement owner" : "as read by the analyst, not yet confirmed by the owner"}`,
+  );
   const input = [
     `<<<REQUIREMENTS ANALYSIS>>>\n${JSON.stringify(analysis, null, 2)}\n<<<END REQUIREMENTS ANALYSIS>>>`,
+    `<<<SUPERSEDED RULES (not in force)>>>\n${retired.join("\n") || "(none)"}\n<<<END SUPERSEDED RULES>>>`,
     renderDocs(context),
     renderEnvironment(manifest),
     renderPullRequest(context, false),

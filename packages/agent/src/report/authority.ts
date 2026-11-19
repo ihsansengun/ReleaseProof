@@ -19,6 +19,7 @@ export type AuthorityView = {
   analysis: {
     requirements: { id: string; text: string; kind: string; quote: string; sourceId?: string; trust?: string; origin?: string; relation?: string }[];
     conflicts?: { id: string; kind: string; description: string }[];
+    supersessions?: { retiredText: string; retiredSourceId: string; bySourceId: string; how: string }[];
   };
 };
 
@@ -39,6 +40,24 @@ export function authorityLines(view: AuthorityView, clean: (text: unknown, max?:
     );
     for (const c of conflicts.slice(0, 30)) lines.push(`- **${clean(c.id, 8)}** (${clean(c.kind, 24)}) ${clean(c.description, 500)}`);
     if (conflicts.length > 30) lines.push(`- …and ${conflicts.length - 30} more`);
+    lines.push("");
+  }
+
+  // Which rule holds when approved sources follow one another. Absent for runs made before this was enforced.
+  const retired = view.analysis.supersessions;
+  const later = (context.sources ?? []).filter((s) => s.kind === "ticket-comment" && s.trust === "authoritative");
+  if (retired && (retired.length > 0 || later.length > 0)) {
+    lines.push(`${heading} Rules replaced by later approved sources`, "");
+    for (const s of retired.slice(0, 30)) {
+      const how =
+        s.how === "owner-line"
+          ? "stated by the requirement owner with a `Supersedes:` line"
+          : "**read that way by the analyst, not stated by the owner**; the result stays incomplete until the owner confirms it by adding the line `Supersedes: \"<the old rule>\"` to the comment";
+      lines.push(`- In ${clean(s.retiredSourceId, 8)}, replaced by ${clean(s.bySourceId, 8)}: "${clean(s.retiredText, 300)}". No longer tested. This was ${how}.`);
+    }
+    for (const s of later) {
+      if (!retired.some((r) => r.bySourceId === s.id)) lines.push(`- ${clean(s.id, 8)} was taken to replace nothing: every earlier rule still stands beside it.`);
+    }
     lines.push("");
   }
 

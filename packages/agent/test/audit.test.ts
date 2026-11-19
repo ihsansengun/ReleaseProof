@@ -20,6 +20,8 @@ const draft: AnalysisDraft = {
   ],
   ambiguities: [{ id: "Q1", question: "What happens at six?", why: "", relatedRequirementIds: [] }],
   risks: [],
+  supersessions: [],
+  contradictions: [],
 };
 
 function sampleRun(): RunReport {
