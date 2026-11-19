@@ -23,8 +23,12 @@ on:
 permissions: {}
 
 concurrency:
-  # One QA run per pull request; a newer build replaces an older run.
-  group: releaseproof-qa-${{ github.event.workflow_run.display_title }}
+  # One QA run per pull request; a newer build replaces an older run. For a
+  # pull-request build the number comes from GitHub's own record of the event,
+  # because the build's title is set by the pull request's copy of the build
+  # workflow and could name another pull request to cancel its run. A manual
+  # build always uses the default branch's workflow, so its title is trusted.
+  group: releaseproof-qa-${{ github.event.workflow_run.event == 'pull_request' && format('pr-{0}', github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha) || github.event.workflow_run.display_title }}
   cancel-in-progress: true
 
 jobs:

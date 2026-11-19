@@ -8,7 +8,8 @@
 #
 # Do not add secrets, write permissions or `pull_request_target` here.
 name: ReleaseProof build
-run-name: ReleaseProof build for PR #${{ inputs.pr || github.event.pull_request.number }}
+# Quoted: an unquoted " #" would start a YAML comment and drop the number.
+run-name: "ReleaseProof build for PR #${{ inputs.pr || github.event.pull_request.number }}"
 
 on:
   # Automatic trigger. With this event GitHub takes THIS FILE from the pull
