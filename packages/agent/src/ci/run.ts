@@ -10,6 +10,10 @@ import { ApiDriver, type Driver } from "../drivers/driver.ts";
 import { RecordedDriver } from "../drivers/recorded.ts";
 import { loadManifest } from "../env.ts";
 import { hostEnv } from "../hostenv.ts";
+import { buildDiagnostics, redact, renderDiagnostics } from "../report/diagnostics.ts";
+import { assess, headline } from "../report/readiness.ts";
+import { checkAvailability, type Availability } from "./availability.ts";
+import { publicResult } from "./report.ts";
 import { loadPullRequest } from "../ingest/github.ts";
 import { buildContext, type AuthorityInputs } from "../ingest/context.ts";
 import { loadPullRequestComments, loadPullRequestCommits } from "../ingest/github.ts";
@@ -50,6 +54,8 @@ export type CiResult = {
   pr?: number;
   headSha?: string;
   isolation?: Isolation;
+  /** Verification runs only: whether the application answers and its declared accounts can sign in. */
+  availability?: Availability;
   run?: RunReport;
 };
 
@@ -77,7 +83,7 @@ export function logTail(log: string, maxLines = 60, maxChars = 300): string[] {
     .split(/\r?\n/)
     .filter((line) => line.trim() !== "")
     .slice(-maxLines)
-    .map((line) => `app| ${line.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, maxChars)}`);
+    .map((line) => `app| ${redact(line.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")).slice(0, maxChars)}`);
 }
 
 /** A request may tighten the configured limits. It can never loosen them. */
@@ -184,6 +190,37 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     result.reason = reason;
     await mkdir(options.outDir, { recursive: true });
     await writeFile(path.join(options.outDir, "ci-result.json"), JSON.stringify(result, null, 2));
+    // What may leave this machine by default: a redacted summary, the redacted
+    // diagnostics, and the reduced, redacted input of the report stage.
+    // Everything else in the output directory stays here.
+    const open = path.join(options.outDir, "public");
+    await mkdir(open, { recursive: true });
+    const assessment = result.run ? assess(result.run) : undefined;
+    await writeFile(
+      path.join(open, "summary.json"),
+      JSON.stringify(
+        {
+          status,
+          reason: reason === undefined ? undefined : redact(reason),
+          repo: result.repo,
+          pr: result.pr,
+          headSha: result.headSha,
+          isolation: result.isolation,
+          availability: result.availability,
+          readiness: assessment ? headline(assessment) : undefined,
+          requirements: assessment?.counts,
+          usage: result.run?.usage ? { estimatedUsd: result.run.usage.estimatedUsd, minutes: result.run.usage.minutes, total: result.run.usage.total } : undefined,
+        },
+        null,
+        2,
+      ),
+    );
+    await writeFile(path.join(open, "report-input.json"), JSON.stringify(publicResult(result), null, 2));
+    if (result.run) {
+      const diagnostics = buildDiagnostics(result.run);
+      await writeFile(path.join(open, "diagnostics.json"), JSON.stringify(diagnostics, null, 2));
+      await writeFile(path.join(open, "diagnostics.md"), renderDiagnostics(diagnostics));
+    }
     return result;
   };
 
@@ -252,9 +289,14 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
       if (refused) return finish("error", refused);
       const declared = await loadManifest(path.join(options.incoming, "context", "releaseproof.yml")).catch(() => null);
       if (!declared?.start) return finish("error", "The application's manifest is not valid or has no start section.");
-      await startSandbox({ start: declared.start, sha: meta.headSha });
+      const started = await startSandbox({ start: declared.start, sha: meta.headSha });
       result.isolation = await probeIsolation(declared.start);
       if (!result.isolation.ok) return finish("error", "The sandbox isolation check failed.");
+      // Does it answer, and can the accounts its manifest declares sign in? No model is involved.
+      result.availability = await checkAvailability({ ...declared, baseUrl: started.baseUrl }, path.join(options.outDir, "availability"));
+      if (!result.availability.ok) {
+        return finish("error", `The application started but is not usable: first page HTTP ${result.availability.status}; ${result.availability.accounts.map((a) => `${a.alias}: ${a.outcome}`).join(", ") || "no account declared"}.`);
+      }
       let second = "";
       if (declared.start.instances === "per-scenario") {
         const extra = await startInstance({ start: declared.start, sha: meta.headSha, label: "verify-2" });
@@ -263,7 +305,7 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
         if (problems.length > 0) return finish("error", `A second application container was not isolated as required: ${problems.slice(0, 3).join("; ")}`);
         second = " A second, separate container started with the same settings.";
       }
-      return finish("skipped", `Verification only: the application was built from commit ${meta.headSha.slice(0, 12)}, started, and passed the isolation check.${second} No ticket was read and no model was called.`);
+      return finish("skipped", `Verification only: the application was built from commit ${meta.headSha.slice(0, 12)}, started, and passed the isolation check. Its first page answered with HTTP ${result.availability.status}${result.availability.accounts.length ? `, and the declared account${result.availability.accounts.length === 1 ? "" : "s"} (${result.availability.accounts.map((a) => a.alias).join(", ")}) signed in` : ""}.${second} No ticket was read and no model was called.`);
     }
 
     const key = TICKET_KEY.exec(pullRequest.title)?.[0];

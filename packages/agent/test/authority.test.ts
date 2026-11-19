@@ -523,7 +523,11 @@ test("Jira Cloud ingestion keeps identities, reads every comment, stays on the s
   const commentTrust = context.sources.filter((s) => s.kind === "ticket-comment").map((s) => s.trust);
   assert.equal(commentTrust.filter((t) => t === "authoritative").length, 1);
   assert.equal(commentTrust.filter((t) => t === "unverified").length, 129);
-  assert.match(context.sources.find((s) => s.id === "T3.130")!.origin, /comment 2129 by Owner \(acc-owner\)/);
+  const last = context.sources.find((s) => s.id === "T3.130")!;
+  // The public description says what the author is to this run, not who they are; the identity is kept apart.
+  assert.match(last.origin, /comment 2129 by a listed requirement owner/);
+  assert.doesNotMatch(last.origin, /Owner \(|acc-owner/);
+  assert.equal(last.identity, "Owner (acc-owner)");
   assert.doesNotMatch(JSON.stringify(context), new RegExp(token));
   assert.equal(normaliseIssue({ key: "K-1", fields: {} }).comments.length, 0);
 });

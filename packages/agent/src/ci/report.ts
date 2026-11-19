@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { authorityLines } from "../report/authority.ts";
 import { failurePatterns } from "../report/patterns.ts";
+import { redact } from "../report/diagnostics.ts";
 import { assess, headline, READINESS_LABEL } from "../report/readiness.ts";
 import { MODES } from "../report/run.ts";
 import type { CiResult } from "./run.ts";
@@ -153,6 +154,26 @@ export const ReportInput = z.object({
     .optional(),
 });
 type ReportInput = z.infer<typeof ReportInput>;
+
+// Values that identify commits and changes. They are long and opaque by
+// nature, are not secret, and the report needs them exact.
+const EXACT = new Set(["headSha", "hash", "commit", "protectedRevision", "repo", "deployedSha"]);
+
+function redactDeep(value: unknown, key?: string): unknown {
+  if (typeof value === "string") return key !== undefined && EXACT.has(key) ? value : redact(value);
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v, key));
+  if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactDeep(v, k)]));
+  return value;
+}
+
+/**
+ * The part of a result that may be handed on as an artifact: only the fields
+ * the report renders (so no step records, screenshots, page content or
+ * application log), with every text redacted.
+ */
+export function publicResult(raw: unknown): ReportInput {
+  return redactDeep(ReportInput.parse(raw)) as ReportInput;
+}
 
 export type Rendered = { conclusion: "success" | "failure" | "neutral"; title: string; body: string };
 

@@ -393,24 +393,44 @@ jobs:
           path: previous
           key: releaseproof-pr-${{ needs.build.outputs.pr }}-${{ github.run_id }}
 
-      - name: Store evidence
-        if: always()
+      # By default only what was written for public reading leaves the runner:
+      # a redacted summary and redacted diagnostics. Screenshots, step
+      # records, the application's log and browser traces do not. An artifact
+      # of a public repository can be downloaded by any signed-in user.
+      - name: Store sanitised evidence
+        if: always() && vars.RELEASEPROOF_FULL_EVIDENCE != 'on'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: releaseproof-evidence
-          # Browser traces are left out: they record typed values.
+          path: |
+            out/public/summary.json
+            out/public/diagnostics.md
+            out/public/diagnostics.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      # Only where access to artifacts is controlled, such as a private
+      # repository. Set by a repository variable, never by a request.
+      - name: Store full evidence (access-controlled repositories only)
+        if: always() && vars.RELEASEPROOF_FULL_EVIDENCE == 'on'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: releaseproof-evidence
+          # Browser traces are left out even here: they record typed values.
           path: |
             out
             !out/**/trace.zip
           retention-days: 14
           if-no-files-found: warn
 
+      # The report job gets only the fields it renders, redacted: no step
+      # records, no page content, no screenshots.
       - name: Hand the result to the report job
         if: steps.run.outputs.produced == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: releaseproof-result
-          path: out/ci-result.json
+          path: out/public/report-input.json
           retention-days: 14
           if-no-files-found: error
 
@@ -455,5 +475,5 @@ jobs:
           # run's summary and its evidence, and nothing is posted there.
           POST: ${{ needs.build.outputs.external == 'true' && '--summary-only' || '' }}
         run: |
-          npx tsx packages/agent/src/ci/cli.ts report --result "$GITHUB_WORKSPACE/result/ci-result.json" --run-url "$RUN_URL" $POST
+          npx tsx packages/agent/src/ci/cli.ts report --result "$GITHUB_WORKSPACE/result/report-input.json" --run-url "$RUN_URL" $POST
           cat "$GITHUB_WORKSPACE/result/comment.md" >> "$GITHUB_STEP_SUMMARY"

@@ -43,6 +43,12 @@ export type SourceRecord = {
   thread?: number;
   /** When the text was last written, as the ticket system reports it. */
   writtenAt?: string;
+  /**
+   * Who wrote it, as the ticket system identifies them: display name and
+   * account id. Kept apart from `origin`, which is shown in public reports,
+   * and written only to the audit trail.
+   */
+  identity?: string;
 };
 
 export const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -206,7 +212,8 @@ export function buildSources(input: SourceInputs): SourceSet {
       id: `T3.${index + 1}`,
       kind: "ticket-comment",
       trust: owner ? "authoritative" : "unverified",
-      origin: `${where}: comment ${comment.id ?? index + 1} by ${comment.author}${comment.authorId ? ` (${comment.authorId})` : ""}${comment.created ? ` at ${comment.created}` : ""}`,
+      origin: `${where}: comment ${comment.id ?? index + 1} by ${owner ? "a listed requirement owner" : "someone who is not a listed requirement owner"}${comment.created ? ` at ${comment.created}` : ""}`,
+      identity: `${comment.author}${comment.authorId ? ` (${comment.authorId})` : ""}`,
       basis,
       text: comment.body,
       thread: index + 1,
