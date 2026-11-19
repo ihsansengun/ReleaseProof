@@ -45,6 +45,13 @@ Notes:
 |---|---|---|---|---|---|---|---|
 | 17 Nov | Shop and time-off, clean and seeded-bug builds | bridge | 10 | 10 of 10 | 0 | 0 | [runs](results/2026-11-17/README.md) |
 
+## Model routing
+
+| Date | Configuration | Builds | Defects detected | False-positive scenarios | Cost | Record |
+|---|---|---|---|---|---|---|
+| 19 Nov | Opus 5.5 everywhere (baseline) | time-off and shop, fixed and defective | 5 of 5 | 0 | $6.88 | [live](results/2026-11-19-live/README.md), [shop defects](results/2026-11-19-shop-defects/README.md) |
+| 19 Nov | Sonnet 5.5 analysis and planning at medium effort, Haiku 5.5 execution, Sonnet escalation | the same four | 3 of 5 | 3 | $1.13 | [benchmark A](results/2026-11-19-routing-benchmark/README.md) |
+
 ## What the history does not yet contain
 
 - A run that reaches Ready.
