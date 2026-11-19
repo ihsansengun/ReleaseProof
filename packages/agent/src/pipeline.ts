@@ -149,7 +149,7 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
       docs: context.docs.map((d) => d.path),
       changedFiles: context.pullRequest.files.map((f) => f.path),
       omitted: context.omitted,
-      sources: context.sources.map((s) => ({ id: s.id, kind: s.kind, trust: s.trust, origin: s.origin, basis: s.basis, sha256: s.sha256 })),
+      sources: context.sources.map((s) => ({ id: s.id, kind: s.kind, trust: s.trust, origin: s.origin, basis: s.basis, sha256: s.sha256, identity: s.identity })),
       owners: options.authority.authority.requirementOwners,
       docChanges: context.docChanges,
       approvals: context.approvals,

@@ -16,7 +16,7 @@ export type AuditTrail = {
     /** Fingerprint of every authoritative source. A different value means the requirements changed. */
     fingerprint?: string;
   };
-  sources: { id: string; kind: string; trust: string; origin: string; basis: string; sha256?: string }[];
+  sources: { id: string; kind: string; trust: string; origin: string; basis: string; sha256?: string; identity?: string }[];
   amendments: {
     approved: { path: string; changeHash: string; approver: string; approverId: number; commentId: number; commit: string; linesAdded: number; linesRemoved: number }[];
     notApproved: { path: string; kind: string; changeHash: string; linesAdded: number; linesRemoved: number }[];
@@ -171,7 +171,7 @@ export function renderAuditTrail(trail: AuditTrail): string {
   for (const notice of trail.authority.notices) lines.push(`- **Note:** ${cell(notice, 500)}`);
 
   lines.push("", "## 1. Sources", "", "| Id | Trust | Kind | Origin | Why | SHA-256 of the text |", "|---|---|---|---|---|---|");
-  for (const s of trail.sources) lines.push(`| ${cell(s.id)} | ${cell(s.trust)} | ${cell(s.kind)} | ${cell(s.origin)} | ${cell(s.basis)} | \`${cell((s.sha256 ?? "").slice(0, 16))}\` |`);
+  for (const s of trail.sources) lines.push(`| ${cell(s.id)} | ${cell(s.trust)} | ${cell(s.kind)} | ${cell(s.origin)}${s.identity ? ` — ${cell(s.identity)}` : ""} | ${cell(s.basis)} | \`${cell((s.sha256 ?? "").slice(0, 16))}\` |`);
 
   lines.push("", "## 2. Amendments", "");
   if (trail.amendments.approved.length + trail.amendments.notApproved.length + trail.amendments.commands.length === 0) lines.push("None: the pull request changes no requirement document.");

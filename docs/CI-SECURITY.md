@@ -47,6 +47,17 @@ cannot write there, and no other credential is given to it). A request
 started by a pull-request event that names another repository is refused
 before anything is fetched.
 
+**What leaves the runner.** By default only three files written for public
+reading are uploaded: a redacted summary and the redacted diagnostics (JSON
+and Markdown). Screenshots, step records, the application's log, the audit
+trail and browser traces stay on the runner and are discarded with it. The
+report job receives only the fields it renders, redacted. An artifact of a
+public repository can be downloaded by any signed-in user, so the artifact
+is not treated as a private store. The repository variable
+`RELEASEPROOF_FULL_EVIDENCE=on` uploads the full evidence (still without
+browser traces); it is meant for repositories where access is controlled,
+and a request cannot set it.
+
 ### Stage 1: request
 
 Writes the pull request number and any requested limits to an artifact.

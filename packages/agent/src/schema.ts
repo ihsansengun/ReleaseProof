@@ -487,7 +487,7 @@ export type RunReport = {
     changedFiles: string[];
     omitted: string[];
     /** Every source with its trust level and origin; texts are in context.json. */
-    sources?: { id: string; kind: string; trust: Trust; origin: string; basis: string; sha256?: string }[];
+    sources?: { id: string; kind: string; trust: Trust; origin: string; basis: string; sha256?: string; identity?: string }[];
     /** The requirement owners in force for this run, as read from the protected revision. */
     owners?: Authority["requirementOwners"];
     docChanges?: DocChange[];

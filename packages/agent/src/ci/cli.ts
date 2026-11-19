@@ -106,6 +106,7 @@ async function main(): Promise<number> {
     });
     console.log(`${result.status}${result.reason ? `: ${result.reason}` : ""}`);
     if (result.isolation) console.log(`isolation: ${JSON.stringify(result.isolation)}`);
+    if (result.availability) console.log(`availability: ${JSON.stringify(result.availability)}`);
     if (result.run?.usage) {
       console.log(`usage: ${JSON.stringify(result.run.usage.total)} about $${result.run.usage.estimatedUsd}`);
       for (const [stage, u] of Object.entries(result.run.usage.byStage)) console.log(`usage in ${stage}: ${JSON.stringify(u)}`);
