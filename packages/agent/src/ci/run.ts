@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -8,6 +8,7 @@ import { Budget, DEFAULT_PRICES, type Limits } from "../budget.ts";
 import { ApiDriver, type Driver } from "../drivers/driver.ts";
 import { RecordedDriver } from "../drivers/recorded.ts";
 import { loadManifest } from "../env.ts";
+import { hostEnv } from "../hostenv.ts";
 import { loadPullRequest } from "../ingest/github.ts";
 import { loadTicket } from "../ingest/jira.ts";
 import { retestRun, runPipeline, ticketHash } from "../pipeline.ts";
@@ -117,6 +118,18 @@ export type CiRunOptions = {
   concurrency: number;
 };
 
+/** The first symbolic link (or other non-regular entry) under a directory, if any. */
+export async function firstSymlink(dir: string): Promise<string | undefined> {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const inner = await firstSymlink(full);
+      if (inner) return inner;
+    } else if (!entry.isFile()) return full;
+  }
+  return undefined;
+}
+
 const TICKET_KEY = /\b[A-Z][A-Z0-9]+-\d+\b/;
 
 /**
@@ -134,7 +147,17 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     return result;
   };
 
+  // Credentials are taken out of this process's environment as soon as they
+  // are read. Everything started later (container client, browser, probes)
+  // also gets an allow-listed environment, so this is the second of two locks.
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+
   try {
+    // The hand-off is plain files. A link in it could point anywhere on this
+    // machine, which holds the model key, so its presence ends the run.
+    const link = await firstSymlink(options.incoming);
+    if (link) return finish("error", "The build's hand-off contains a symbolic link; nothing was read from it.");
     const parsed = Meta.safeParse(JSON.parse(await readFile(path.join(options.incoming, "meta.json"), "utf8")));
     if (!parsed.success) return finish("error", "The build stage's description of what it built is malformed.");
     const meta = parsed.data;
@@ -155,6 +178,7 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     }
 
     const pullRequest = await loadPullRequest(options.repo, meta.pr);
+    delete process.env.GITHUB_TOKEN;
     if (pullRequest.headSha !== meta.headSha) {
       return finish("skipped", "The pull request has moved on to a newer commit since this build started.");
     }
@@ -173,14 +197,15 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     const ticket = await loadTicket(ticketFile);
 
     // The image is loaded and run; it is never unpacked or executed on the host.
-    await run("docker", ["load", "--input", path.join(options.incoming, "image.tar")], { timeout: 10 * 60_000 });
+    await run("docker", ["load", "--input", path.join(options.incoming, "image.tar")], { timeout: 10 * 60_000, env: hostEnv(process.env) });
     const label = (
-      await run("docker", ["inspect", "--format", '{{index .Config.Labels "releaseproof.sha"}}', IMAGE])
+      await run("docker", ["inspect", "--format", '{{index .Config.Labels "releaseproof.sha"}}', IMAGE], { env: hostEnv(process.env) })
     ).stdout.trim();
     if (label !== meta.headSha) return finish("error", "The application image is not labelled with the pull request's commit.");
 
     const manifestFile = path.join(options.incoming, "context", "releaseproof.yml");
-    const declared = await loadManifest(manifestFile);
+    const declared = await loadManifest(manifestFile).catch(() => null);
+    if (!declared) return finish("error", "The application's manifest is not valid.");
     if (!declared.start) return finish("skipped", "The application's manifest has no start section.");
     const { baseUrl } = await startSandbox({ start: declared.start, sha: meta.headSha });
     // The manifest's own address is ignored: the application is wherever the sandbox put it.
@@ -198,13 +223,14 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     const budget = new Budget(effective.limits, DEFAULT_PRICES);
     let driver: Driver;
     const recording = path.join(options.recordingsDir, `${key}.json`);
-    const choice = driverChoice(process.env.ANTHROPIC_API_KEY, existsSync(recording));
+    const choice = driverChoice(apiKey, existsSync(recording));
     if (choice === "live") {
       const model = process.env.RELEASEPROOF_MODEL || "claude-opus-5-5";
       const fallbacks = process.env.RELEASEPROOF_FALLBACKS !== "off" && !effective.disableFallbacks;
       console.log(`driver: live model ${model} (an API key is configured); fallbacks ${fallbacks ? "on" : "off"}`);
       if (effective.executorModel) console.log(`executor model for this run: ${effective.executorModel}`);
       driver = new ApiDriver({
+        apiKey,
         model,
         executorModel: effective.executorModel,
         effort: (process.env.RELEASEPROOF_EFFORT || "medium") as "low" | "medium" | "high",

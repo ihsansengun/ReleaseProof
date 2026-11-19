@@ -1,9 +1,27 @@
-import { readFile } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { AppMap, Doc, Manifest, PullRequest, RunContext, Ticket } from "../schema.ts";
 
 const DOC_BUDGET = 60_000;
 const DIFF_BUDGET = 80_000;
+
+/**
+ * Resolves a document the manifest lists, or says why it is refused. The
+ * manifest and the files come from the pull request: a listed path may only
+ * be a regular file next to or below the manifest, and may not be, or pass
+ * through, a symbolic link that leads elsewhere on the machine reading it.
+ */
+export async function resolveDoc(root: string, relative: string): Promise<{ file: string } | { refused: string }> {
+  const base = await realpath(path.resolve(root)).catch(() => path.resolve(root));
+  const file = path.resolve(base, relative);
+  if (!file.startsWith(base + path.sep)) return { refused: "outside the application directory, refused" };
+  const stat = await lstat(file).catch(() => null);
+  if (!stat) return { refused: "listed in the manifest but not readable" };
+  if (stat.isSymbolicLink() || !stat.isFile()) return { refused: "not a regular file, refused" };
+  const real = await realpath(file).catch(() => "");
+  if (real !== file) return { refused: "reached through a symbolic link, refused" };
+  return { file };
+}
 
 /**
  * Assembles what was read, within a size budget. Anything that does not fit
@@ -20,15 +38,12 @@ export async function buildContext(
   const docs: Doc[] = [];
   let docChars = 0;
   for (const relative of manifest.docs) {
-    const root = path.resolve(path.dirname(manifestFile));
-    const file = path.resolve(root, relative);
-    // The manifest comes from the pull request. It may only name files next
-    // to or below itself, never elsewhere on the machine reading them.
-    if (file !== root && !file.startsWith(root + path.sep)) {
-      omitted.push(`document ${relative} (outside the application directory, refused)`);
+    const resolved = await resolveDoc(path.dirname(manifestFile), relative);
+    if ("refused" in resolved) {
+      omitted.push(`document ${relative} (${resolved.refused})`);
       continue;
     }
-    const text = await readFile(file, "utf8").catch(() => null);
+    const text = await readFile(resolved.file, "utf8").catch(() => null);
     if (text === null) {
       omitted.push(`document ${relative} (listed in the manifest but not readable)`);
     } else if (docChars + text.length > DOC_BUDGET) {

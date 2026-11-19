@@ -63,20 +63,44 @@ It then loads the image and starts it with:
 - limits of 1 GB memory, 1.5 CPUs and 256 processes;
 - only the variables the manifest lists, plus the commit.
 
-**The isolation is probed on every run**, from inside the container: the
-variable names it can see, whether it can reach the internet, whether it can
-write to its filesystem, and its user id. If any probe fails, nothing is
-tested and the run reports an error. The result of the probe is in every
-report.
+**The isolation is checked on every run, from the trusted side only.**
+Nothing from the application image is run or believed for this. The check
+reads the container engine's record of the container (read-only root, no
+capabilities, no privilege escalation, the isolated network and nothing else,
+no mounts, limits, user, variable names), reads the kernel's record of the
+application's main process on the host (user id, effective capabilities,
+`NoNewPrivs`), tries to reach the internet and the cloud metadata addresses
+with the engine's own Node placed in the container's network namespace, and
+asks the engine to write a file to the container's root. If any part fails
+or cannot be carried out, nothing is tested and the run reports an error.
+The result is in every report.
 
 The agent talks to the application only over HTTP to the container's
 address. The browser refuses every other origin. The manifest's own base URL
-is ignored. Documents are read only from the handed-over context directory,
-and a document path that points outside it is refused.
+is ignored. Documents are read only from the handed-over context directory:
+a listed document must be a regular file whose real path is inside that
+directory, so neither `..` nor a symbolic link leads out of it, and a
+hand-off that contains any symbolic link is refused outright.
 
-The model key is in the environment of one step. It is never passed to the
-container, and fixture passwords are replaced by placeholders before any
-text reaches the model or a stored file.
+**Credentials.** The model key is given to one step. The engine reads it
+once, hands it to the API client, and removes it (and the GitHub token, once
+the pull request has been read) from its own environment. Every process the
+engine starts (the browser, the container client, the probes) gets an
+explicit allow-list of variables (`hostenv.ts`): path, home, locale,
+temporary directory and the container client's settings. Nothing else is
+passed on, so no child process holds a credential to leak. The container's
+environment is only what the explicit `--env` arguments say. Fixture
+passwords are replaced by placeholders before any text reaches the model or
+a stored file; that redaction is a second measure, not the first.
+
+**Concurrency.** QA runs are grouped per pull request at the job level, by a
+key computed in a first job that holds no secret (`ci/qa-concurrency.mjs`).
+For a build started by a pull-request event the number is GitHub's record of
+the event; for a manual build it is the maintainer's input. A newer build of
+the same pull request replaces an older run; runs for different pull
+requests never share a group; and a run that the gate skips never joins one.
+There is no workflow-level group, because that is joined by every completed
+build before any gate.
 
 ### Stage 3: report
 
