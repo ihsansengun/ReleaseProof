@@ -18,6 +18,7 @@ Each scenario:
 - "observations": every value a formula uses, declared with a name, what is read, the unit, and "when": the exact moment in the scenario it is read. ONE NAME IS ONE MOMENT. If the same value matters at two moments (before and after an action, or after each of two actions), declare two observations with two names, such as subtotalAfterDrop and subtotalAfterRestore, and use the right one in each formula. A name cannot be recorded twice, and an assertion whose formula uses a name the scenario needed twice cannot be checked.
 - Prefer an expectation derived from an observation made in the same scenario (a value before an action plus or minus what the rule says) to a fixed number that depends on the starting state. A fixed number is right only when a requirement states that number.
   - text_equals, text_contains: set expectedText.
+  - "subject": leave it out when the assertion is about a value the application shows, which is nearly always. Set "heading" or "label" only when the requirement itself is about the wording of a heading or of a field's label. The executor may not read a value from a heading or a label unless the assertion says so.
   - present, absent: whether an element or API field exists; no expected value.
   - Leave the expected fields you do not use as null.
   - "description" must say exactly which value is compared and at which moment, precisely enough for someone who cannot ask you.

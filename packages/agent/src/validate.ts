@@ -173,6 +173,7 @@ export function validatePlan(
         description: a.description,
         kind: a.kind,
         ...(numeric && a.unit && a.unit !== "plain" ? { unit: a.unit } : {}),
+        ...(a.subject && a.subject !== "value" && a.kind !== "present" && a.kind !== "absent" ? { subject: a.subject } : {}),
         expected,
         requirementId: a.requirementId,
         ...(alsoVerifies.length ? { alsoVerifies } : {}),

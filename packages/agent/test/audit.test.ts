@@ -112,6 +112,6 @@ test("the rendered trail carries hostile text as text and states approvals preci
   assert.doesNotMatch(out, /<script>/);
   assert.match(out, /&lt;script&gt;/);
   assert.match(out, /\*\*Approved:\*\* change `cccccccccccccccc` to `README\.md` .* by product-owner \(GitHub user 1001\), comment 500, for commit `aaaaaaaaaaaa`/);
-  assert.match(out, /\| S1\/A1 held items A1 \| R1 from T2: "A member can hold at most five items\." \| `5` \(planned: 5\) \| `6` \| \*\*MISMATCH\*\*; scenario failed; repeat without a model: reproduced \| 2 steps/);
+  assert.match(out, /\| S1\/A1 held items A1 \| R1 from T2: "A member can hold at most five items\." \| `5` \(planned: 5\) \| `6` \| \*\*MISMATCH\*\*; scenario failed; repeatability \(same locators, no model\): reproduced \| 2 steps/);
   assert.match(out, /## 1\. Sources[\s\S]*## 2\. Amendments[\s\S]*## 3\. Requirements[\s\S]*## 4\. Assertions and evidence[\s\S]*## 5\. Conflicts and open questions/);
 });
