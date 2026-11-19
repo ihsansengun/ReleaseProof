@@ -89,7 +89,7 @@ test("a secret in the engine's environment does not reach the application contai
     assert.doesNotMatch(docker("inspect", "releaseproof-app"), new RegExp(SECRET));
     const pids = docker("top", "releaseproof-app", "-eo", "pid").split("\n").slice(1).map((p) => p.trim());
     assert.ok(pids.length > 0);
-    for (const pid of pids) assert.doesNotMatch(readFileSync(`/proc/${pid}/environ`, "utf8"), new RegExp(SECRET), `pid ${pid}`);
+    for (const pid of pids) assert.doesNotMatch(asRoot("cat", `/proc/${pid}/environ`), new RegExp(SECRET), `pid ${pid}`);
     assert.deepEqual(processesHolding(SECRET).filter((c) => /server\.mjs|docker/.test(c)), []);
   } finally {
     await stopSandbox();
