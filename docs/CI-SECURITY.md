@@ -71,7 +71,13 @@ no mounts, limits, user, variable names), reads the kernel's record of the
 application's main process on the host (user id, effective capabilities,
 `NoNewPrivs`), tries to reach the internet and the cloud metadata addresses
 with the engine's own Node placed in the container's network namespace, and
-asks the engine to write a file to the container's root. If any part fails
+asks the engine to write a file to the container's root. "The internet"
+includes the machine running the sandbox: an internal network removes the
+route out, but on some engine versions a container can still reach the host's
+own address on the bridge. A firewall rule drops new connections from the
+sandbox bridge to the host (replies to the engine's own connections still
+pass), and the check opens a listener on the host and confirms it cannot be
+reached from the container's network namespace. If any part fails
 or cannot be carried out, nothing is tested and the run reports an error.
 The result is in every report.
 

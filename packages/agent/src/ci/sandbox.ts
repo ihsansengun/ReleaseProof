@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -18,6 +20,12 @@ const docker = (args: string[], timeout = 120_000) =>
 export const IMAGE = "releaseproof-app";
 const CONTAINER = "releaseproof-app";
 const NETWORK = "releaseproof-net";
+// The network's bridge gets a fixed name so a firewall rule can refer to it.
+const BRIDGE = "rpsandbox0";
+// New connections arriving on the sandbox bridge and addressed to this machine
+// are dropped. Replies to connections the engine opened are not "new", so the
+// engine can still talk to the application.
+const HOST_RULE = ["INPUT", "-i", BRIDGE, "-m", "conntrack", "--ctstate", "NEW,INVALID", "-j", "DROP"];
 const USER = "10001";
 
 type Start = NonNullable<Manifest["start"]>;
@@ -51,6 +59,8 @@ export type Isolation = {
   /** What the container engine says the container was started with. Does not rely on anything inside the image. */
   configuration: string[];
   outboundNetwork: "blocked" | "REACHABLE";
+  /** Addresses the trusted-side network test got an answer from. Empty when blocked. */
+  reached: string[];
   rootFilesystem: "read-only" | "WRITABLE";
   user: string;
   ok: boolean;
@@ -66,8 +76,12 @@ const BASE_ENV = ["PATH", "HOSTNAME", "HOME", "NODE_VERSION", "YARN_VERSION", "N
 export async function startSandbox(options: { start: Start; sha: string }): Promise<{ baseUrl: string }> {
   const { start, sha } = options;
   await stopSandbox();
-  // An internal network has no gateway to the outside world.
-  await docker(["network", "create", "--internal", NETWORK]);
+  // An internal network has no gateway to the outside world. Depending on the
+  // container engine's version it can still reach this machine's own address
+  // on the bridge, so that is closed separately.
+  await docker(["network", "create", "--internal", "--opt", `com.docker.network.bridge.name=${BRIDGE}`, NETWORK]);
+  const rule = await trusted("iptables", ["-I", HOST_RULE[0]!, "1", ...HOST_RULE.slice(1)]);
+  if (!rule.ok) throw new Error(`The sandbox network could not be closed off from this machine: ${rule.out.split("\n")[0]!.slice(0, 160)}`);
   const env = { ...start.env, ...(start.commitEnv ? { [start.commitEnv]: sha } : {}) };
   await docker([
     "run", "--detach", "--name", CONTAINER,
@@ -114,6 +128,17 @@ async function trusted(command: string, args: string[], timeout = 30_000): Promi
   );
 }
 
+/** This machine's addresses as a container might reach them: the sandbox bridge and the default bridge. */
+async function hostAddressesFor(): Promise<string[]> {
+  const gateway = (name: string) =>
+    docker(["network", "inspect", name, "--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}"]).then(
+      (r) => r.stdout.trim().split(/\s+/).filter((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a)),
+      () => [] as string[],
+    );
+  const sandbox = await gateway(NETWORK);
+  return sandbox.length === 0 ? [] : [...sandbox, ...(await gateway("bridge"))];
+}
+
 /** Reads the fields of /proc/<pid>/status that say who a process is and what it may do. */
 export function processFacts(status: string): { uid: string; capabilities: string; noNewPrivileges: boolean } {
   const field = (name: string) => new RegExp(`^${name}:\\s*(.*)$`, "m").exec(status)?.[1]?.trim() ?? "";
@@ -125,7 +150,7 @@ export function processFacts(status: string): { uid: string; capabilities: strin
 }
 
 const NETWORK_PROBE = `
-const tries = ["https://example.com", "http://1.1.1.1", "http://169.254.169.254/", "http://168.63.129.16/"];
+const tries = ["https://example.com", "http://1.1.1.1", "http://169.254.169.254/", "http://168.63.129.16/", ...process.argv.slice(1)];
 Promise.all(tries.map((u) => fetch(u, { signal: AbortSignal.timeout(4000), redirect: "manual" }).then(() => u, () => null)))
   .then((r) => console.log(JSON.stringify(r.filter(Boolean))));
 `;
@@ -161,11 +186,25 @@ export async function probeIsolation(start: Start): Promise<Isolation> {
   if (pid && !facts.noNewPrivileges) configuration.push("the application process may gain privileges");
 
   // Outbound network, tried with this engine's own Node inside the container's network namespace.
+  // "Outside" includes this machine: a listener is opened here for the length
+  // of the test, and the probe tries it on every address the container could
+  // use for the host (the sandbox bridge and the engine's default bridge).
   let outboundNetwork: Isolation["outboundNetwork"] = "REACHABLE";
+  let reached: string[] = [];
   if (pid) {
-    const attempt = await trusted("nsenter", ["--target", String(pid), "--net", process.execPath, "-e", NETWORK_PROBE]);
+    const listener = createServer((_request, response) => response.end("host"));
+    await new Promise<void>((resolve) => listener.listen(0, "0.0.0.0", resolve));
+    const port = (listener.address() as AddressInfo).port;
+    const hostAddresses = await hostAddressesFor();
+    if (hostAddresses.length === 0) configuration.push("this machine's address on the sandbox network could not be determined");
+    const attempt = await trusted("nsenter", [
+      "--target", String(pid), "--net", process.execPath, "-e", NETWORK_PROBE,
+      ...hostAddresses.map((address) => `http://${address}:${port}/`),
+    ]);
+    listener.close();
     try {
-      if (attempt.ok && (JSON.parse(attempt.out) as string[]).length === 0) outboundNetwork = "blocked";
+      if (attempt.ok) reached = (JSON.parse(attempt.out) as string[]).map((url) => String(url).slice(0, 60));
+      if (attempt.ok && reached.length === 0) outboundNetwork = "blocked";
     } catch {
       // unreadable result: stays REACHABLE, which fails the check
     }
@@ -188,6 +227,7 @@ export async function probeIsolation(start: Start): Promise<Isolation> {
     unexpectedEnvironment,
     configuration,
     outboundNetwork,
+    reached,
     rootFilesystem,
     user,
     ok:
@@ -280,4 +320,6 @@ export async function sandboxLogs(lines = 200): Promise<string> {
 export async function stopSandbox(): Promise<void> {
   await docker(["rm", "--force", CONTAINER]).catch(() => {});
   await docker(["network", "rm", NETWORK]).catch(() => {});
+  // Remove every copy of the firewall rule; "-D" fails once none is left.
+  for (let i = 0; i < 5 && (await trusted("iptables", ["-D", ...HOST_RULE])).ok; i++);
 }
