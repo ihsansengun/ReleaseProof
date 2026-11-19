@@ -83,3 +83,15 @@ distinguish a defect from a consistently wrong comparison.
   refusing document paths outside the application directory.
 - Recording corrected before use: two time-off scenarios replaced with their
   post-fix re-runs, three date-relative ones removed.
+
+## Live runs in CI (18–19 November 2026)
+
+- Engine or workflow changes needed to make the live API path work: none.
+  The first request to the live API was accepted as written.
+- Human interventions in the two live runs: none.
+- One run intended to be live used recorded responses because the API key
+  secret was not yet present; it was reported as such and not retried until
+  the secret was added.
+- Fixture added for the defect-detection run: branch
+  `claude/defect-timeoff-cancel` (pull request #5), the time-off feature
+  with its fix reverted. Not to be merged.
