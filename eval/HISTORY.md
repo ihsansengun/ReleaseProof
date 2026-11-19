@@ -26,6 +26,7 @@ unverified or dropped) to each run, whatever its Check showed at the time.
 | 18 Nov | Time-off, LEAVE-58 | PR #2 fixed, `2151181` | live, in CI | `94afc7a` | 20 of 23 | 4 / 0 / 0 | 6 | 7 | none planted, none reported | 0 | 780,996 | $1.28 | 10.8 / 68.2 / 111.3 / 111.1 s | none | Incomplete | [live run 1](results/2026-11-19-live/README.md) |
 | 19 Nov | Time-off, LEAVE-58 | PR #5, fix reverted, `9b5e9b1` | live, in CI | `94afc7a` | 18 of 24 | 4 / 2 / 0 | 5 | 6 | 2 of 2 | 0 | 878,742 | $1.54 | 11.9 / 71.5 / 128.0 / 100.1 s | none | Not ready | [live run 2](results/2026-11-19-live/README.md) |
 | 19 Nov | Shop, NWG-342 | PR #1 fixed, `f724b32` | live, in CI | `48d4c3c` | 26 of 33 | 6 / 0 / 0 | 14 | 10 | none planted, none reported | 0 | 1,327,409 | $1.95 | 14.1 / 110.7 / 151.2 / 102.8 s | none | Incomplete | [live run 3](results/2026-11-19-live/README.md) |
+| 19 Nov | Shop, NWG-342 | PR #8, fix reverted, `36d46d4`, 3 planted defects | live, in CI | `795a240` | 31 of 33 (15 verified, 16 failed) | 1 / 7 / 0 | 8 | 8 | 3 of 3 | 0 scenarios, 1 assertion | 1,510,656 | $2.11 | 12.1 / 95.0 / 121.7 / 156.3 s | none; an earlier attempt was cancelled by a workflow bug and not scored | Not ready | [shop defects](results/2026-11-19-shop-defects/README.md) |
 
 Notes:
 
