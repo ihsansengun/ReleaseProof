@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { Budget, DEFAULT_PRICES, stageLimitsFromEnv, type Limits } from "../budget.ts";
-import { describeRouting, routingFromEnv, type Routing } from "../routing.ts";
+import { describeRouting, PRESETS, routingFromEnv, type Routing } from "../routing.ts";
 import { ApiDriver, type Driver } from "../drivers/driver.ts";
 import { RecordedDriver } from "../drivers/recorded.ts";
 import { loadManifest } from "../env.ts";
@@ -55,6 +55,8 @@ export type CiResult = {
   pr?: number;
   headSha?: string;
   isolation?: Isolation;
+  /** What this run's stored evidence consists of. */
+  evidence?: "sanitised" | "full";
   /** Verification runs only: whether the application answers and its declared accounts can sign in. */
   availability?: Availability;
   run?: RunReport;
@@ -68,6 +70,7 @@ const Requested = z
     maxScenarios: z.coerce.number().int().positive().optional().catch(undefined),
     disableFallbacks: z.coerce.string().optional().catch(undefined),
     executorModel: z.string().optional().catch(undefined),
+    routing: z.string().max(40).optional().catch(undefined),
   })
   .catch({});
 
@@ -92,7 +95,7 @@ export function logTail(log: string, maxLines = 60, maxChars = 300): string[] {
 export function tighten(
   base: { limits: Limits; maxScenarios: number },
   requested: unknown,
-): { limits: Limits; maxScenarios: number; disableFallbacks: boolean; executorModel?: string } {
+): { limits: Limits; maxScenarios: number; disableFallbacks: boolean; executorModel?: string; preset?: string } {
   const r = Requested.parse(requested ?? {});
   return {
     limits: {
@@ -103,6 +106,8 @@ export function tighten(
     maxScenarios: Math.min(base.maxScenarios, r.maxScenarios ?? Infinity),
     disableFallbacks: r.disableFallbacks === "true",
     executorModel: r.executorModel && EXECUTOR_MODELS.includes(r.executorModel) ? r.executorModel : undefined,
+    // Only a known preset name survives. Whether it is honoured depends on who started the run.
+    ...(r.routing && Object.hasOwn(PRESETS, r.routing) ? { preset: r.routing } : {}),
   };
 }
 
@@ -186,7 +191,7 @@ const TICKET_KEY = /\b[A-Z][A-Z0-9]+-\d+\b/;
  * pipeline against it. Always returns a result that says what happened.
  */
 export async function ciRun(options: CiRunOptions): Promise<CiResult> {
-  const result: CiResult = { status: "error", repo: options.repo };
+  const result: CiResult = { status: "error", repo: options.repo, evidence: process.env.RELEASEPROOF_FULL_EVIDENCE === "on" ? "full" : "sanitised" };
   const finish = async (status: CiResult["status"], reason?: string) => {
     result.status = status;
     result.reason = reason;
@@ -414,7 +419,11 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
       const fallbacks = process.env.RELEASEPROOF_FALLBACKS !== "off" && !effective.disableFallbacks;
       let routing: Routing;
       try {
-        routing = routingFromEnv(process.env, effective.executorModel ? { execute: effective.executorModel } : {});
+        // A preset is honoured only for a run a maintainer started by hand: a
+        // pull-request event must not be able to choose a dearer configuration.
+        const preset = trigger.event === "workflow_dispatch" ? effective.preset : undefined;
+        if (effective.preset && !preset) console.log(`routing preset "${effective.preset}" ignored: only a manually started run may choose one`);
+        routing = routingFromEnv(process.env, effective.executorModel ? { execute: effective.executorModel } : {}, preset);
       } catch (error) {
         return finish("error", `The model configuration is not valid: ${(error as Error).message} Nothing was tested.`);
       }

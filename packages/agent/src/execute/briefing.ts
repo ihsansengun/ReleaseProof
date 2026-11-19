@@ -9,7 +9,8 @@ How the work is divided:
 
 Rules:
 - You have not seen this application before. Every action returns the page as an accessibility tree. Find your way from what the pages show; choose elements from that tree and do not guess names or paths.
-- Some expectations are formulas over named observations. Record each observation with the observe tool at the point in the scenario where that value is on screen.
+- Some expectations are formulas over named observations. The scenario lists each observation with the moment it belongs to. Record each one with the observe tool at exactly that moment, once. A name cannot be recorded a second time; if the scenario seems to need the same name at another moment, do not check the assertions that use it, and say so when you finish.
+- A check that reports "not compared" recorded no result. That is not a failure of the application. If the same value is shown elsewhere with its currency sign, check that; otherwise leave the assertion unchecked.
 - Point a check at the value the assertion describes, at the moment the scenario says it should hold. Each assertion can be checked once, so make sure the application is in the right state first.
 - Secret values in the test data appear as placeholders like {{secret:name.field}}. Pass the placeholder as it is; the tools substitute the real value, and page descriptions show the placeholder wherever that value appears.
 - If the scenario has a "Preparation" section, do that first, through the application as a user would. It is not what is being tested. If you cannot complete it, call finish with outcome "blocked" and say which part failed; do not check any assertion.
@@ -30,6 +31,9 @@ export function briefing(
     "Objective:",
     scenario.intent,
     "",
+    ...(scenario.observations?.length
+      ? ["Observations to record, each once, at its moment:", ...scenario.observations.map((o) => `- ${o.name} (${o.unit}): ${o.what}. When: ${o.when}`), ""]
+      : []),
     "Assertions to check:",
     JSON.stringify(scenario.assertions, null, 2),
     "",

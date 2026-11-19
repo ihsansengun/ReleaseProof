@@ -59,8 +59,8 @@ test("a failed comparison fails the requirement it rests on, not every requireme
 test("the plan validator keeps only approved requirements in an assertion's extra links", () => {
   const draft: PlanDraft = {
     scenarios: [{
-      id: "S1", title: "t", basis: "requirement", requirementIds: ["R1"], riskIds: [], intent: "i", setup: "", fixtures: [], status: "runnable", blockedReason: "", ambiguityIds: [],
-      assertions: [{ id: "A1", description: "total", kind: "number_equals", expectedNumber: 45, expectedText: null, expectedFormula: null, requirementId: "R1", alsoVerifies: ["R2", "R2", "R1", "R9", "R77"] }],
+      id: "S1", title: "t", basis: "requirement", requirementIds: ["R1"], riskIds: [], intent: "i", setup: "", fixtures: [], observations: [], status: "runnable", blockedReason: "", ambiguityIds: [],
+      assertions: [{ id: "A1", description: "total", kind: "number_equals", expectedNumber: 45, expectedText: null, expectedFormula: null, unit: "plain" as const, requirementId: "R1", alsoVerifies: ["R2", "R2", "R1", "R9", "R77"] }],
     }],
   };
   const { plan, problems } = validatePlan(draft, analysis, Manifest.parse({ baseUrl: "http://localhost:1" }), 5);
@@ -190,10 +190,12 @@ test("a failure can be inspected from the diagnostics alone, and nothing sensiti
     assert.ok(line.length <= 406);
   }
   assert.ok(lines.some((l) => /step 17 check .* FAILED: ::error::expected 45, got 45\.01/.test(l)), "the text is kept, defused by its prefix");
-  // A run in which everything passed has nothing to show.
   const clean = fullRun();
   clean.results[0]!.verdict = "passed";
-  assert.deepEqual(diagnosticLines(buildDiagnostics(clean)), []);
+  // It is recorded all the same, so that the pass can be examined.
+  const passedLines = diagnosticLines(buildDiagnostics(clean));
+  assert.match(passedLines[0]!, /^diag\| S1 passed: /);
+  assert.doesNotMatch(passedLines.join("\n"), /jane\.doe|s3cr3tvalue99/);
 });
 
 test("the pull request report gives the pattern count beside the failures and a column for exercised-only requirements", () => {

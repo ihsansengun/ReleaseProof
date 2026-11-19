@@ -43,6 +43,7 @@ const Stage = z.object({
 /** The parts of a result this stage reads. Anything else in the file is ignored. */
 export const ReportInput = z.object({
   status: z.enum(["completed", "skipped", "error"]),
+  evidence: z.enum(["sanitised", "full"]).optional(),
   reason: z.string().optional(),
   repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/),
   pr: z.number().int().positive().optional(),
@@ -362,10 +363,15 @@ export function render(input: ReportInput, runUrl: string): Rendered {
       "",
     );
   }
-  lines.push(`Full report, steps and screenshots: ${evidence} (kept 14 days).`);
+  // Says what is really there. By default only a redacted record leaves the runner.
+  lines.push(
+    input.evidence === "full"
+      ? `Full report, steps and screenshots: ${evidence} (kept 14 days).`
+      : `Redacted record of every comparison and step, for passed and failed scenarios alike: ${evidence} (kept 14 days), and in the run's job log. Screenshots and unredacted step records are not published.`,
+  );
 
   let body = lines.join("\n");
-  if (body.length > COMMENT_LIMIT) body = `${body.slice(0, COMMENT_LIMIT)}\n\n…shortened; see the full report in the artifact.`;
+  if (body.length > COMMENT_LIMIT) body = `${body.slice(0, COMMENT_LIMIT)}\n\n…shortened; the rest is in the run's job log.`;
   return { conclusion, title, body };
 }
 

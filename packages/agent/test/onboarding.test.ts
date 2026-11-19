@@ -88,7 +88,7 @@ test("an existing account is offered to the planner and reaches the executor as 
 
   // The planner may ask for it like any other test data; an unknown type is still refused.
   const draft = (type: string): PlanDraft => ({
-    scenarios: [{ id: "S1", title: "t", basis: "requirement", requirementIds: [], riskIds: [], intent: "i", setup: " Create a second user. ", fixtures: [{ alias: "owner", type }], status: "blocked", blockedReason: "x", ambiguityIds: [], assertions: [] }],
+    scenarios: [{ id: "S1", title: "t", basis: "requirement", requirementIds: [], riskIds: [], intent: "i", setup: " Create a second user. ", fixtures: [{ alias: "owner", type }], observations: [], status: "blocked", blockedReason: "x", ambiguityIds: [], assertions: [] }],
   });
   const analysis = { featureSummary: "", requirements: [], ambiguities: [], risks: [] };
   const ok = validatePlan(draft("admin"), analysis, manifest, 5);

@@ -12,6 +12,10 @@ import type { RunReport } from "../schema.ts";
 import { failurePatterns } from "./patterns.ts";
 
 const MAX_STEPS = 12;
+/** Steps kept per scenario in the JSON record. */
+const MAX_RECORDED_STEPS = 150;
+/** The steps that carry evidence: what was read, what was compared, what the application answered. */
+const EVIDENCE_TOOLS = new Set(["observe", "check", "api_request"]);
 
 /**
  * Removes what should not appear in a log, whatever produced it:
@@ -67,8 +71,16 @@ export type Diagnostics = {
       screenshot?: string;
     }[];
     stepsRecorded: number;
-    /** The last steps before the scenario ended. */
+    /**
+     * For a scenario that did not pass: the last steps before it ended. For one
+     * that passed: the steps that carry its evidence (readings, comparisons and
+     * the application's answers), so that a pass can be questioned too.
+     */
     lastSteps: { n: number; tool: string; input: string; ok: boolean; result: string }[];
+    /** Every step, redacted. Written to the JSON record only. */
+    allSteps?: { n: number; tool: string; input: string; ok: boolean; result: string }[];
+    /** Set for a run that was re-run on the escalation model and whose result was not the one kept. */
+    attempt?: string;
     evidence: string;
   }[];
 };
@@ -78,8 +90,14 @@ export function buildDiagnostics(run: RunReport): Diagnostics {
   for (const p of failurePatterns(run)) for (const c of p.comparisons) patternOf.set(`${c.scenarioId}/${c.assertionId}`, p.id);
 
   const scenarios: Diagnostics["scenarios"] = [];
-  for (const result of run.results) {
-    if (result.verdict === "passed") continue;
+  const kept = run.results.map((result) => ({ result, attempt: undefined as string | undefined }));
+  const others = (run.escalations ?? [])
+    .filter((e) => e.other)
+    .map((e) => ({
+      result: e.other!,
+      attempt: e.kept === "escalated run" ? `first run, replaced by the escalated run (${e.why})` : `escalated run, not kept (${e.why})`,
+    }));
+  for (const { result, attempt } of [...kept, ...others]) {
     const planned = run.plan.scenarios.find((s) => s.scenario.id === result.scenarioId)?.scenario;
     const comparisons: Diagnostics["scenarios"][number]["comparisons"] = (planned?.assertions ?? []).map((assertion) => {
       const outcome = result.assertionResults.find((a) => a.assertionId === assertion.id);
@@ -96,22 +114,26 @@ export function buildDiagnostics(run: RunReport): Diagnostics {
         screenshot: outcome?.screenshot ? path.basename(outcome.screenshot) : undefined,
       };
     });
-    const first = Math.max(0, result.steps.length - MAX_STEPS);
+    const passed = result.verdict === "passed";
+    const describe = (step: (typeof result.steps)[number], index: number) => ({
+      n: index + 1,
+      tool: brief(step.tool, 30),
+      input: brief(step.input, 180),
+      ok: step.ok,
+      result: brief(step.summary, 220),
+    });
+    const all = result.steps.map(describe);
     scenarios.push({
       id: result.scenarioId,
       title: brief(result.title, 160),
       verdict: result.verdict,
       reason: brief(result.reason, 300),
-      repeat: run.confirmations[result.scenarioId],
+      repeat: attempt ? undefined : run.confirmations[result.scenarioId],
       comparisons,
       stepsRecorded: result.steps.length,
-      lastSteps: result.steps.slice(first).map((step, index) => ({
-        n: first + index + 1,
-        tool: brief(step.tool, 30),
-        input: brief(step.input, 180),
-        ok: step.ok,
-        result: brief(step.summary, 220),
-      })),
+      lastSteps: passed ? all.filter((s) => EVIDENCE_TOOLS.has(s.tool)).slice(-2 * MAX_STEPS) : all.slice(-MAX_STEPS),
+      allSteps: all.slice(0, MAX_RECORDED_STEPS),
+      ...(attempt ? { attempt } : {}),
       evidence: result.evidence.dir ? path.join("scenarios", result.scenarioId) : "",
     });
   }
@@ -120,14 +142,14 @@ export function buildDiagnostics(run: RunReport): Diagnostics {
 
 export function renderDiagnostics(d: Diagnostics): string {
   const lines = [
-    "# Diagnostics for scenarios that did not pass",
+    "# Diagnostics for every executed scenario",
     "",
-    "Built by code from the run's records and redacted: e-mail addresses, credentials, tokens and long opaque values are removed. Screenshots and complete step records are in the evidence artifact, in the directory named for each scenario.",
+    "Built by code from the run's records and redacted: e-mail addresses, credentials, tokens and long opaque values are removed. Scenarios that passed are included, with the readings and comparisons their pass rests on, so that a pass can be examined as closely as a failure. Screenshots are not part of this record.",
     "",
   ];
-  if (d.scenarios.length === 0) lines.push("Every executed scenario passed.");
+  if (d.scenarios.length === 0) lines.push("No scenario was executed.");
   for (const s of d.scenarios) {
-    lines.push(`## ${s.id} — ${s.verdict}: ${s.title}`, "", `- Why: ${s.reason}`);
+    lines.push(`## ${s.id} — ${s.verdict}: ${s.title}`, "", ...(s.attempt ? [`- This is the ${s.attempt}.`] : []), `- Why: ${s.reason}`);
     if (s.repeat) lines.push(`- Repeated without a model on a fresh session: ${s.repeat}`);
     lines.push(`- Steps recorded: ${s.stepsRecorded}; evidence: \`${s.evidence || "none"}\``, "");
     if (s.comparisons.length > 0) {
@@ -139,7 +161,7 @@ export function renderDiagnostics(d: Diagnostics): string {
       lines.push("");
     }
     if (s.lastSteps.length > 0) {
-      lines.push(`Last ${s.lastSteps.length} steps:`, "");
+      lines.push(s.verdict === "passed" ? `Readings, comparisons and responses (${s.lastSteps.length}):` : `Last ${s.lastSteps.length} steps:`, "");
       for (const step of s.lastSteps) lines.push(`${step.n}. \`${step.tool}\` ${step.input} → ${step.ok ? "ok" : "**failed**"}: ${step.result}`);
       lines.push("");
     }
@@ -152,13 +174,15 @@ export function renderDiagnostics(d: Diagnostics): string {
  * without control characters, and prefixed so that no line can be read by
  * the runner as a workflow command.
  */
-export function diagnosticLines(d: Diagnostics, maxLines = 400): string[] {
+export function diagnosticLines(d: Diagnostics, maxLines = 700): string[] {
   const out: string[] = [];
-  for (const s of d.scenarios) {
-    out.push(`${s.id} ${s.verdict}: ${s.title}`, `  why: ${s.reason}${s.repeat ? ` | repeat without a model: ${s.repeat}` : ""}`);
+  // What did not pass comes first, so that a cut-off loses passes, not failures.
+  const ordered = [...d.scenarios.filter((s) => s.verdict !== "passed"), ...d.scenarios.filter((s) => s.verdict === "passed")];
+  for (const s of ordered) {
+    out.push(`${s.id} ${s.verdict}${s.attempt ? ` [${s.attempt}]` : ""}: ${s.title}`, `  why: ${s.reason}${s.repeat ? ` | repeat without a model: ${s.repeat}` : ""}`);
     for (const c of s.comparisons) {
       out.push(`  ${c.assertionId} ${c.outcome}${c.pattern ? ` [${c.pattern}]` : ""}: expected ${c.expected}${c.observed === "" ? "" : `, observed ${c.observed}`} | ${c.description}${c.requirementId ? ` | rests on ${c.requirementId}` : ""}`);
-      if (c.outcome === "mismatch" && c.target) out.push(`     located by ${c.target}${c.screenshot ? ` | screenshot ${c.screenshot}` : ""}`);
+      if (c.outcome !== "not compared" && c.target) out.push(`     located by ${c.target}${c.screenshot ? ` | screenshot ${c.screenshot}` : ""}`);
     }
     for (const step of s.lastSteps) out.push(`  step ${step.n} ${step.tool} ${step.input} -> ${step.ok ? "ok" : "FAILED"}: ${step.result}`);
   }

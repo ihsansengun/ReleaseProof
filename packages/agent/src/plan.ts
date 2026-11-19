@@ -14,6 +14,9 @@ Each scenario:
 - "setup": data the scenario needs that no fixture provides, described in plain language for the executor to create through the application's own interface before the checks, signed in with one of the accounts (for example another user, or a record to act on). Keep it to what the scenario needs; it uses the same tool-call allowance. Leave it empty when the fixtures are enough. Never put an expected value in it. If the data cannot be created through the interface either, block the scenario.
 - "assertions": deterministic comparisons that code will carry out.
   - number_equals, number_at_least, number_at_most: set expectedNumber, or expectedFormula for arithmetic over named observations (+ - * / parentheses, floor, ceil, round, abs, min, max).
+  - "unit" says what unit the expected value is in: "currency-units" for money as people write it (21.60), "currency-hundredths" for money in hundredths (2160), "plain" for everything else. Choose the unit the value is shown in at the place the assertion looks: an amount on a page is normally in currency-units, an integer amount in an API response may be in hundredths. If you cannot tell from the application map, prefer a formula over observations read at the same place, which carries no unit assumption, to a fixed number.
+- "observations": every value a formula uses, declared with a name, what is read, the unit, and "when": the exact moment in the scenario it is read. ONE NAME IS ONE MOMENT. If the same value matters at two moments (before and after an action, or after each of two actions), declare two observations with two names, such as subtotalAfterDrop and subtotalAfterRestore, and use the right one in each formula. A name cannot be recorded twice, and an assertion whose formula uses a name the scenario needed twice cannot be checked.
+- Prefer an expectation derived from an observation made in the same scenario (a value before an action plus or minus what the rule says) to a fixed number that depends on the starting state. A fixed number is right only when a requirement states that number.
   - text_equals, text_contains: set expectedText.
   - present, absent: whether an element or API field exists; no expected value.
   - Leave the expected fields you do not use as null.
@@ -59,7 +62,7 @@ export async function plan(
   ].join("\n\n");
 
   const first = await driver.task({ name: "plan", instructions: instructions(maxScenarios), input, schema: PlanDraft });
-  const checked = validatePlan(first, analysis, manifest, maxScenarios);
+  const checked = validatePlan(first, analysis, manifest, maxScenarios, { declared: driver.live });
   if (checked.problems.length === 0) return checked.plan;
 
   const repairInput = [
@@ -74,7 +77,7 @@ export async function plan(
     input: repairInput,
     schema: PlanDraft,
   });
-  const rechecked = validatePlan(second, analysis, manifest, maxScenarios);
+  const rechecked = validatePlan(second, analysis, manifest, maxScenarios, { declared: driver.live });
   return {
     ...rechecked.plan,
     notes: [...checked.problems.map((p) => `First draft: ${p}`), ...rechecked.plan.notes.map((p) => `After repair: ${p}`)],

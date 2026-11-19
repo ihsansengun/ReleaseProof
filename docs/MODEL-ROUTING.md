@@ -35,6 +35,18 @@ Environment variables; in CI, repository variables of the same names.
 A value that is not a known model or effort stops the run with an error. It
 is never replaced by a default.
 
+## Presets for a manually started run
+
+"ReleaseProof request" has a `routing` input. It names a preset; the engine
+maps the name to models and effort. A preset is honoured only for a run a
+maintainer started by hand, never for one started by a pull-request event,
+and the run's cost limit applies whatever it says.
+
+| Preset | Analysis and planning | Discovery and execution | Escalation |
+|---|---|---|---|
+| `default` | `claude-sonnet-5-5`, medium | `claude-haiku-5-5` | `claude-sonnet-5-5` |
+| `opus-planning` | `claude-opus-5-5`, high | `claude-haiku-5-5` | `claude-sonnet-5-5` |
+
 ## What is counted, and when a run stops
 
 Every response's uncached input, output, cache-read and cache-written tokens
