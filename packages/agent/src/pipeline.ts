@@ -31,7 +31,28 @@ export type PipelineOptions = {
   allowShaMismatch?: boolean;
   /** What the caller established about the running application, and how to get one per scenario. */
   app?: AppAccess;
+  /** Re-run scenarios that ended without a trustworthy verdict on the escalation model. */
+  escalation?: boolean;
 };
+
+/**
+ * Why a scenario's first run does not settle it, or undefined if it does.
+ *
+ *   - no comparison was completed (unverified), or the executor reported an
+ *     obstacle after it had started working (blocked)
+ *   - it failed, and the repeat without a model did not reproduce the failure
+ *
+ * A failure that reproduced is evidence, not uncertainty: it stays a failure.
+ * A scenario that never started (the application did not come up, the commit
+ * could not be established) is not a matter of model ability either.
+ */
+export function needsEscalation(result: ScenarioResult, confirmation: string | undefined): string | undefined {
+  if (result.verdict === "failed") return confirmation === "reproduced" ? undefined : `its failure was not reproduced by the repeat without a model (${confirmation ?? "no repeat"})`;
+  if (result.verdict === "passed" || result.steps.length === 0) return undefined;
+  // Stopped for lack of budget: a stronger model would only spend more.
+  if (/budget exhausted|limit (of|would)/i.test(result.reason)) return undefined;
+  return result.verdict === "unverified" ? "it ended without completing its comparisons" : "the executor could not get through it";
+}
 
 /** Runs `worker` over `items`, at most `limit` at a time, keeping their positions. */
 async function pool<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
@@ -210,6 +231,51 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
         replay.verdict === "failed" ? "reproduced" : replay.verdict === "passed" ? "not reproduced" : "replay diverged";
     }
   });
+
+  // Uncertainty is given one more attempt on a stronger model, within the
+  // budget. Whatever comes back is judged by the same code as any other run:
+  // an escalated run can end passed or failed only through its own recorded
+  // comparisons, and if it settles nothing the first result stands as it was.
+  if (options.escalation && driver.live) {
+    await timed("escalate", async () => {
+      report.escalations = [];
+      for (const first of [...report.results]) {
+        const why = needsEscalation(first, report.confirmations[first.scenarioId]);
+        if (!why) continue;
+        if (budget.exceeded()) break;
+        const scenario = runnable.find((s) => s.id === first.scenarioId)!;
+        let second = await runScenario({
+          scenario,
+          manifest,
+          expectedSha,
+          app: options.app,
+          outDir: path.join(outDir, "escalations", scenario.id),
+          mode: { kind: "agent", driver, stage: "escalate" },
+        });
+        let confirmation: string | undefined;
+        if (second.verdict === "failed") {
+          const replay = await runScenario({
+            scenario,
+            manifest,
+            expectedSha,
+            app: options.app,
+            outDir: path.join(outDir, "escalations", `${scenario.id}-repeat`),
+            mode: { kind: "replay", steps: second.steps },
+          });
+          confirmation = replay.verdict === "failed" ? "reproduced" : replay.verdict === "passed" ? "not reproduced" : "replay diverged";
+        }
+        // The escalated run replaces the first only if it is conclusive: it
+        // passed on its own comparisons, or it failed and the failure repeats.
+        const conclusive = second.verdict === "passed" || (second.verdict === "failed" && confirmation === "reproduced");
+        report.escalations.push({ scenarioId: scenario.id, why, before: first.verdict, after: second.verdict, kept: conclusive ? "escalated run" : "first run" });
+        if (!conclusive) continue;
+        second = { ...second, reason: `${second.reason} (re-run on the escalation model: ${why})` };
+        report.results[report.results.indexOf(first)] = second;
+        if (confirmation) report.confirmations[scenario.id] = confirmation as RunReport["confirmations"][string];
+        else delete report.confirmations[scenario.id];
+      }
+    });
+  }
 
   const over = budget.exceeded();
   return finish(over ? `The run's ${over}; scenarios not started by then are listed as unverified.` : undefined);

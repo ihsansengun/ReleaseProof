@@ -1,5 +1,11 @@
 /** Hard limits for one run. Any of them stops further model work. */
-export type Limits = { maxTokens: number; maxUsd: number; maxMinutes: number };
+export type Limits = {
+  maxTokens: number;
+  maxUsd: number;
+  maxMinutes: number;
+  /** Optional ceilings for single stages, by the stage names a run reports ("execute", "escalate", ...). */
+  stageUsd?: Record<string, number>;
+};
 
 /** US dollars per million tokens. */
 export type Prices = { input: number; output: number; cacheRead: number; cacheWrite: number };
@@ -10,8 +16,39 @@ export const DEFAULT_PRICES: Prices = { input: 4, output: 20, cacheRead: 0.2, ca
 export const MODEL_PRICES: Record<string, Prices> = {
   "claude-opus-5-5": DEFAULT_PRICES,
   "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+  // Cache reads at 0.1 of the input rate and 5-minute cache writes at 1.25 of it.
+  "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
 };
-export const DEFAULT_LIMITS: Limits = { maxTokens: 3_000_000, maxUsd: 8, maxMinutes: 25 };
+/**
+ * Models with a second, dearer rate card for long prompts. The whole request
+ * is billed on it once the prompt (uncached, cache-read and cache-written
+ * tokens together) is over the threshold.
+ */
+export const LONG_PROMPT_PRICES: Record<string, { over: number; prices: Prices }> = {
+  "claude-haiku-5-5": { over: 100_000, prices: { input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite: 0.625 } },
+};
+export const DEFAULT_LIMITS: Limits = { maxTokens: 3_000_000, maxUsd: 2, maxMinutes: 25 };
+
+/**
+ * Ceilings for single stages, from RELEASEPROOF_MAX_USD_<STAGE> (for example
+ * RELEASEPROOF_MAX_USD_EXECUTE). Escalation, which re-runs scenarios on a
+ * dearer model, is held to two fifths of the run's limit unless set.
+ */
+export function stageLimitsFromEnv(env: Record<string, string | undefined>, maxUsd: number): Record<string, number> {
+  const caps: Record<string, number> = { escalate: Math.round(maxUsd * 0.4 * 100) / 100 };
+  for (const stage of ["discover", "analyse", "plan", "execute", "escalate", "retest"]) {
+    const value = Number(env[`RELEASEPROOF_MAX_USD_${stage.toUpperCase()}`]);
+    if (Number.isFinite(value) && value > 0) caps[stage] = Math.min(value, maxUsd);
+  }
+  return caps;
+}
+
+/** The prices one request is billed at, given the size of its prompt. */
+export function pricesFor(model: string | undefined, promptTokens: number, fallback: Prices = DEFAULT_PRICES): Prices {
+  const long = model ? LONG_PROMPT_PRICES[model] : undefined;
+  if (long && promptTokens > long.over) return long.prices;
+  return (model && MODEL_PRICES[model]) || fallback;
+}
 
 export type StageUsage = {
   calls: number;
@@ -79,7 +116,8 @@ export class Budget {
 
   record(usage: ReportedUsage, model?: string) {
     const s = this.current();
-    const p = (model && MODEL_PRICES[model]) || this.prices;
+    const prompt = usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+    const p = pricesFor(model, prompt, this.prices);
     s.usd +=
       (usage.input_tokens * p.input +
         usage.output_tokens * p.output +
@@ -117,6 +155,41 @@ export class Budget {
     return (Date.now() - this.startedAt) / 60_000;
   }
 
+  /**
+   * The most a call can cost: every prompt token billed as a cache write, the
+   * dearest way to send it, and the whole output allowance used.
+   */
+  static worstCase(model: string, promptTokens: number, maxOutputTokens: number, fallback: Prices = DEFAULT_PRICES): number {
+    const p = pricesFor(model, promptTokens, fallback);
+    return (promptTokens * Math.max(p.cacheWrite, p.input) + maxOutputTokens * p.output) / 1_000_000;
+  }
+
+  /**
+   * Whether a call of at most this cost may be made. Asked before every model
+   * call, so that the run stops before a limit and not one call after it.
+   * Returns the reason it may not, or undefined if it may.
+   */
+  refuses(worstCaseUsd: number): string | undefined {
+    const over = this.exceeded();
+    if (over) return over;
+    const cost = this.costUsd();
+    if (cost + worstCaseUsd > this.limits.maxUsd) {
+      return `cost limit of $${this.limits.maxUsd} would be passed by the next model call (about $${cost.toFixed(2)} spent, up to $${worstCaseUsd.toFixed(2)} more)`;
+    }
+    const cap = this.limits.stageUsd?.[this.stage];
+    if (cap !== undefined && this.current().usd + worstCaseUsd > cap) {
+      return `the ${this.stage} stage's limit of $${cap} would be passed by the next model call (about $${this.current().usd.toFixed(2)} spent in it)`;
+    }
+    return undefined;
+  }
+
+  /** What is left of the run's cost limit, and of the current stage's if it has one. */
+  remainingUsd(): number {
+    const cap = this.limits.stageUsd?.[this.stage];
+    const run = this.limits.maxUsd - this.costUsd();
+    return Math.max(0, cap === undefined ? run : Math.min(run, cap - this.current().usd));
+  }
+
   /** The limit that has been reached, in words, or undefined if none has. */
   exceeded(): string | undefined {
     const t = this.total();
@@ -124,6 +197,8 @@ export class Budget {
     if (tokens >= this.limits.maxTokens) return `token limit of ${this.limits.maxTokens} reached (${tokens} used)`;
     const cost = this.costUsd();
     if (cost >= this.limits.maxUsd) return `cost limit of $${this.limits.maxUsd} reached (about $${cost.toFixed(2)} spent)`;
+    const cap = this.limits.stageUsd?.[this.stage];
+    if (cap !== undefined && this.current().usd >= cap) return `the ${this.stage} stage's limit of $${cap} reached`;
     const minutes = this.minutes();
     if (minutes >= this.limits.maxMinutes) return `time limit of ${this.limits.maxMinutes} minutes reached`;
     return undefined;

@@ -5,7 +5,8 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { Budget, DEFAULT_PRICES, type Limits } from "../budget.ts";
+import { Budget, DEFAULT_PRICES, stageLimitsFromEnv, type Limits } from "../budget.ts";
+import { describeRouting, routingFromEnv, type Routing } from "../routing.ts";
 import { ApiDriver, type Driver } from "../drivers/driver.ts";
 import { RecordedDriver } from "../drivers/recorded.ts";
 import { loadManifest } from "../env.ts";
@@ -71,7 +72,8 @@ const Requested = z
   .catch({});
 
 /** Models a manual run may ask for as the executor. Anything else is ignored. */
-export const EXECUTOR_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5"];
+/** What a request may choose for execution. The dearest model is not on offer to a request. */
+export const EXECUTOR_MODELS = ["claude-sonnet-5-5", "claude-haiku-5-5"];
 
 /**
  * Turns the application's log into lines that are safe to print in a job log:
@@ -400,23 +402,26 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
       existsSync(requestedFile) ? JSON.parse(await readFile(requestedFile, "utf8").catch(() => "{}")) : {},
     );
     console.log(`limits: $${effective.limits.maxUsd}, ${effective.limits.maxMinutes} min, ${effective.limits.maxTokens} tokens, ${effective.maxScenarios} scenarios`);
-    const budget = new Budget(effective.limits, DEFAULT_PRICES);
+    // Stage ceilings are worked out from the limit this run actually has.
+    const limits: Limits = { ...effective.limits, stageUsd: stageLimitsFromEnv(process.env, effective.limits.maxUsd) };
+    console.log(`stage limits: ${Object.entries(limits.stageUsd ?? {}).map(([stage, cap]) => `${stage} $${cap}`).join(", ")}`);
+    const budget = new Budget(limits, DEFAULT_PRICES);
     let driver: Driver;
+    let escalation = false;
     const recording = path.join(options.recordingsDir, `${key}.json`);
     const choice = driverChoice(apiKey, existsSync(recording));
     if (choice === "live") {
-      const model = process.env.RELEASEPROOF_MODEL || "claude-opus-5-5";
       const fallbacks = process.env.RELEASEPROOF_FALLBACKS !== "off" && !effective.disableFallbacks;
-      console.log(`driver: live model ${model} (an API key is configured); fallbacks ${fallbacks ? "on" : "off"}`);
-      if (effective.executorModel) console.log(`executor model for this run: ${effective.executorModel}`);
-      driver = new ApiDriver({
-        apiKey,
-        model,
-        executorModel: effective.executorModel,
-        effort: (process.env.RELEASEPROOF_EFFORT || "medium") as "low" | "medium" | "high",
-        budget,
-        fallbacks,
-      });
+      let routing: Routing;
+      try {
+        routing = routingFromEnv(process.env, effective.executorModel ? { execute: effective.executorModel } : {});
+      } catch (error) {
+        return finish("error", `The model configuration is not valid: ${(error as Error).message} Nothing was tested.`);
+      }
+      console.log(`driver: live models (an API key is configured): ${describeRouting(routing)}; fallbacks ${fallbacks ? "on" : "off"}`);
+      console.log(`effort: ${Object.entries(routing.efforts).map(([stage, effort]) => `${stage} ${effort}`).join(", ")}`);
+      driver = new ApiDriver({ apiKey, routing, budget, fallbacks });
+      escalation = routing.escalation;
     } else if (choice === "recorded") {
       console.log("driver: recorded responses (no API key is configured)");
       driver = new RecordedDriver(JSON.parse(await readFile(recording, "utf8")) as RunReport);
@@ -444,6 +449,7 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
           maxScenarios: effective.maxScenarios,
           authority,
           authorityNotices: protectedMaterial.notices,
+          escalation,
         });
     await driver.close();
     return finish("completed");

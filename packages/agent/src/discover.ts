@@ -124,6 +124,7 @@ async function discoverView(
         briefing: `Account to sign in with:\n${JSON.stringify(open.fixtures, null, 2)}`,
         tools: ["navigate", "click", "fill", "finish"],
         maxToolCalls: 10,
+        stage: "discover",
       });
       view.signedIn = (session.outcome as Outcome | undefined)?.kind === "completed";
       session.outcome = undefined;

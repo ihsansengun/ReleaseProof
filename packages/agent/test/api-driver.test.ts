@@ -1,3 +1,4 @@
+import { DEFAULT_ROUTING } from "../src/routing.ts";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { test } from "node:test";
@@ -63,7 +64,11 @@ const fakeSession = () =>
 const job = { name: "S1", system: "sys", briefing: "do it", tools: ["navigate", "finish"] as const, maxToolCalls: 5 };
 const finishCall = { type: "tool_use", id: "tu_1", name: "finish", input: { outcome: "completed", reason: "done", rationale: "r" } };
 const driverFor = (url: string, budget: Budget) =>
-  new ApiDriver({ model: "test-model", effort: "medium", budget, client: { baseURL: url, apiKey: "test-key" } });
+  new ApiDriver({
+    routing: { models: { analyse: "claude-sonnet-5-5", plan: "claude-sonnet-5-5", discover: "claude-sonnet-5-5", execute: "claude-sonnet-5-5", escalate: "claude-sonnet-5-5" }, efforts: DEFAULT_ROUTING.efforts, escalation: false },
+    budget,
+    client: { baseURL: url, apiKey: "test-key" },
+  });
 
 test("a session retries an overloaded API, runs the tool call and accounts for usage", async () => {
   const api = await fakeApi([
@@ -79,7 +84,7 @@ test("a session retries an overloaded API, runs the tool call and accounts for u
   assert.deepEqual(session.outcome, { kind: "completed", reason: "done" });
   assert.equal(api.seen.length, 2, "one failed attempt, one retry");
   const request = api.seen[1]!;
-  assert.equal(request.body.model, "test-model");
+  assert.equal(request.body.model, "claude-sonnet-5-5");
   assert.equal(request.body.system, "sys");
   assert.deepEqual((request.body.tools as { name: string }[]).map((t) => t.name), ["navigate", "finish"]);
   // The credential travels in whichever header this SDK version uses.

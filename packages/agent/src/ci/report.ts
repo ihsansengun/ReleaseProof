@@ -134,6 +134,7 @@ export const ReportInput = z.object({
         }),
       ),
       confirmations: z.record(z.string(), z.string()).optional(),
+      escalations: z.array(z.object({ scenarioId: z.string(), why: z.string(), before: z.string(), after: z.string(), kept: z.string() })).optional(),
       usage: z
         .object({
           byStage: z.record(z.string(), Stage).optional(),
@@ -258,6 +259,13 @@ export function render(input: ReportInput, runUrl: string): Rendered {
           return `${safe(name, 20)} ${tokens.toLocaleString("en-US")} tokens${u.usd === undefined ? "" : ` ($${u.usd.toFixed(2)})`}`;
         })
         .join(", ")}`,
+    );
+  }
+  if (run.escalations?.length) {
+    lines.push(
+      `- Re-run on the escalation model: ${run.escalations
+        .map((e) => `${safe(e.scenarioId, 20)} (${safe(e.why, 120)}; ${safe(e.before, 12)} → ${safe(e.after, 12)}, ${e.kept === "escalated run" ? "result replaced" : "first result kept"})`)
+        .join("; ")}`,
     );
   }
   if (run.retestOf) lines.push(`- Re-ran the scenarios planned for \`${safe(run.retestOf.headSha.slice(0, 10), 12)}\`; no new plan was made`);

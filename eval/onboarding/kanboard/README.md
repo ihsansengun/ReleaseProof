@@ -126,3 +126,26 @@ instances, and checked by the trusted-side isolation check. No model.
 
 Still not verified: `Dockerfile.releaseproof` itself, and any of this on a
 GitHub runner.
+
+## Verification on a GitHub runner, 19 November 2026
+
+Free, no model: [QA run 44584372157](https://github.com/ihsansengun/ReleaseProof/actions/runs/44584372157),
+started from ReleaseProof's repository against pull request #2 of
+`ihsansengun/kanboard-releaseproof-eval` (a documentation-only pull request
+kept for this purpose). The fork holds four configuration files and no
+workflow or credential.
+
+| Check | Result |
+|---|---|
+| Test Dockerfile builds on a hosted runner | Yes; image built in 16 s from `.releaseproof/Dockerfile` |
+| Commit fetched and verified | GitHub reported `fa830162c9bd…` for the pull request; that commit was fetched and built; the QA job accepted the image by its digest |
+| Reading another public repository with this repository's workflow token | Worked |
+| Application starts | Yes; first page HTTP 200 |
+| Isolation | Network blocked with no address reached, read-only root, user 10001, environment `DATA_DIR`, `LOG_DRIVER`, `PATH` only; a second container started with the same settings |
+| Sign-in | The declared account signed in through the generic check, with no application-specific selector |
+| Model or paid API use | None: the verification step holds no credential, and the test step was skipped |
+| Uploaded evidence | One file, `summary.json`, 641 bytes |
+| Posted to the fork | Nothing |
+
+`Dockerfile.releaseproof` in this directory was the draft; the file in use
+is `.releaseproof/Dockerfile` in the fork.
