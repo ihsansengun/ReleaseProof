@@ -62,3 +62,29 @@ Limits of these fixes:
   pattern; without one it stays unverified.
 - Whole-word matching can make an older recording diverge where it relied on
   matching part of a word.
+
+## Evidence and coverage (after routing benchmark C, 19 November 2026)
+
+| Problem seen | What changed |
+|---|---|
+| What a scenario did had to be pieced together from its last 12 logged steps; who made a cross-user request was not on record | Every comparison stores a record made by code when it is compared: the approved requirement and expected value, the test account whose credentials were last entered (its alias, never a name or secret), the page or the request and response, the observations it was computed from with their moments, the last step that could change state, how the element was identified, and the comparisons made afterwards. The redacted diagnostics print it per comparison and say which of seven parts are missing |
+| The planner alone chose which scenarios ran, and a threshold was tested far from its boundary | The planner proposes more candidates than may run and says which requirement each probes and how. Code chooses: each step takes the scenario that adds most to what is already covered (a first comparison of a requirement 3, a new threshold position 2, a new access-control or ownership check 2, a new state change, side effect or risk 1; ties go to the scenario listed first). Scenarios not chosen stay in the plan as deferred, and the report lists them, what each would have added, and threshold positions nobody planned or ran |
+| A total was "found" by searching for the expected amount | A target whose text or pattern contains the expected value is refused and nothing is recorded. A test id is exempt, as is a declared heading or label. Presence checks remain available where the plan asks for presence; they count only visible elements and record their scope |
+| The failure table grouped unrelated mismatches and read like a defect count | Four separate counts: failed assertions, failed scenarios, failure patterns, confirmed distinct defects. A pattern groups failed comparisons that rest on a common requirement or are numbers off by the same amount. It is "confirmed" only when one of its comparisons is backed by the API response, a second comparison or a second attempt, and the failure repeats |
+
+Limits:
+
+- The selection trusts the planner's statement of what a scenario probes, as
+  far as a comparison of that requirement backs it. Code cannot tell "just
+  below the threshold" from "far below" if the planner labels them alike, and
+  it cannot notice a threshold the planner never labelled.
+- The weights are a fixed policy, not a measurement of risk.
+- "Initial" and "final" state are what the scenario read and compared, not a
+  snapshot of the application. The actor is the account whose credentials
+  were last entered in the browser session; the server's view is not checked.
+- A label that happens to contain the expected number ("Step 2" when 2 is
+  expected) is refused as circular. The comparison stays unverified unless
+  the element can be identified another way.
+- A confirmed pattern has independent evidence that the application differs
+  from the requirement. It is still one cause only by the grouping rule.
+- Planning more candidates than run costs more planner output.

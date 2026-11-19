@@ -8,7 +8,7 @@
  * application's log stay in the evidence artifact and are only named here.
  */
 import path from "node:path";
-import type { RunReport } from "../schema.ts";
+import type { AssertionResult, RunReport } from "../schema.ts";
 import { failurePatterns } from "./patterns.ts";
 
 const MAX_STEPS = 12;
@@ -47,8 +47,72 @@ const brief = (value: unknown, max: number) => {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 };
 
+/** The seven things a reader needs to judge one comparison. */
+export const EVIDENCE_PARTS = ["requirement", "actor", "resource", "action", "target", "comparison", "final state"] as const;
+
+export type Provenance = {
+  step: number;
+  requirement?: string;
+  expected: string;
+  /** Fixture alias whose credentials were last entered, and since which step. */
+  actor?: string;
+  /** The page, or the request and what the application answered. */
+  resource?: string;
+  /** Values read earlier that the expected value was computed from: the state before. */
+  before: string[];
+  /** The last step before the comparison that could change state. */
+  action?: string;
+  /** How the thing compared was identified, and what it is. */
+  target: string;
+  /** What was read, before a pattern or a conversion. */
+  raw?: string;
+  /** Comparisons made later in the scenario: the state after, as far as it was asserted. */
+  after: string[];
+  present: string[];
+  missing: string[];
+};
+
+/** Turns the stored record into redacted, bounded text, and says which parts are there. */
+function provenanceOf(outcome: AssertionResult, later: AssertionResult[]): Provenance | undefined {
+  const e = outcome.evidence;
+  if (!e) return undefined;
+  const request = e.resource.request;
+  const resource = request
+    ? `${request.method} ${brief(request.path, 120)} -> ${request.status} at step ${request.step}${request.body ? `, body ${brief(request.body, 160)}` : ""}`
+    : e.resource.page
+      ? `page ${brief(e.resource.page, 120)}`
+      : undefined;
+  const element = e.target.element ? `; element <${brief(e.target.element.tag, 20)}>${e.target.element.role ? ` role ${brief(e.target.element.role, 20)}` : ""}${e.target.element.context ? ` in "${brief(e.target.element.context, 100)}"` : ""}` : "";
+  const target = `${brief(e.target.locatedBy, 160)}${e.target.within ? ` within ${brief(e.target.within, 100)}` : ""}${e.target.matched === undefined ? "" : `; matched ${e.target.matched}`}${e.target.visible === undefined ? "" : e.target.visible ? ", visible" : ", not visible"}${element}`;
+  const provenance: Omit<Provenance, "present" | "missing"> = {
+    step: e.step,
+    ...(e.requirement ? { requirement: `${e.requirement.id}${e.requirement.sourceId ? ` from ${e.requirement.sourceId}` : ""}${e.requirement.quote ? `: "${brief(e.requirement.quote, 200)}"` : ""}` } : {}),
+    expected: `${e.expected.kind} ${e.expected.formula ? `formula ${brief(e.expected.formula, 120)} = ${brief(outcome.expected, 40)}` : e.expected.literal === undefined ? "" : brief(e.expected.literal, 80)}${e.expected.unit ? ` (${e.expected.unit})` : ""}`.trim(),
+    ...(e.actor ? { actor: `${brief(e.actor.alias, 40)} (credentials entered at step ${e.actor.step})` } : {}),
+    ...(resource ? { resource } : {}),
+    before: e.before.map((b) => `${brief(b.name, 40)} = ${b.value}${b.step ? ` (step ${b.step}${b.when ? `, ${brief(b.when, 100)}` : ""})` : ""}`),
+    ...(e.action ? { action: `step ${e.action.step} ${brief(e.action.tool, 20)} ${brief(e.action.what, 140)}` } : {}),
+    target,
+    ...(e.raw === undefined ? {} : { raw: brief(e.raw, 160) }),
+    after: later.map((l) => `${l.assertionId}: expected ${brief(l.expected, 40)}, observed ${brief(l.actual, 40)}`),
+  };
+  const has: Record<(typeof EVIDENCE_PARTS)[number], boolean> = {
+    requirement: !!e.requirement,
+    actor: !!e.actor,
+    resource: !!resource,
+    action: !!e.action || !!request,
+    target: e.target.locatedBy !== "",
+    comparison: true,
+    // A reading taken after the last step that could change state is the state that step left behind.
+    "final state": (!!e.action && e.action.step < e.step) || later.length > 0,
+  };
+  return { ...provenance, present: EVIDENCE_PARTS.filter((p) => has[p]), missing: EVIDENCE_PARTS.filter((p) => !has[p]) };
+}
+
 export type Diagnostics = {
   commit: string;
+  /** How many comparisons carry all seven parts of their evidence, of those that were made. */
+  completeness?: { complete: number; compared: number };
   scenarios: {
     id: string;
     title: string;
@@ -68,6 +132,11 @@ export type Diagnostics = {
       standing?: string;
       /** How the executor located the value. */
       target?: string;
+      /**
+       * What stands behind the comparison, from the record made when it was
+       * compared. It does not depend on the step listing.
+       */
+      provenance?: Provenance;
       /** File in the evidence artifact. */
       screenshot?: string;
     }[];
@@ -113,6 +182,9 @@ export function buildDiagnostics(run: RunReport): Diagnostics {
         pattern: patternOf.get(`${result.scenarioId}/${assertion.id}`),
         ...(outcome?.standing ? { standing: outcome.standing } : {}),
         target: outcome?.target === undefined ? undefined : brief(outcome.target, 200),
+        ...(outcome && provenanceOf(outcome, result.assertionResults.slice(result.assertionResults.indexOf(outcome) + 1))
+          ? { provenance: provenanceOf(outcome, result.assertionResults.slice(result.assertionResults.indexOf(outcome) + 1)) }
+          : {}),
         screenshot: outcome?.screenshot ? path.basename(outcome.screenshot) : undefined,
       };
     });
@@ -139,13 +211,34 @@ export function buildDiagnostics(run: RunReport): Diagnostics {
       evidence: result.evidence.dir ? path.join("scenarios", result.scenarioId) : "",
     });
   }
-  return { commit: run.pullRequest.headSha, scenarios };
+  const withEvidence = scenarios.filter((s) => !s.attempt).flatMap((s) => s.comparisons).filter((c) => c.provenance);
+  return {
+    commit: run.pullRequest.headSha,
+    ...(withEvidence.length > 0 ? { completeness: { complete: withEvidence.filter((c) => c.provenance!.missing.length === 0).length, compared: withEvidence.length } } : {}),
+    scenarios,
+  };
+}
+
+/** One comparison's evidence as lines of text. */
+function provenanceLines(p: Provenance): string[] {
+  return [
+    `evidence ${p.present.length}/${EVIDENCE_PARTS.length}${p.missing.length ? ` (not recorded: ${p.missing.join(", ")})` : ""} at step ${p.step}`,
+    ...(p.requirement ? [`requirement ${p.requirement}`] : []),
+    `expected ${p.expected}`,
+    ...(p.actor ? [`actor ${p.actor}`] : []),
+    ...(p.resource ? [`resource ${p.resource}`] : []),
+    ...(p.before.length ? [`before: ${p.before.join("; ")}`] : []),
+    ...(p.action ? [`last action: ${p.action}`] : []),
+    `target ${p.target}${p.raw === undefined ? "" : `; read "${p.raw}"`}`,
+    ...(p.after.length ? [`after: ${p.after.join("; ")}`] : []),
+  ];
 }
 
 export function renderDiagnostics(d: Diagnostics): string {
   const lines = [
     "# Diagnostics for every executed scenario",
     "",
+    ...(d.completeness ? [`Evidence: ${d.completeness.complete} of ${d.completeness.compared} comparisons carry all seven parts of their record (requirement, actor, resource, action, target, comparison, final state). "Initial" and "final" state are what the scenario read and compared, not a snapshot of the application; the actor is the test account whose credentials were last entered.`, ""] : []),
     "Built by code from the run's records and redacted: e-mail addresses, credentials, tokens and long opaque values are removed. Scenarios that passed are included, with the readings and comparisons their pass rests on, so that a pass can be examined as closely as a failure. Screenshots are not part of this record.",
     "",
   ];
@@ -161,6 +254,9 @@ export function renderDiagnostics(d: Diagnostics): string {
         lines.push(`| ${c.assertionId} ${cell(c.description)} | ${c.outcome === "mismatch" ? "**mismatch**" : c.outcome} | \`${cell(c.expected)}\` | ${c.observed === "" ? "–" : `\`${cell(c.observed)}\``} | ${cell([c.requirementId, c.sourceId].filter(Boolean).join(" from "))} | ${cell(c.pattern)} | ${cell(c.target)} | ${cell(c.screenshot)} |`);
       }
       lines.push("");
+      for (const c of s.comparisons.filter((x) => x.provenance)) {
+        lines.push(`**${c.assertionId}** ${c.outcome}`, "", ...provenanceLines(c.provenance!).map((l) => `- ${l}`), "");
+      }
     }
     if (s.lastSteps.length > 0) {
       lines.push(s.verdict === "passed" ? `Readings, comparisons and responses (${s.lastSteps.length}):` : `Last ${s.lastSteps.length} steps:`, "");
@@ -185,8 +281,10 @@ export function diagnosticLines(d: Diagnostics, maxLines = 700): string[] {
     for (const c of s.comparisons) {
       out.push(`  ${c.assertionId} ${c.outcome}${c.pattern ? ` [${c.pattern}]` : ""}: expected ${c.expected}${c.observed === "" ? "" : `, observed ${c.observed}`} | ${c.description}${c.requirementId ? ` | rests on ${c.requirementId}` : ""}${c.standing ? ` | standing: ${c.standing}` : ""}`);
       if (c.outcome !== "not compared" && c.target) out.push(`     located by ${c.target}${c.screenshot ? ` | screenshot ${c.screenshot}` : ""}`);
+      if (c.provenance) for (const l of provenanceLines(c.provenance)) out.push(`     ${l}`);
     }
     for (const step of s.lastSteps) out.push(`  step ${step.n} ${step.tool} ${step.input} -> ${step.ok ? "ok" : "FAILED"}: ${step.result}`);
   }
+  if (d.completeness) out.unshift(`evidence: ${d.completeness.complete} of ${d.completeness.compared} comparisons carry all seven parts of their record`);
   return out.slice(0, maxLines).map((line) => `diag| ${line.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 400)}`);
 }

@@ -107,14 +107,22 @@ test("malformed expectations, unknown fixtures and repeated ids are caught", () 
 
 test("the plan size limit is enforced", () => {
   const many = { scenarios: Array.from({ length: 4 }, (_, i) => scenario({ id: `S${i + 1}`, assertions: [assertion({})] })) };
+  // Three run. The fourth is a candidate that stays in the plan, whole, as deferred.
   const trimmedPlan = validatePlan(many, checkedAnalysis, manifest, 3);
-  assert.equal(trimmedPlan.plan.scenarios.length, 3);
+  assert.deepEqual(trimmedPlan.plan.scenarios.map((s) => s.status), ["runnable", "runnable", "runnable", "deferred"]);
+  assert.equal(trimmedPlan.plan.scenarios[3]!.scenario.assertions.length, 1);
   assert.deepEqual(trimmedPlan.problems, []);
-  assert.equal(trimmedPlan.plan.notes.length, 1);
+  assert.equal(trimmedPlan.plan.notes.length, 0);
+  // Candidates beyond the pool (limit + 6, at most twice the limit) are dropped with a note.
+  const flood = { scenarios: Array.from({ length: 8 }, (_, i) => scenario({ id: `S${i + 1}`, assertions: [assertion({})] })) };
+  const flooded = validatePlan(flood, checkedAnalysis, manifest, 3);
+  assert.equal(flooded.plan.scenarios.length, 6);
+  assert.equal(flooded.plan.notes.length, 2);
+  assert.equal(flooded.plan.trimmedRunnable, 2);
   const withBlocked = { scenarios: [...many.scenarios, scenario({ id: "S9", status: "blocked", blockedReason: "needs Q1" })] };
   assert.deepEqual(
     validatePlan(withBlocked, checkedAnalysis, manifest, 3).plan.scenarios.map((s) => s.scenario.id),
-    ["S1", "S2", "S3", "S9"],
+    ["S1", "S2", "S3", "S4", "S9"],
   );
 });
 
