@@ -482,6 +482,7 @@ test("Jira Cloud ingestion keeps identities, reads every comment, stays on the s
   const env: NodeJS.ProcessEnv = { JIRA_BASE_URL: "https://example.atlassian.net", JIRA_EMAIL: "qa@example.com", JIRA_API_TOKEN: token, PATH: "/usr/bin" };
   const credentials = takeJiraCredentials(env)!;
   assert.equal(env.JIRA_API_TOKEN, undefined, "the token is removed from the environment once read");
+  assert.equal(env.JIRA_EMAIL, undefined, "so is the account email");
   const provider = jiraCloudProvider(credentials, fake);
 
   const loaded = (await provider.load("KAN-7"))!;

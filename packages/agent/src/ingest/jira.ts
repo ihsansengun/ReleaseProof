@@ -103,10 +103,11 @@ export function fileTicketProvider(dir: string): TicketProvider {
 
 export type JiraCredentials = { baseUrl: string; email: string; token: string };
 
-/** Reads Jira credentials from the environment and removes the token from it, so no later child process inherits it. */
+/** Reads Jira credentials from the environment and removes the token and the account email from it, so no later child process inherits them. */
 export function takeJiraCredentials(env: NodeJS.ProcessEnv): JiraCredentials | undefined {
   const { JIRA_BASE_URL: baseUrl, JIRA_EMAIL: email, JIRA_API_TOKEN: token } = env;
   delete env.JIRA_API_TOKEN;
+  delete env.JIRA_EMAIL;
   if (!baseUrl || !email || !token) return undefined;
   return { baseUrl, email, token };
 }

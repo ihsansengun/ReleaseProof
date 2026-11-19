@@ -361,3 +361,62 @@ Known gaps in the implementation:
   against the owner list would close this and is not implemented.
 - The analyst's output schema and prompt changed. No live model has run
   against them yet.
+
+## Proposed: deterministic precedence between authoritative sources
+
+Status: proposed, not implemented.
+
+**The limitation.** A ticket's description and a requirement owner's later
+comment are both authoritative. When the comment changes a rule, the
+description usually still states the old one. Today the analyst is
+instructed to follow the later statement. Nothing in code stops it from
+quoting the outdated sentence, which is a real, authoritative quote, and
+testing against it. The plan validator would accept the assertion.
+
+Code cannot decide by itself that two sentences are about the same rule.
+What it can do is make supersession an explicit, checked fact, and refuse to
+let a run look verified while that fact is missing.
+
+**Mechanism, in three parts.**
+
+1. *Supersession is recorded as data and verified.* For every authoritative
+   source that is newer than another (an owner comment after the
+   description; an approved amendment after a document), the analysis must
+   state what it retires: a list of pairs (verbatim text in the older
+   source, the newer source's id). Code checks that each retired text is
+   really in an older authoritative source and that the newer source is
+   really newer, by Jira's timestamps, and authoritative.
+2. *Retired text cannot back a requirement.* Code then removes every retired
+   span from what counts as quotable. A requirement whose quote overlaps a
+   retired span is downgraded, exactly as a fabricated quote is today, and
+   an assertion resting on it is removed. From that point the model cannot
+   use the outdated rule, whatever it writes.
+3. *Silence is visible and blocks "Ready".* The report lists, for each newer
+   authoritative source, what it was taken to retire, or states that it was
+   taken to retire nothing. If two authoritative requirements are flagged
+   as contradicting each other and no supersession covers them, that is a
+   conflict of kind `authoritative-contradiction`: the later source's
+   requirement is the one tested, the earlier one is marked superseded by
+   date, and the result cannot be "Ready" until an owner confirms.
+
+**An explicit owner route, which needs no model at all.** A requirement
+owner can state the supersession in the comment itself, on a line of its
+own:
+
+    Supersedes: "TAKE15 takes $15.00 off a subtotal of at least $50.00"
+
+Code finds that exact text in the older source and retires it. Where owners
+use this, precedence is fully deterministic. Where they do not, parts 1 to 3
+make the model's reading of the comment explicit, checked and reported, and
+never silently wrong.
+
+**What it would not solve.** A comment that changes a rule without the model
+noticing, and without an explicit `Supersedes:` line, still leaves the old
+sentence quotable. The report would say the comment "retires nothing", which
+an owner can see and correct; code cannot detect it.
+
+**Tests it would need.** The older rule is refused once retired; a
+supersession naming text that is not in an older source is rejected; a
+comment by a non-owner retires nothing; an older source cannot retire a
+newer one; the explicit line works with no model; two contradicting
+authoritative requirements without a supersession keep the run from "Ready".
