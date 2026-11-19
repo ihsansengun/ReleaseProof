@@ -8,7 +8,15 @@
  * documented requirements were never compared against the application.
  */
 
-export type RequirementStatus = "verified" | "failed" | "blocked" | "unverified" | "not planned";
+/**
+ *   verified     at least one comparison that rests on it matched, and none that rests on it directly failed
+ *   failed       a comparison whose expected value rests on it did not match
+ *   blocked      only scenarios that did not run are tied to it
+ *   unverified   comparisons tied to it were planned but not made, or failed for a rule they rest on elsewhere
+ *   exercised    a scenario that ran lists it, but no comparison is tied to it
+ *   not planned  nothing in the plan is tied to it
+ */
+export type RequirementStatus = "verified" | "failed" | "blocked" | "unverified" | "exercised" | "not planned";
 export type Readiness = "not ready" | "incomplete" | "ready";
 
 /** The parts of a run this needs. Both the full run report and the CI stage's validated view fit. */
@@ -29,7 +37,7 @@ export type ReadinessInput = {
       scenario: {
         id: string;
         requirementIds?: string[];
-        assertions: { id: string; requirementId?: string }[];
+        assertions: { id: string; requirementId?: string; alsoVerifies?: string[] }[];
       };
     }[];
   };
@@ -71,6 +79,7 @@ export function assess(run: ReadinessInput): Assessment {
       const comparisons: string[] = [];
       const uncompared: string[] = [];
       const waiting: string[] = [];
+      const passedThrough: string[] = [];
       let mismatch = false;
 
       for (const planned of run.plan.scenarios) {
@@ -83,25 +92,39 @@ export function assess(run: ReadinessInput): Assessment {
           }
           continue;
         }
-        for (const assertion of scenario.assertions.filter((a) => a.requirementId === requirement.id)) {
+        let tied = false;
+        for (const assertion of scenario.assertions) {
+          const direct = assertion.requirementId === requirement.id;
+          const also = !direct && (assertion.alsoVerifies ?? []).includes(requirement.id);
+          if (!direct && !also) continue;
+          tied = true;
           const outcome = result.assertionResults.find((a) => a.assertionId === assertion.id);
           if (!outcome) uncompared.push(`${scenario.id}/${assertion.id} (${result.verdict}: ${result.reason})`);
-          else {
-            comparisons.push(`${scenario.id}/${assertion.id} ${outcome.pass ? "match" : "MISMATCH"}`);
-            if (!outcome.pass) mismatch = true;
+          else if (outcome.pass) comparisons.push(`${scenario.id}/${assertion.id} match`);
+          else if (direct) {
+            comparisons.push(`${scenario.id}/${assertion.id} MISMATCH`);
+            mismatch = true;
+          } else {
+            // The expected value rests on another requirement. Its failure
+            // leaves this one unconfirmed; it does not count as a second failure.
+            uncompared.push(`${scenario.id}/${assertion.id} did not match; its expected value rests on ${assertion.requirementId ?? "another requirement"}`);
           }
         }
+        if (!tied && scenario.requirementIds?.includes(requirement.id)) passedThrough.push(`${scenario.id} (${result.verdict})`);
       }
 
       const base = { id: requirement.id, text: requirement.text, quote: requirement.quote, origin: requirement.origin };
       if (mismatch) return { ...base, status: "failed" as const, detail: comparisons.join("; ") };
       if (comparisons.length > 0) return { ...base, status: "verified" as const, detail: comparisons.join("; ") };
       if (uncompared.length > 0) return { ...base, status: "unverified" as const, detail: uncompared.join("; ") };
+      if (passedThrough.length > 0) {
+        return { ...base, status: "exercised" as const, detail: `Scenario ${passedThrough.join(", ")} lists this requirement, but no comparison is tied to it.` };
+      }
       if (waiting.length > 0) return { ...base, status: "blocked" as const, detail: waiting.join("; ") };
       return { ...base, status: "not planned" as const, detail: "No scenario in the plan compares this requirement." };
     });
 
-  const counts: Record<RequirementStatus, number> = { verified: 0, failed: 0, blocked: 0, unverified: 0, "not planned": 0 };
+  const counts: Record<RequirementStatus, number> = { verified: 0, failed: 0, blocked: 0, unverified: 0, exercised: 0, "not planned": 0 };
   for (const r of requirements) counts[r.status]++;
   const verdicts = (v: string) => run.results.filter((r) => r.verdict === v).length;
   const execution = {

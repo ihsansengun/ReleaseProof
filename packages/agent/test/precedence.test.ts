@@ -59,7 +59,7 @@ const scenario = (requirementId: string, expectedNumber: number): PlanDraft => (
       status: "runnable",
       blockedReason: "",
       ambiguityIds: [],
-      assertions: [{ id: "A1", description: "the minimum", kind: "number_equals", expectedNumber, expectedText: null, expectedFormula: null, requirementId }],
+      assertions: [{ id: "A1", description: "the minimum", kind: "number_equals", expectedNumber, expectedText: null, expectedFormula: null, requirementId, alsoVerifies: [] }],
     },
   ],
 });

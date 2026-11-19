@@ -150,7 +150,7 @@ test("the image is built by trusted code from the commit GitHub reports, in a jo
   };
   // The commit comes from GitHub's answer to trusted code, then exactly that commit is fetched, then built.
   const head = build.steps[at("Ask GitHub which commit")]!;
-  assert.match(head.run!, /cli\.ts head --repo "\$GITHUB_REPOSITORY" --pr "\$PR"/);
+  assert.match(head.run!, /cli\.ts head --repo "\$TARGET_REPO" --pr "\$PR"/);
   assert.match(head.run!, /"\$TRIGGER_EVENT" = "pull_request" \] && \[ "\$sha" != "\$TRIGGER_SHA"/);
   const fetched = build.steps[at("Fetch exactly that commit")]!;
   assert.equal(fetched.with!.ref, "${{ steps.head.outputs.sha }}");
@@ -189,7 +189,8 @@ test("every third-party action is pinned to a full commit, and the engine to one
   assert.match(first.run!, /releaseproof_ref must be a full commit SHA/);
   for (const [, job] of jobsOf(reusable)) {
     for (const step of job.steps) {
-      if (step.with?.repository) assert.equal(step.with.ref, "${{ inputs.releaseproof_ref }}");
+      // Checkouts of the engine are at the pinned commit; the other checkouts are of the application's repository.
+      if (step.with?.repository === "${{ inputs.releaseproof_repository }}") assert.equal(step.with.ref, "${{ inputs.releaseproof_ref }}");
     }
   }
 });
@@ -219,4 +220,30 @@ test("only the QA job's test step is given the model key", () => {
   assert.deepEqual(Object.keys(caller.secrets).sort(), ["ANTHROPIC_API_KEY", "JIRA_API_TOKEN", "JIRA_EMAIL"]);
   assert.deepEqual(caller.permissions, { contents: "read", actions: "read", "pull-requests": "write", checks: "write" });
   assert.equal(caller.with.releaseproof_ref, "${{ github.sha }}");
+});
+
+test("a request for an application in another repository is manual only, shares no group and posts nothing there", () => {
+  // Its pull request numbers are not this repository's: it can replace no run, and none can replace it.
+  const key = (over: object) => concurrencyKey({ event: "workflow_dispatch", eventPr: "", metaPr: 14, runId: "77", thisRepo: "acme/engine", ...over });
+  assert.equal(key({}), "pr-14");
+  assert.equal(key({ metaRepo: "acme/engine" }), "pr-14");
+  assert.equal(key({ metaRepo: "other/app" }), "run-77");
+  assert.equal(key({ metaRepo: "invalid" }), "run-77");
+
+  const qa = workflow("releaseproof-qa-reusable.yml");
+  const read = (qa.jobs.build.steps as Step[]).find((s) => s.name === "Read the request")!;
+  assert.match(read.run!, /\[ "\$TRIGGER_EVENT" = "workflow_dispatch" \] \|\| \{ echo "Only a manual request may name another repository"; exit 1; \}/);
+  assert.match(read.run!, /grep -Eq '\^\[A-Za-z0-9\]/);
+  // The pull request's files and the protected material both come from the repository that was named.
+  const fetched = (qa.jobs.build.steps as Step[]).find((s) => (s.name ?? "").startsWith("Fetch exactly that commit"))!;
+  assert.equal(fetched.with!.repository, "${{ steps.request.outputs.repo }}");
+  const protectedCopy = (qa.jobs.qa.steps as Step[]).find((s) => (s.name ?? "").startsWith("Check out the application repository"))!;
+  assert.equal(protectedCopy.with!.repository, "${{ needs.build.outputs.repo }}");
+  // Nothing is posted to a repository this workflow's token does not belong to.
+  const publishStep = (qa.jobs.report.steps as Step[]).find((s) => (s.name ?? "").startsWith("Publish"))!;
+  assert.equal(publishStep.env!.POST, "${{ needs.build.outputs.external == 'true' && '--summary-only' || '' }}");
+  // The request stage cannot name a repository on a pull-request event: the input exists only for manual runs.
+  const request = workflow("releaseproof-request.yml");
+  assert.ok(request.on.workflow_dispatch.inputs.repository);
+  assert.equal(request.on.pull_request.inputs, undefined);
 });

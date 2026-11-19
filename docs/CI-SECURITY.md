@@ -38,6 +38,15 @@ request, so the commit label on that image was only as good as the pull
 request's own workflow. The build now happens in stage 2, in code a pull
 request cannot change.
 
+**An application in another repository.** A manual request may name another
+public repository. The same four stages run here, with these differences:
+the build job fetches that repository's pull request, the protected
+material comes from that repository's default branch, the run shares a
+concurrency group with nothing, and the report job posts nothing (its token
+cannot write there, and no other credential is given to it). A request
+started by a pull-request event that names another repository is refused
+before anything is fetched.
+
 ### Stage 1: request
 
 Writes the pull request number and any requested limits to an artifact.

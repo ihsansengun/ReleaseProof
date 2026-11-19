@@ -3,13 +3,18 @@ import type { PullRequestComment } from "../approval.ts";
 import type { PullRequest } from "../schema.ts";
 
 async function get(path: string): Promise<unknown> {
-  const response = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      accept: "application/vnd.github+json",
-      "user-agent": "releaseproof",
-      ...(process.env.GITHUB_TOKEN ? { authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}),
-    },
-  });
+  const request = (token: string | undefined) =>
+    fetch(`https://api.github.com${path}`, {
+      headers: {
+        accept: "application/vnd.github+json",
+        "user-agent": "releaseproof",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+    });
+  let response = await request(process.env.GITHUB_TOKEN);
+  // A workflow's token belongs to one repository. Where it is refused for a
+  // public repository elsewhere, the same public data is read without it.
+  if (process.env.GITHUB_TOKEN && [401, 403, 404].includes(response.status)) response = await request(undefined);
   if (!response.ok) throw new Error(`GitHub returned HTTP ${response.status} for ${path}.`);
   return response.json();
 }

@@ -75,7 +75,35 @@ Who may state or amend requirements, by GitHub numeric id and Jira account
 id. Read from the default branch only. See
 [design/REQUIREMENT-AUTHORITY.md](design/REQUIREMENT-AUTHORITY.md).
 
-## The two workflow files
+## Starting runs: two ways
+
+**From ReleaseProof's repository (recommended).** Nothing but the
+configuration files above goes into the application's repository: no
+workflow and no credential. A maintainer of ReleaseProof starts a run with
+Actions → "ReleaseProof request" → Run workflow, giving the application's
+repository as `owner/name` and the pull request number.
+
+- Only a manual request may name another repository; a pull-request event
+  never can.
+- The repository must be public: the workflow reads it with no credential
+  of that repository.
+- The build job fetches the pull request's commit from that repository as
+  data and builds it; requirement owners and approved documents are read
+  from that repository's default branch.
+- The model and Jira credentials stay in ReleaseProof's repository and are
+  used in the one step that always used them.
+- Nothing is posted to the application's repository: this workflow's token
+  cannot write there. The result is the run's summary, its job log and its
+  evidence artifact, in ReleaseProof's repository.
+- Whoever controls the application repository's default branch controls its
+  requirement-owner list. Name only repositories whose maintainers you trust
+  to that extent.
+
+**From the application's own repository.** Two workflow files and the
+credentials as that repository's secrets. Results are posted there as a
+Check run and a comment.
+
+## The two workflow files (second way only)
 
 Both go on the application repository's default branch. `<commit>` is a
 full ReleaseProof commit SHA, the same in both places; a branch or tag is

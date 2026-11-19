@@ -26,7 +26,7 @@ const draft: AnalysisDraft = {
 
 function sampleRun(): RunReport {
   const { analysis } = attribute(draft, sources);
-  const assertion = (id: string, requirementId: string, n: number) => ({ id, description: `held items ${id}`, kind: "number_equals" as const, expectedNumber: n, expectedText: null, expectedFormula: null, requirementId });
+  const assertion = (id: string, requirementId: string, n: number) => ({ id, description: `held items ${id}`, kind: "number_equals" as const, expectedNumber: n, expectedText: null, expectedFormula: null, requirementId, alsoVerifies: [] as string[] });
   const scenario = (id: string, assertions: ReturnType<typeof assertion>[]) => ({ id, title: `Scenario ${id}`, basis: "requirement" as const, requirementIds: ["R1"], riskIds: [], intent: "i", setup: "", fixtures: [], status: "runnable" as const, blockedReason: "", ambiguityIds: [], assertions });
   const { plan } = validatePlan(
     { scenarios: [scenario("S1", [assertion("A1", "R1", 5), assertion("A2", "R2", 99)]), scenario("S2", [assertion("A1", "R1", 5)]), scenario("S3", [assertion("A1", "R3", 1)])] },

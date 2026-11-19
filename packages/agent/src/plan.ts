@@ -23,6 +23,7 @@ Where expected values may come from:
 - Every assertion cites, in requirementId, the documented requirement its expected value follows from. A documented rule combined with observed values through a formula is fine.
 - The analysis lists the rules in force. A rule under SUPERSEDED RULES was replaced by a later approved source and is not in force: never test against it, and do not treat the application as wrong for not following it. Test the rule that replaced it.
 - A requirement marked "contested": true contradicts another approved requirement and nobody has said which holds. It cannot back an assertion. Block scenarios whose outcome depends on it and say what must be decided.
+- If one comparison verifies more than one documented requirement (for example a rule and the amendment that sets its threshold), cite the requirement the expected value follows from in requirementId and list the others in alsoVerifies. List only requirements the comparison would actually fail for if they were broken. Leave it empty otherwise.
 - Never take an expected value from the diff, from how the application currently behaves, from an inferred requirement, or from your own sense of what is reasonable. If the diff shows a number or rule that the documented requirements do not state, it is not an expectation.
 - When a rule is only partly pinned down, assert the part that is: a change between two observations, a lower or upper bound, or presence. Do not leave a documented requirement untested because one detail around it is open, and do not assert the open detail.
 - If a scenario is worth running but its expected outcome depends on an unanswered ambiguity or only on an inferred requirement, give it status "blocked", list the ambiguity ids, explain in blockedReason what must be decided, and give it no assertions. A blocked scenario with a clear question is a useful result. An invented expectation is a defect in your plan.
@@ -30,7 +31,7 @@ Where expected values may come from:
 - The application map was made without changing anything, so it is partial: screens that only appear after an action (after submitting a form, with data present, at a later step of a flow) are missing from it. Absence from the map is not a reason to block. The executor will find its way.
 
 Coverage:
-- Aim for every documented requirement to be exercised by at least one runnable scenario.
+- Aim for every documented requirement to be cited by at least one assertion of a runnable scenario, in requirementId or alsoVerifies. A requirement that a scenario merely passes through is reported as exercised, not as verified.
 - Then add risk-based scenarios (basis "risk") for the risks in the analysis wherever a documented requirement determines the expected outcome: boundaries, repetition, negative paths, other kinds of user, state after a reload.
 - At most ${maxScenarios} runnable scenarios, most valuable first. Blocked scenarios do not count towards that limit: include each one that is worth raising. Use ids S1, S2… and assertion ids A1, A2… within each scenario.
 

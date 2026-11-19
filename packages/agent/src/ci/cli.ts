@@ -13,6 +13,8 @@ import { loadPullRequest } from "../ingest/github.ts";
 import { ciBuild } from "./build.ts";
 import { publish } from "./report.ts";
 import { ciRun } from "./run.ts";
+import { buildDiagnostics, diagnosticLines } from "../report/diagnostics.ts";
+import { failurePatterns } from "../report/patterns.ts";
 
 const number = (value: string | undefined, fallback: number) => {
   const n = Number(value);
@@ -47,6 +49,7 @@ async function main(): Promise<number> {
       "trusted-root": { type: "string" },
       "image-sha256": { type: "string" },
       "verify-only": { type: "boolean", default: false },
+      "summary-only": { type: "boolean", default: false },
     },
   });
   const command = positionals[0];
@@ -117,6 +120,13 @@ async function main(): Promise<number> {
       for (const r of result.run.results) console.log(`scenario ${r.scenarioId} ${r.verdict}`);
       for (const [id, outcome] of Object.entries(result.run.confirmations ?? {})) console.log(`replay of ${id}: ${outcome}`);
     }
+    if (result.run) {
+      // Redacted, bounded, and prefixed: readable here without the evidence artifact.
+      const lines = diagnosticLines(buildDiagnostics(result.run));
+      if (lines.length > 0) console.log("diagnostics for scenarios that did not pass (redacted):");
+      for (const line of lines) console.log(line);
+      for (const p of failurePatterns(result.run)) console.log(`failure pattern ${p.id}: ${p.description}; ${p.comparisons.map((c) => `${c.scenarioId}/${c.assertionId}`).join(", ")}`);
+    }
     if (result.run) console.log(`execution mode: ${result.run.executionMode}; timings: ${result.run.timings.map((t) => `${t.stage} ${t.seconds}s`).join(", ")}`);
     // A verification that did not pass must be visible as a failed job: nothing else reports it.
     if (values["verify-only"] && result.status === "error") return 1;
@@ -128,7 +138,7 @@ async function main(): Promise<number> {
     const token = process.env.GITHUB_TOKEN;
     if (!token) throw new Error("GITHUB_TOKEN is not set.");
     const raw = JSON.parse(await readFile(values.result!, "utf8"));
-    const rendered = await publish(raw, values["run-url"], token);
+    const rendered = await publish(raw, values["run-url"], token, { post: !values["summary-only"] });
     await writeFile(path.join(path.dirname(values.result!), "comment.md"), rendered.body);
     console.log(`${rendered.conclusion}: ${rendered.title} (${rendered.posted.join(", ") || "nothing posted"})`);
     return 0;

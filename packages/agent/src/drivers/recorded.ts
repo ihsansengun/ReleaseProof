@@ -27,6 +27,7 @@ export function planToDraft(plan: RunReport["plan"]): PlanDraft {
         expectedText: a.expected && "literal" in a.expected && typeof a.expected.literal === "string" ? a.expected.literal : null,
         expectedFormula: a.expected && "formula" in a.expected ? a.expected.formula : null,
         requirementId: a.requirementId ?? "",
+        alsoVerifies: a.alsoVerifies ?? [],
       })),
     })),
   };

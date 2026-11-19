@@ -13,8 +13,11 @@ import { pathToFileURL } from "node:url";
 
 const number = (value) => (/^[1-9]\d{0,8}$/.test(String(value ?? "")) ? String(value) : undefined);
 
-export function concurrencyKey({ event, eventPr, metaPr, runId }) {
+export function concurrencyKey({ event, eventPr, metaPr, runId, metaRepo, thisRepo }) {
   const own = `run-${/^\d+$/.test(String(runId ?? "")) ? runId : "unknown"}`;
+  // A request for an application in another repository shares a group with
+  // nothing: its pull request numbers are not this repository's.
+  if (metaRepo !== undefined && metaRepo !== "" && metaRepo !== thisRepo) return own;
   if (event === "pull_request") return number(eventPr) ? `pr-${number(eventPr)}` : own;
   if (event === "workflow_dispatch") return number(metaPr) ? `pr-${number(metaPr)}` : own;
   return own;
@@ -22,12 +25,15 @@ export function concurrencyKey({ event, eventPr, metaPr, runId }) {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   let metaPr;
+  let metaRepo;
   try {
-    metaPr = JSON.parse(readFileSync(process.argv[2], "utf8")).pr;
+    const meta = JSON.parse(readFileSync(process.argv[2], "utf8"));
+    metaPr = meta.pr;
+    metaRepo = typeof meta.repo === "string" ? meta.repo : meta.repo === undefined ? undefined : "invalid";
   } catch {
     metaPr = undefined;
   }
   console.log(
-    concurrencyKey({ event: process.env.TRIGGER_EVENT, eventPr: process.env.EVENT_PR, metaPr, runId: process.env.RUN_ID }),
+    concurrencyKey({ event: process.env.TRIGGER_EVENT, eventPr: process.env.EVENT_PR, metaPr, runId: process.env.RUN_ID, metaRepo, thisRepo: process.env.THIS_REPO }),
   );
 }

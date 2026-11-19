@@ -130,7 +130,15 @@ export function validatePlan(
         continue;
       }
       assertionIds.add(a.id);
-      assertions.push({ id: a.id, description: a.description, kind: a.kind, expected, requirementId: a.requirementId, provenance });
+      // Further requirements the comparison is credited to. Only approved,
+      // uncontested ones count; anything else is dropped and noted.
+      const alsoVerifies = [...new Set(a.alsoVerifies ?? [])].filter((id) => {
+        const other = requirement.get(id);
+        const usable = id !== a.requirementId && other?.kind === "documented" && other.trust === "authoritative" && !other.contested;
+        if (!usable && id !== a.requirementId) trimmed.push(`${where} lists "${id}" as also verified, which is not an approved requirement; the link was removed.`);
+        return usable;
+      });
+      assertions.push({ id: a.id, description: a.description, kind: a.kind, expected, requirementId: a.requirementId, ...(alsoVerifies.length ? { alsoVerifies } : {}), provenance });
     }
 
     if (status === "runnable" && assertions.length === 0) {
