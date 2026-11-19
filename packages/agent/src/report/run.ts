@@ -40,7 +40,8 @@ export function renderRunReport(run: RunReport): string {
     `- Scenarios planned but not run: ${blocked.length} (waiting on a decision or a missing capability)`,
     `- Documented requirements: ${assessment.counts.verified} verified, ${assessment.counts.failed} failed, ${assessment.counts.blocked} blocked, ${assessment.counts.unverified} unverified, ${assessment.counts["not planned"]} not planned (of ${documented.length})`,
     `- Clarification requests: ${run.analysis.ambiguities.length + run.plan.clarifications.length}`,
-    `- Environment: ${run.environment.baseUrl}, commit \`${run.environment.deployedSha ?? "not reported"}\``,
+    `- Environment: ${run.environment.baseUrl}, commit \`${run.environment.deployedSha ?? "not reported by the application"}\`${!run.environment.deployedSha && run.environment.commitEstablished ? `; established otherwise: ${run.environment.commitEstablished}` : ""}`,
+    ...(run.environment.instances === "per-scenario" ? ["- Every scenario, and every repeat of one, ran against its own freshly started application."] : []),
     `- Execution mode: ${MODES[run.executionMode ?? "recorded"]}`,
     `- Model work done by: ${run.driver}`,
   );

@@ -10,7 +10,8 @@ Who runs your plan: a separate executor that has never seen the application. It 
 Each scenario:
 - One coherent flow with a clear end. Prefer several small scenarios to one long one; the executor has about 60 tool calls.
 - "intent": the objective in plain language: what to do, in what sequence, and at which moments to look at what. Name the observations to record and when. Do not put selectors or expected values in it, and do not describe UI details you cannot see in the application map.
-- "fixtures": the test data it needs, chosen from the available fixture types, each with an alias. Every scenario gets its own fresh data, so do not rely on anything another scenario did.
+- "fixtures": the test data it needs, chosen from the available fixture types and existing accounts, each with an alias. Do not rely on anything another scenario did.
+- "setup": data the scenario needs that no fixture provides, described in plain language for the executor to create through the application's own interface before the checks, signed in with one of the accounts (for example another user, or a record to act on). Keep it to what the scenario needs; it uses the same tool-call allowance. Leave it empty when the fixtures are enough. Never put an expected value in it. If the data cannot be created through the interface either, block the scenario.
 - "assertions": deterministic comparisons that code will carry out.
   - number_equals, number_at_least, number_at_most: set expectedNumber, or expectedFormula for arithmetic over named observations (+ - * / parentheses, floor, ceil, round, abs, min, max).
   - text_equals, text_contains: set expectedText.
@@ -25,7 +26,7 @@ Where expected values may come from:
 - Never take an expected value from the diff, from how the application currently behaves, from an inferred requirement, or from your own sense of what is reasonable. If the diff shows a number or rule that the documented requirements do not state, it is not an expectation.
 - When a rule is only partly pinned down, assert the part that is: a change between two observations, a lower or upper bound, or presence. Do not leave a documented requirement untested because one detail around it is open, and do not assert the open detail.
 - If a scenario is worth running but its expected outcome depends on an unanswered ambiguity or only on an inferred requirement, give it status "blocked", list the ambiguity ids, explain in blockedReason what must be decided, and give it no assertions. A blocked scenario with a clear question is a useful result. An invented expectation is a defect in your plan.
-- If a scenario needs something this environment cannot provide (test data with no fixture, an external system marked unavailable), block it and say what is missing.
+- If a scenario needs something this environment cannot provide (test data that neither a fixture nor setup through the interface can supply, an external system marked unavailable), block it and say what is missing.
 - The application map was made without changing anything, so it is partial: screens that only appear after an action (after submitting a form, with data present, at a later step of a flow) are missing from it. Absence from the map is not a reason to block. The executor will find its way.
 
 Coverage:

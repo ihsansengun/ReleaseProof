@@ -183,8 +183,16 @@ export function renderEnvironment(manifest: Manifest): string {
   const fixtures = Object.entries(manifest.fixtures)
     .map(([type, f]) => `- ${type}: ${f.description}`)
     .join("\n");
+  const accounts = Object.entries(manifest.accounts)
+    .map(([type, a]) => `- ${type}: ${a.description} (an account that already exists; request it like a fixture, with this name as its type)`)
+    .join("\n");
+  const instances =
+    manifest.start?.instances === "per-scenario"
+      ? "Every scenario runs against its own freshly started application: nothing one scenario creates exists in another, and anything a scenario needs beyond the accounts above must be created within it."
+      : "All scenarios share one running application.";
   return [
-    section("TEST DATA FIXTURES AVAILABLE", fixtures || "(none)"),
+    section("TEST DATA FIXTURES AVAILABLE", [fixtures, accounts].filter(Boolean).join("\n") || "(none)"),
+    section("APPLICATION STATE", instances),
     section("EXTERNAL SYSTEMS", JSON.stringify(manifest.integrations, null, 2)),
   ].join("\n\n");
 }

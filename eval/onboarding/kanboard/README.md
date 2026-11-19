@@ -107,3 +107,22 @@ limits of the environment, not on Kanboard.
   "connection refused" on port 22, where the real sandbox drops the packet.
 - One pass, one commit, one happy path. It says the application can run and
   be driven; it says nothing yet about how well ReleaseProof tests it.
+
+## Follow-up, same day: through the engine's own sandbox code
+
+After the onboarding changes to the engine, the same commit was started by
+`packages/agent/src/ci/sandbox.ts` itself, twice, as two separate
+instances, and checked by the trusted-side isolation check. No model.
+
+- With `Dockerfile.local` the isolation check **refused the image**: the
+  upstream image it starts from declares volumes, and a declared volume is
+  storage outside the sandbox's control. This is the check working as
+  intended, and a rule for the real test Dockerfile: declare no volumes.
+- With the same runtime flattened into an image that declares nothing, the
+  check passed for both instances: network blocked with no address reached
+  (this time including the host, with the firewall rule in place), root
+  filesystem read-only, user 10001, no unexpected environment. Both
+  instances answered `healthcheck.php` with 200.
+
+Still not verified: `Dockerfile.releaseproof` itself, and any of this on a
+GitHub runner.

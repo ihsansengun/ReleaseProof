@@ -57,7 +57,7 @@ export function validatePlan(
 
     const fixtures: Record<string, string> = {};
     for (const f of d.fixtures) {
-      if (!manifest.fixtures[f.type]) {
+      if (!manifest.fixtures[f.type] && !manifest.accounts[f.type]) {
         problems.push(`Scenario ${d.id} needs a "${f.type}" fixture, which this environment does not declare.`);
         block(`Needs test data of type "${f.type}", which the environment cannot prepare.`);
       } else if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(f.alias) || fixtures[f.alias]) {
@@ -150,6 +150,7 @@ export function validatePlan(
         basis: d.basis,
         requirementIds: known(d.requirementIds, requirement, "requirement"),
         intent: d.intent,
+        setup: d.setup?.trim() || undefined,
         fixtures,
         assertions: status === "runnable" ? assertions : [],
       },

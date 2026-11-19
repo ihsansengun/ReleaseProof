@@ -54,6 +54,7 @@ const scenario = (requirementId: string, expectedNumber: number): PlanDraft => (
       requirementIds: [requirementId],
       riskIds: [],
       intent: "i",
+      setup: "",
       fixtures: [],
       status: "runnable",
       blockedReason: "",

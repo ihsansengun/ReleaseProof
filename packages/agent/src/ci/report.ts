@@ -61,7 +61,7 @@ export const ReportInput = z.object({
       // Absent in runs made before modes were recorded; those are treated as recorded.
       executionMode: z.enum(["autonomous", "replay", "recorded"]).default("recorded"),
       stopped: z.string().optional(),
-      environment: z.object({ deployedSha: z.string().optional() }),
+      environment: z.object({ deployedSha: z.string().optional(), commitEstablished: z.string().optional(), instances: z.string().optional() }),
       context: z
         .object({
           sources: z.array(z.object({ id: z.string(), kind: z.string(), trust: z.string(), origin: z.string(), basis: z.string() })).optional(),
@@ -200,7 +200,13 @@ export function render(input: ReportInput, runUrl: string): Rendered {
       : []),
     "### Execution results",
     "",
-    `On \`${run.pullRequest.headSha.slice(0, 10)}\` (${commitVerified ? "the application under test reported this commit" : "**commit not confirmed by the application**"})`,
+    `On \`${run.pullRequest.headSha.slice(0, 10)}\` (${
+      commitVerified
+        ? "the application under test reported this commit"
+        : !run.environment.deployedSha && run.environment.commitEstablished
+          ? `the application has no way to report its commit; ${safe(run.environment.commitEstablished, 240)}`
+          : "**commit not confirmed by the application**"
+    })`,
     "",
     "| | Passed / verified | Failed | Blocked | Unverified | Not planned |",
     "|---|---|---|---|---|---|",

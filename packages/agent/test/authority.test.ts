@@ -207,7 +207,7 @@ test("an expected value cannot be invented: assertions need an approved requirem
   );
   const assertion = (id: string, requirementId: string, expectedNumber: number) => ({ id, description: "items held", kind: "number_equals" as const, expectedNumber, expectedText: null, expectedFormula: null, requirementId });
   const scenario = (id: string, assertions: ReturnType<typeof assertion>[]): PlanDraft["scenarios"][number] => ({
-    id, title: id, basis: "requirement", requirementIds: ["R1"], riskIds: [], intent: "hold items", fixtures: [{ alias: "user", type: "account" }], status: "runnable", blockedReason: "", ambiguityIds: [], assertions,
+    id, title: id, basis: "requirement", requirementIds: ["R1"], riskIds: [], intent: "hold items", setup: "", fixtures: [{ alias: "user", type: "account" }], status: "runnable", blockedReason: "", ambiguityIds: [], assertions,
   });
   const { plan } = validatePlan(
     {

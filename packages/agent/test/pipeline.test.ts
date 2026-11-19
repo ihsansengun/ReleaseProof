@@ -49,6 +49,7 @@ const scenario = (over: Partial<PlanDraft["scenarios"][number]>): PlanDraft["sce
   requirementIds: ["R1"],
   riskIds: [],
   intent: "do it",
+  setup: "",
   fixtures: [{ alias: "user", type: "account" }],
   status: "runnable",
   blockedReason: "",

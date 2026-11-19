@@ -24,7 +24,8 @@ import { retestRun, runPipeline } from "../pipeline.ts";
 import { readProtectedCheckout } from "../protected.ts";
 import { fingerprint } from "../sources.ts";
 import type { RunReport } from "../schema.ts";
-import { IMAGE, probeIsolation, sandboxLogs, startSandbox, stopSandbox, type Isolation } from "./sandbox.ts";
+import { checkInstance, IMAGE, probeIsolation, sandboxLogs, startInstance, startSandbox, stopInstance, stopSandbox, type Isolation } from "./sandbox.ts";
+import type { AppAccess } from "../execute/run.ts";
 
 const run = promisify(execFile);
 
@@ -163,6 +164,7 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
   // Credentials are taken out of this process's environment as soon as they
   // are read. Everything started later (container client, browser, probes)
   // also gets an allow-listed environment, so this is the second of two locks.
+  const instanceLogs: string[] = [];
   const apiKey = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
   const jira = takeJiraCredentials(process.env);
@@ -199,7 +201,8 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
       return finish("skipped", "Pull requests from forks need a maintainer's go-ahead, which is not implemented yet.");
     }
     if (meta.skip) return finish("skipped", meta.skip);
-    if (!meta.appDir || !pullRequest.files.some((f) => f.path.startsWith(`${meta.appDir}/`))) {
+    // An application at the top of its repository has "." as its directory, and every file belongs to it.
+    if (!meta.appDir || !pullRequest.files.some((f) => meta.appDir === "." || f.path.startsWith(`${meta.appDir}/`))) {
       return finish("error", "The build names an application directory the pull request does not change.");
     }
 
@@ -258,6 +261,39 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     result.isolation = await probeIsolation(declared.start);
     if (!result.isolation.ok) return finish("error", "The sandbox isolation check failed; nothing was tested.");
 
+    // What this stage itself knows about the application it started, for
+    // applications that cannot report their commit, and a way to start one
+    // application per scenario where the manifest asks for that.
+    const start = declared.start;
+    let started = 0;
+    let unsafe: string | undefined;
+    const app: AppAccess = {
+      commitEstablished: `this stage started the image labelled with commit ${meta.headSha}, which is the commit the code host reports for the pull request`,
+      instance:
+        start.instances !== "per-scenario"
+          ? undefined
+          : async (label) => {
+              if (unsafe) throw new Error(unsafe);
+              const { baseUrl: address, container } = await startInstance({ start, sha: meta.headSha, label: `${++started}-${label}` });
+              // The full isolation check passed on the first application. Each
+              // further one must have been started with the same settings.
+              const problems = await checkInstance(start, container);
+              if (problems.length > 0) {
+                unsafe = `an application container was not isolated as required (${problems.slice(0, 3).join("; ")}); no further scenario is started`;
+                await stopInstance(container);
+                throw new Error(unsafe);
+              }
+              return {
+                baseUrl: address,
+                release: async () => {
+                  instanceLogs.push(`--- ${container}\n${await sandboxLogs(60, container)}`);
+                  await stopInstance(container);
+                },
+              };
+            },
+    };
+    console.log(`application: ${start.instances === "per-scenario" ? "a new container for every scenario" : "one container for the run"}; commit established by ${declared.version ? "the application's version endpoint" : "this stage's own start of the labelled image"}`);
+
     const requestedFile = path.join(options.incoming, "limits.json");
     const effective = tighten(
       { limits: options.limits, maxScenarios: options.maxScenarios },
@@ -298,7 +334,7 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     console.log(retestable ? "mode: re-running the previous run's scenarios" : "mode: planning afresh");
 
     const runDir = path.join(options.outDir, "run");
-    const common = { pullRequest, manifest, driver, budget, outDir: runDir, concurrency: options.concurrency };
+    const common = { pullRequest, manifest, driver, budget, outDir: runDir, concurrency: options.concurrency, app };
     result.run = retestable
       ? await retestRun({ ...common, previous: previous! })
       : await runPipeline({
@@ -315,7 +351,7 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     return finish("error", `ReleaseProof could not complete: ${(error as Error).message.split("\n")[0]!.slice(0, 300)}`);
   } finally {
     await mkdir(options.outDir, { recursive: true });
-    const log = await sandboxLogs();
+    const log = [await sandboxLogs(), ...instanceLogs].join("\n");
     await writeFile(path.join(options.outDir, "application.log"), log);
     console.log("application log (last lines, as text):");
     for (const line of logTail(log)) console.log(line);

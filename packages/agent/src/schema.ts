@@ -47,6 +47,11 @@ export const Scenario = z.object({
   requirementIds: z.array(z.string()).default([]),
   /** What to do, in plain language. Never contains expected values. */
   intent: z.string(),
+  /**
+   * Data the scenario needs that no fixture provides, to be created through
+   * the application's own interface before the checks. Plain language.
+   */
+  setup: z.string().optional(),
   /** alias -> fixture type declared in the environment manifest. */
   fixtures: z.record(z.string(), z.string()).default({}),
   assertions: z.array(Assertion),
@@ -85,12 +90,57 @@ export const Manifest = z.object({
       z.object({ mode: z.enum(["real", "simulated", "unavailable"]), notes: z.string().optional() }),
     )
     .default({}),
+  /**
+   * Accounts the application already has when it starts, for applications
+   * that offer no way to create test accounts on request. These are test
+   * credentials of a throwaway installation, kept in a file anyone with the
+   * repository can read: never real ones.
+   */
+  accounts: z
+    .record(
+      z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/),
+      z.object({ description: z.string(), username: z.string().min(1), password: z.string().min(1) }),
+    )
+    .default({}),
   /** How to build and start the application in an isolated container. */
   start: z
     .object({
       install: z.string().optional(),
       build: z.string().optional(),
-      run: z.string(),
+      /** Command that starts the application. Not used with `dockerfile`, where the image says how it starts. */
+      run: z.string().optional(),
+      /**
+       * A Dockerfile of the application's own, relative to the manifest,
+       * for applications the generic image cannot run. It is built with the
+       * manifest's directory as its context. Whatever it says about user,
+       * volumes or network, the container is started with the sandbox's
+       * restrictions.
+       */
+      dockerfile: z
+        .string()
+        .regex(/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/)
+        .refine((p) => !p.split("/").includes(".."), "must stay inside the application directory")
+        .optional(),
+      /**
+       * Directories the application must be able to write to. Each becomes a
+       * temporary in-memory directory; everything else stays read-only.
+       */
+      writable: z
+        .array(
+          z
+            .string()
+            .regex(/^(\/[A-Za-z0-9._-]+)+$/)
+            .refine((p) => !p.split("/").some((part) => part === ".." || part === "."), "must be a plain absolute path"),
+        )
+        .max(5)
+        .default([]),
+      /**
+       * shared        one application for the whole run
+       * per-scenario  a new application for every scenario and every repeat,
+       *               so scenarios cannot affect each other and each starts
+       *               from the same state
+       */
+      instances: z.enum(["shared", "per-scenario"]).default("shared"),
       port: z.number().int().min(1).max(65535),
       /** Environment for the application process. Never secrets. */
       env: z.record(z.string().regex(/^[A-Z_][A-Z0-9_]*$/), z.string()).default({}),
@@ -100,6 +150,8 @@ export const Manifest = z.object({
         .regex(/^[A-Z_][A-Z0-9_]*$/)
         .optional(),
     })
+    .refine((s) => (s.dockerfile === undefined) !== (s.run === undefined), "needs exactly one of run and dockerfile")
+    .refine((s) => s.dockerfile === undefined || (s.install === undefined && s.build === undefined), "install and build are not used with dockerfile")
     .optional(),
   /** Documentation and API contracts to read, relative to the manifest. */
   docs: z.array(z.string()).default([]),
@@ -157,7 +209,13 @@ export type ScenarioResult = {
   driver?: string;
   verdict: Verdict;
   reason: string;
-  environment: { baseUrl: string; deployedSha?: string; expectedSha?: string };
+  environment: {
+    baseUrl: string;
+    deployedSha?: string;
+    expectedSha?: string;
+    /** How the commit was established when the application cannot report it. */
+    commitEstablished?: string;
+  };
   assertionResults: AssertionResult[];
   observations: Record<string, number>;
   steps: Step[];
@@ -362,6 +420,8 @@ export const PlanDraft = z.object({
       requirementIds: z.array(z.string()),
       riskIds: z.array(z.string()),
       intent: z.string(),
+      /** Data to create through the application's interface first. Empty if none. */
+      setup: z.string(),
       fixtures: z.array(z.object({ alias: z.string(), type: z.string() })),
       status: z.enum(["runnable", "blocked"]),
       /** Why it cannot run, if blocked. Empty otherwise. */
@@ -406,7 +466,14 @@ export type Plan = {
 export type RunReport = {
   ticketKey: string;
   pullRequest: { repo: string; number: number; headSha: string; title: string };
-  environment: { baseUrl: string; deployedSha?: string };
+  environment: {
+    baseUrl: string;
+    deployedSha?: string;
+    /** How the commit was established when the application cannot report it. */
+    commitEstablished?: string;
+    /** Whether every scenario ran against its own freshly started application. */
+    instances?: "shared" | "per-scenario";
+  };
   driver: string;
   context: {
     docs: string[];

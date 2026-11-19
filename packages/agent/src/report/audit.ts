@@ -8,7 +8,7 @@
 import type { RunReport } from "../schema.ts";
 
 export type AuditTrail = {
-  run: { ticket: string; pullRequest: string; commit: string; deployedCommit?: string; startedAt: string; executionMode: string; model: string };
+  run: { ticket: string; pullRequest: string; commit: string; deployedCommit?: string; commitEstablished?: string; startedAt: string; executionMode: string; model: string };
   authority: {
     protectedRevision?: string;
     owners?: { github: { id: number; login?: string }[]; jira: { accountId: string; name?: string }[]; fixtureAuthors: string[] };
@@ -109,6 +109,7 @@ export function buildAuditTrail(run: RunReport): AuditTrail {
       pullRequest: `${run.pullRequest.repo}#${run.pullRequest.number}`,
       commit: run.pullRequest.headSha,
       deployedCommit: run.environment.deployedSha,
+      commitEstablished: run.environment.deployedSha ? undefined : run.environment.commitEstablished,
       startedAt: run.startedAt,
       executionMode: run.executionMode ?? "recorded",
       model: run.driver,
@@ -156,7 +157,7 @@ export function renderAuditTrail(trail: AuditTrail): string {
     "",
     "For every expected value that was compared: where its authority came from, what was expected, and what was observed. Built by code from the run's records.",
     "",
-    `- Commit tested: \`${cell(trail.run.commit, 40)}\`${trail.run.deployedCommit ? ` (the application reported \`${cell(trail.run.deployedCommit, 40)}\`)` : ""}`,
+    `- Commit tested: \`${cell(trail.run.commit, 40)}\`${trail.run.deployedCommit ? ` (the application reported \`${cell(trail.run.deployedCommit, 40)}\`)` : trail.run.commitEstablished ? ` (not reported by the application; ${cell(trail.run.commitEstablished, 240)})` : ""}`,
     `- Started: ${cell(trail.run.startedAt)} · mode: ${cell(trail.run.executionMode)} · model: ${cell(trail.run.model, 160)}`,
     `- Protected revision for requirement documents and owners: \`${cell(trail.authority.protectedRevision ?? "not recorded", 40)}\``,
     `- Fingerprint of the authoritative sources: \`${cell(trail.authority.fingerprint ?? "not recorded", 64)}\``,

@@ -12,10 +12,23 @@ import { replaySteps } from "./replay.ts";
 import { ALL_TOOLS, requestAllowed, type Session } from "./tools.ts";
 import { computeVerdict } from "./verdict.ts";
 
+/** What the caller provides about the application beyond its manifest. Built by trusted code. */
+export type AppAccess = {
+  /**
+   * How the caller itself established which commit is running. Used only
+   * for applications that have no version endpoint: without it, a scenario
+   * for such an application is not executed.
+   */
+  commitEstablished?: string;
+  /** Starts an application of its own for one scenario; `release` stops it. */
+  instance?: (label: string) => Promise<{ baseUrl: string; release: () => Promise<void> }>;
+};
+
 export type SessionOptions = {
   scenario: Scenario;
   manifest: Manifest;
   outDir: string;
+  app?: AppAccess;
   /** If set, the environment must report this commit or nothing is executed. */
   expectedSha?: string;
   /** State-changing requests allowed out of the browser. Default: all. */
@@ -30,6 +43,7 @@ export type OpenSession = {
   fixtures: Record<string, unknown>;
   sha?: string;
   expectedSha?: string;
+  commitEstablished?: string;
   /** The application server's current date (UTC), from its response headers. */
   serverDate?: string;
   startedAt: Date;
@@ -84,26 +98,38 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   let sha: string | undefined;
   let serverDate: string | undefined;
   let fixtures: Record<string, unknown> = {};
+  // An application with no version endpoint cannot say which commit it is.
+  // Then the caller's own knowledge of what it started stands in, if it has any.
+  const commitEstablished = manifest.version ? undefined : options.app?.commitEstablished;
   try {
     sha = await deployedSha(context.request, manifest);
     const header = (await context.request.get(manifest.baseUrl, { maxRedirects: 0 })).headers()["date"];
     if (header && !Number.isNaN(Date.parse(header))) serverDate = new Date(header).toISOString().slice(0, 10);
-    if (options.expectedSha && sha !== options.expectedSha) {
+    if (options.expectedSha && sha !== options.expectedSha && !commitEstablished) {
       session.outcome = {
         kind: "blocked",
-        reason: `The environment runs commit ${sha ?? "unknown"}, not ${options.expectedSha}. Nothing was executed.`,
+        reason: manifest.version
+          ? `The environment runs commit ${sha ?? "unknown"}, not ${options.expectedSha}. Nothing was executed.`
+          : `The application has no version endpoint and nothing else establishes that it runs commit ${options.expectedSha}. Nothing was executed.`,
       };
     } else {
-      const raw = await createFixtures(context.request, manifest, scenario.id, scenario.fixtures);
+      // Accounts the application ships with need no request; the rest are created through its endpoints.
+      const wanted = Object.entries(scenario.fixtures);
+      const created = Object.fromEntries(wanted.filter(([, type]) => !manifest.accounts[type]));
+      const raw = await createFixtures(context.request, manifest, scenario.id, created);
       const extra = Object.fromEntries(
-        Object.entries(scenario.fixtures).map(([alias, type]) => [alias, manifest.fixtures[type]?.secretFields ?? []]),
+        Object.entries(created).map(([alias, type]) => [alias, manifest.fixtures[type]?.secretFields ?? []]),
       );
       fixtures = session.vault.maskFixtures(raw, extra);
+      for (const [alias, type] of wanted) {
+        const account = manifest.accounts[type];
+        if (account) fixtures[alias] = { existingAccount: account.description, username: account.username, password: session.vault.declared(`${alias}.password`, account.password) };
+      }
     }
   } catch (error) {
     session.outcome = { kind: "blocked", reason: `Environment error: ${(error as Error).message.split("\n")[0]}` };
   }
-  return { session, browser, manifest, fixtures, sha, expectedSha: options.expectedSha, serverDate, startedAt };
+  return { session, browser, manifest, fixtures, sha, expectedSha: options.expectedSha, commitEstablished, serverDate, startedAt };
 }
 
 /** Stops the browser, computes the verdict and writes result.json and report.md. */
@@ -124,7 +150,7 @@ export async function closeSession(
     driver: info.driver,
     verdict,
     reason: session.vault.scrub(reason),
-    environment: { baseUrl: session.baseUrl, deployedSha: open.sha, expectedSha: open.expectedSha },
+    environment: { baseUrl: session.baseUrl, deployedSha: open.sha, expectedSha: open.expectedSha, commitEstablished: open.commitEstablished },
     assertionResults: session.assertionResults,
     observations: session.observations,
     steps: session.steps,
@@ -138,6 +164,27 @@ export async function closeSession(
   return result;
 }
 
+/** A scenario whose application never came up: blocked, with nothing executed. */
+async function notStarted(options: RunOptions, reason: string): Promise<ScenarioResult> {
+  await mkdir(options.outDir, { recursive: true });
+  const result: ScenarioResult = {
+    scenarioId: options.scenario.id,
+    title: options.scenario.title,
+    mode: options.mode.kind,
+    verdict: "blocked",
+    reason,
+    environment: { baseUrl: options.manifest.baseUrl },
+    assertionResults: [],
+    observations: {},
+    steps: [],
+    evidence: { dir: options.outDir },
+    startedAt: new Date().toISOString(),
+    durationMs: 0,
+  };
+  await writeFile(path.join(options.outDir, "result.json"), JSON.stringify(result, null, 2));
+  return result;
+}
+
 export type RunOptions = SessionOptions & {
   maxToolCalls?: number;
   mode: { kind: "agent"; driver: Driver } | { kind: "replay"; steps: Step[] };
@@ -145,6 +192,22 @@ export type RunOptions = SessionOptions & {
 
 /** Runs one scenario start to finish, driven by a model or by a recording. */
 export async function runScenario(options: RunOptions): Promise<ScenarioResult> {
+  // With an application per scenario, this scenario's is started now and
+  // stopped when the scenario ends, whatever happens in between.
+  if (options.app?.instance) {
+    const { instance, ...rest } = options.app;
+    let started: Awaited<ReturnType<typeof instance>>;
+    try {
+      started = await instance(`${options.mode.kind}-${options.scenario.id}`);
+    } catch (error) {
+      return notStarted(options, `The application could not be started for this scenario: ${(error as Error).message.split("\n")[0]!.slice(0, 200)}`);
+    }
+    try {
+      return await runScenario({ ...options, app: rest, manifest: { ...options.manifest, baseUrl: started.baseUrl } });
+    } finally {
+      await started.release().catch(() => {});
+    }
+  }
   const open = await openSession(options);
   let usage: Usage | undefined;
   if (!open.session.outcome) {

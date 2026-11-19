@@ -69,7 +69,18 @@ export async function ciBuild(options: {
   if (manifest instanceof Error) return done(`The manifest of ${appDir} is not valid: ${manifest.message.split("\n")[0]}`);
   if (!manifest.start) return done(`The manifest of ${appDir} has no "start" section, so the application cannot be started in CI.`);
 
-  await buildImage({ contextDir: prDir, dockerfile: options.dockerfile, start: manifest.start, sha: headSha });
+  // An application may bring its own Dockerfile. It is pull-request content
+  // like any other: it must be a regular file inside the application
+  // directory, and it only ever runs inside the build.
+  let dockerfile = options.dockerfile;
+  let contextDir = prDir;
+  if (manifest.start.dockerfile) {
+    const own = await resolveDoc(path.join(prDir, appDir), manifest.start.dockerfile);
+    if ("refused" in own) return done(`The Dockerfile the manifest of ${appDir} names is ${own.refused}.`);
+    dockerfile = own.file;
+    contextDir = path.resolve(prDir, appDir);
+  }
+  await buildImage({ contextDir, dockerfile, start: manifest.start, sha: headSha });
   await run("docker", ["save", "--output", path.join(outDir, "image.tar"), IMAGE], { timeout: 10 * 60_000 });
 
   // The manifest and the documents it lists travel as plain files.

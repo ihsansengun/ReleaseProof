@@ -6,7 +6,7 @@ import { analyse } from "./analyse.ts";
 import type { Budget } from "./budget.ts";
 import { discover } from "./discover.ts";
 import type { Driver } from "./drivers/driver.ts";
-import { runScenario } from "./execute/run.ts";
+import { runScenario, type AppAccess } from "./execute/run.ts";
 import { buildContext, type AuthorityInputs } from "./ingest/context.ts";
 import { fingerprint } from "./sources.ts";
 import { plan as makePlan } from "./plan.ts";
@@ -28,6 +28,8 @@ export type PipelineOptions = {
   concurrency: number;
   /** Skip the check that the environment runs the pull request's head commit. */
   allowShaMismatch?: boolean;
+  /** What the caller established about the running application, and how to get one per scenario. */
+  app?: AppAccess;
 };
 
 /** Runs `worker` over `items`, at most `limit` at a time, keeping their positions. */
@@ -113,7 +115,11 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
       headSha: options.pullRequest.headSha,
       title: options.pullRequest.title,
     },
-    environment: { baseUrl: manifest.baseUrl },
+    environment: {
+      baseUrl: manifest.baseUrl,
+      commitEstablished: manifest.version ? undefined : options.app?.commitEstablished,
+      instances: options.app?.instance ? "per-scenario" : "shared",
+    },
     driver: driver.label,
     executionMode: driver.live ? "autonomous" : "recorded",
     context: { docs: [], changedFiles: [], omitted: [] },
@@ -174,6 +180,7 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
         scenario,
         manifest,
         expectedSha,
+        app: options.app,
         outDir: path.join(outDir, "scenarios", scenario.id),
         mode: { kind: "agent", driver },
       });
@@ -190,6 +197,7 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
         scenario,
         manifest,
         expectedSha,
+        app: options.app,
         outDir: path.join(outDir, "confirmations", scenario.id),
         mode: { kind: "replay", steps: result.steps },
       });
@@ -217,6 +225,7 @@ export async function retestRun(options: {
   outDir: string;
   concurrency: number;
   allowShaMismatch?: boolean;
+  app?: AppAccess;
 }): Promise<RunReport> {
   const { previous, manifest, driver, budget, outDir } = options;
   await mkdir(outDir, { recursive: true });
@@ -228,7 +237,7 @@ export async function retestRun(options: {
   const results = await timed("retest", () =>
     pool(previous.results, options.concurrency, async (before) => {
       const scenario = previous.plan.scenarios.find((s) => s.scenario.id === before.scenarioId)!.scenario;
-      const base = { scenario, manifest, expectedSha };
+      const base = { scenario, manifest, expectedSha, app: options.app };
       let how: "replay" | "model" = "replay";
       let after =
         before.steps.length > 0

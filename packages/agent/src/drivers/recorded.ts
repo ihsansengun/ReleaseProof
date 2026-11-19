@@ -14,6 +14,7 @@ export function planToDraft(plan: RunReport["plan"]): PlanDraft {
       requirementIds: p.scenario.requirementIds,
       riskIds: p.riskIds,
       intent: p.scenario.intent,
+      setup: p.scenario.setup ?? "",
       fixtures: Object.entries(p.scenario.fixtures).map(([alias, type]) => ({ alias, type })),
       status: p.status,
       blockedReason: p.blockedReason,
