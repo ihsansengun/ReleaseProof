@@ -1,6 +1,7 @@
 import type { ApprovalDecision } from "./approval.ts";
 import type { Authority, DocChange, SourceRecord, Supersession, Trust } from "./sources.ts";
 import { z } from "zod";
+import { ASPECTS, type Aspect } from "./select.ts";
 import { Unit } from "./units.ts";
 import type { UsageSummary } from "./budget.ts";
 
@@ -214,6 +215,42 @@ export const Step = z.object({
 });
 export type Step = z.infer<typeof Step>;
 
+/**
+ * What stands behind one comparison, assembled by code at the moment it was
+ * made. It does not depend on the step listing, and nothing in it is written
+ * by a model. Identities are fixture aliases; secrets never enter it.
+ */
+export const Evidence = z.object({
+  /** The step of the scenario at which the comparison was made. */
+  step: z.number(),
+  /** The approved requirement the expected value rests on. */
+  requirement: z.object({ id: z.string(), sourceId: z.string().optional(), quote: z.string().optional() }).optional(),
+  /** The expected value as the plan fixed it, and for a formula the observations it was computed from. */
+  expected: z.object({ literal: z.union([z.number(), z.string()]).optional(), formula: z.string().optional(), kind: z.string(), unit: z.string().optional() }),
+  /** Whose credentials were last entered in this browser session: a fixture alias, and the step. */
+  actor: z.object({ alias: z.string(), step: z.number() }).optional(),
+  /** What was looked at: the page, or the API call whose response was read. */
+  resource: z.object({
+    page: z.string().optional(),
+    request: z.object({ step: z.number(), method: z.string(), path: z.string(), status: z.number(), body: z.string().optional() }).optional(),
+  }),
+  /** Observations the comparison used: the state read earlier, each at its declared moment. */
+  before: z.array(z.object({ name: z.string(), when: z.string().optional(), value: z.number(), step: z.number().optional() })),
+  /** The last step before the comparison that could change the application's state. */
+  action: z.object({ step: z.number(), tool: z.string(), what: z.string() }).optional(),
+  /** How the thing compared was identified. */
+  target: z.object({
+    locatedBy: z.string(),
+    within: z.string().optional(),
+    matched: z.number().optional(),
+    visible: z.boolean().optional(),
+    element: z.object({ tag: z.string(), role: z.string().optional(), context: z.string().optional() }).optional(),
+  }),
+  /** The text as read, before a pattern or a unit conversion. */
+  raw: z.string().optional(),
+});
+export type Evidence = z.infer<typeof Evidence>;
+
 export const AssertionResult = z.object({
   assertionId: z.string(),
   expected: z.union([z.number(), z.string()]),
@@ -224,6 +261,7 @@ export const AssertionResult = z.object({
   readAs: z.number().optional(),
   /** For a mismatch: what stands behind it besides this one reading. Set by code after the run. */
   standing: z.enum(["state", "corroborated", "re-resolved", "single"]).optional(),
+  evidence: Evidence.optional(),
   screenshot: z.string().optional(),
 });
 export type AssertionResult = z.infer<typeof AssertionResult>;
@@ -478,6 +516,11 @@ export const PlanDraft = z.object({
           unit: Unit,
         }),
       ),
+      /**
+       * Which approved requirement this scenario probes, and how. Used by code to choose
+       * what runs when there are more scenarios than the limit.
+       */
+      focus: z.array(z.object({ requirementId: z.string(), aspect: z.enum(ASPECTS) })).optional(),
       status: z.enum(["runnable", "blocked"]),
       /** Why it cannot run, if blocked. Empty otherwise. */
       blockedReason: z.string(),
@@ -506,10 +549,15 @@ export type PlanDraft = z.infer<typeof PlanDraft>;
 
 export type PlannedScenario = {
   scenario: Scenario;
-  status: "runnable" | "blocked";
+  /** "deferred": runnable, but not chosen under the scenario limit. It stays in the plan whole. */
+  status: "runnable" | "blocked" | "deferred";
   blockedReason: string;
   ambiguityIds: string[];
   riskIds: string[];
+  /** Which approved requirement the scenario probes in which way, as the planner declared it and the validator kept it. */
+  focus?: { requirementId: string; aspect: Aspect }[];
+  /** Set by the selection: its rank among those chosen (absent if deferred), and what it adds. */
+  selection?: { rank?: number; score: number; reasons: string[] };
 };
 
 export type Plan = {
@@ -520,6 +568,8 @@ export type Plan = {
   clarifications: { scenarioId: string; question: string }[];
   /** Runnable scenarios the planner wrote that were dropped to respect the limit. */
   trimmedRunnable?: number;
+  /** How the scenarios that run were chosen from the candidates. */
+  selection?: { cap: number; candidates: number; policy: "coverage" | "as planned"; boundaryGaps: string[] };
 };
 
 // ---- the whole run ----------------------------------------------------------

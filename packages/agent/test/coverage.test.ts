@@ -81,18 +81,20 @@ const liveRun = run([
 test("failed comparisons are grouped into patterns, so one defect seen many times is not counted many times", () => {
   const patterns = failurePatterns(liveRun);
   assert.deepEqual(patterns.map((p) => [p.id, p.description, p.comparisons.length]), [
-    ["F1", "a number that is off by 0.01", 4],
-    ["F2", "a number that is off by 2.49", 3],
-    ["F3", "a number that is off by 15", 2],
+    ["F1", "comparisons resting on R1, R4: numbers off by 0.01", 4],
+    ["F2", "comparisons resting on R3: numbers off by 2.49; text, presence or status that differs", 3],
+    ["F3", "comparisons resting on R2: numbers off by 15; text, presence or status that differs", 2],
   ]);
   // Nothing is hidden by the grouping: every failed comparison is in exactly one pattern.
   assert.equal(patterns.reduce((n, p) => n + p.comparisons.length, 0), 9);
   assert.deepEqual(patterns[0]!.scenarios, ["S1", "S4"]);
   assert.deepEqual(patterns[0]!.requirementIds, ["R1", "R4"]);
-  // A non-numeric failure joins its scenario's numeric pattern; alone, it is a pattern of its own.
+  // A non-numeric failure joins the pattern of the requirement it rests on; alone, it is a pattern of its own.
   assert.ok(patterns[1]!.comparisons.some((c) => c.scenarioId === "S5" && c.assertionId === "A1"));
   const alone = failurePatterns(run([{ id: "S9", requirementIds: [], assertions: [{ id: "A1", requirementId: "R1" }], outcomes: [{ assertionId: "A1", expected: "Saved", actual: "Error", pass: false }] }]));
-  assert.deepEqual(alone.map((p) => p.description), ["text or presence that differs, in scenario S9"]);
+  assert.deepEqual(alone.map((p) => p.description), ["comparisons resting on R1: text, presence or status that differs"]);
+  // No standing and no repeat on record: nothing is called a confirmed defect.
+  assert.ok(patterns.every((p) => p.evidence === "unconfirmed"));
   assert.deepEqual(failurePatterns(run([])), []);
 });
 
@@ -201,7 +203,7 @@ test("a failure can be inspected from the diagnostics alone, and nothing sensiti
 test("the pull request report gives the pattern count beside the failures and a column for exercised-only requirements", () => {
   const r = fullRun();
   const body = render({ status: "completed", repo: "acme/tool", pr: 7, headSha: "a".repeat(40), run: r } as Parameters<typeof render>[0], "https://example.invalid/run").body;
-  assert.match(body, /1 failed comparison in 1 scenario, falling into \*\*1 distinct pattern\*\*/);
-  assert.match(body, /\| F1 \| a number that is off by 0\.01 \| S1\/A1 \| R1 \|/);
-  assert.match(body, /\| \| Passed \/ verified \| Failed \| Blocked \| Unverified \| Exercised only \| Not planned \|/);
+  assert.match(body, /- Failed assertions: \*\*1\*\*\n- Failed scenarios: \*\*1\*\*\n- Failure patterns: \*\*1\*\*\n- Confirmed distinct defects: \*\*0\*\*/);
+  assert.match(body, /\| F1 \| unconfirmed \| comparisons resting on R1: number off by 0\.01 \| S1\/A1 \| R1 \| rests on single page observations; nothing else confirms it \|/);
+  assert.match(body, /\| \| Passed \/ verified \| Failed \| Blocked \| Unverified \| Exercised only \| Not run \(limit\) \| Not planned \|/);
 });

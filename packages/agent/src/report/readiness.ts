@@ -14,9 +14,10 @@
  *   blocked      only scenarios that did not run are tied to it
  *   unverified   comparisons tied to it were planned but not made, or failed for a rule they rest on elsewhere
  *   exercised    a scenario that ran lists it, but no comparison is tied to it
+ *   deferred     only scenarios that were planned but not run under the scenario limit compare it
  *   not planned  nothing in the plan is tied to it
  */
-export type RequirementStatus = "verified" | "failed" | "blocked" | "unverified" | "exercised" | "not planned";
+export type RequirementStatus = "verified" | "failed" | "blocked" | "unverified" | "exercised" | "deferred" | "not planned";
 export type Readiness = "not ready" | "incomplete" | "ready";
 
 /** The parts of a run this needs. Both the full run report and the CI stage's validated view fit. */
@@ -67,6 +68,8 @@ export type Assessment = {
   execution: { passed: number; failed: number; blocked: number; unverified: number };
   /** Scenarios planned but never started, waiting on a decision or a capability. */
   notRun: number;
+  /** Runnable scenarios that were planned and not chosen under the scenario limit. */
+  deferred: number;
   requirements: RequirementCoverage[];
   counts: Record<RequirementStatus, number>;
 };
@@ -79,12 +82,18 @@ export function assess(run: ReadinessInput): Assessment {
       const comparisons: string[] = [];
       const uncompared: string[] = [];
       const waiting: string[] = [];
+      const deferredBy: string[] = [];
       const passedThrough: string[] = [];
       let mismatch = false;
 
       for (const planned of run.plan.scenarios) {
         const { scenario } = planned;
         const result = resultOf.get(scenario.id);
+        if (!result && planned.status === "deferred") {
+          const compares = scenario.assertions.some((a) => a.requirementId === requirement.id || (a.alsoVerifies ?? []).includes(requirement.id));
+          if (compares || scenario.requirementIds?.includes(requirement.id)) deferredBy.push(scenario.id);
+          continue;
+        }
         if (!result) {
           // Never started. It only counts for this requirement if the plan tied it to it.
           if (scenario.requirementIds?.includes(requirement.id)) {
@@ -121,10 +130,13 @@ export function assess(run: ReadinessInput): Assessment {
         return { ...base, status: "exercised" as const, detail: `Scenario ${passedThrough.join(", ")} lists this requirement, but no comparison is tied to it.` };
       }
       if (waiting.length > 0) return { ...base, status: "blocked" as const, detail: waiting.join("; ") };
+      if (deferredBy.length > 0) {
+        return { ...base, status: "deferred" as const, detail: `Compared only by ${deferredBy.join(", ")}, planned and not run because of the scenario limit.` };
+      }
       return { ...base, status: "not planned" as const, detail: "No scenario in the plan compares this requirement." };
     });
 
-  const counts: Record<RequirementStatus, number> = { verified: 0, failed: 0, blocked: 0, unverified: 0, exercised: 0, "not planned": 0 };
+  const counts: Record<RequirementStatus, number> = { verified: 0, failed: 0, blocked: 0, unverified: 0, exercised: 0, deferred: 0, "not planned": 0 };
   for (const r of requirements) counts[r.status]++;
   const verdicts = (v: string) => run.results.filter((r) => r.verdict === v).length;
   const execution = {
@@ -133,7 +145,8 @@ export function assess(run: ReadinessInput): Assessment {
     blocked: verdicts("blocked"),
     unverified: verdicts("unverified"),
   };
-  const notRun = run.plan.scenarios.filter((s) => !resultOf.has(s.scenario.id)).length;
+  const deferred = run.plan.scenarios.filter((s) => s.status === "deferred" && !resultOf.has(s.scenario.id)).length;
+  const notRun = run.plan.scenarios.filter((s) => !resultOf.has(s.scenario.id)).length - deferred;
   const trimmed = run.plan.trimmedRunnable ?? 0;
 
   const reasons: string[] = [];
@@ -144,6 +157,7 @@ export function assess(run: ReadinessInput): Assessment {
     reasons.push(`${execution.blocked + execution.unverified} executed scenario${execution.blocked + execution.unverified === 1 ? "" : "s"} produced no verdict`);
   }
   if (notRun > 0) reasons.push(`${notRun} planned scenario${notRun === 1 ? " is" : "s are"} waiting on a decision or a capability`);
+  if (deferred > 0) reasons.push(`${deferred} planned scenario${deferred === 1 ? " was" : "s were"} not run because of the scenario limit`);
   if (trimmed > 0) reasons.push(`${trimmed} runnable scenario${trimmed === 1 ? " was" : "s were"} dropped to stay within the scenario limit`);
   if (run.stopped) reasons.push("the run ended early");
   if (run.results.length === 0) reasons.push("no scenario was executed");
@@ -159,7 +173,7 @@ export function assess(run: ReadinessInput): Assessment {
   }
 
   const readiness: Readiness = execution.failed > 0 || counts.failed > 0 ? "not ready" : reasons.length > 0 ? "incomplete" : "ready";
-  return { readiness, reasons, execution, notRun, requirements, counts };
+  return { readiness, reasons, execution, notRun, deferred, requirements, counts };
 }
 
 export const READINESS_LABEL: Record<Readiness, string> = {
@@ -178,5 +192,6 @@ export function headline(a: Assessment): string {
   const noVerdict = a.execution.blocked + a.execution.unverified;
   if (noVerdict > 0) parts.push(`${noVerdict} without a verdict`);
   if (a.notRun > 0) parts.push(`${a.notRun} scenarios blocked`);
+  if (a.deferred > 0) parts.push(`${a.deferred} not run (limit)`);
   return `${READINESS_LABEL[a.readiness]}: ${parts.join(" · ")}`;
 }

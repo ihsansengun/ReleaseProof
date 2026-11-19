@@ -1,4 +1,5 @@
 import { evaluateFormula, formulaVariables } from "./formula.ts";
+import { poolSize, selectScenarios } from "./select.ts";
 import type { Analysis, Assertion, Manifest, Observation, Plan, PlanDraft, PlannedScenario } from "./schema.ts";
 
 /** Blocked scenarios are not executed, so the allowance for them is generous. */
@@ -34,12 +35,13 @@ export function validatePlan(
     }
     // The limit is on what gets executed. Blocked scenarios cost nothing to
     // keep and are results in their own right, so they have their own allowance.
-    const limit = d.status === "runnable" ? maxScenarios : MAX_BLOCKED;
+    // Runnable candidates may outnumber the limit: code chooses among them below.
+    const limit = d.status === "runnable" ? poolSize(maxScenarios) : MAX_BLOCKED;
     if (scenarios.filter((s) => s.status === d.status).length >= limit) {
       // Trimming to size is not a fault in the plan, so it is recorded but
       // does not send the plan back for repair.
       if (d.status === "runnable") trimmedRunnable++;
-      trimmed.push(`Scenario ${d.id} was dropped: the plan is limited to ${limit} ${d.status} scenarios.`);
+      trimmed.push(`Scenario ${d.id} was dropped: the plan is limited to ${limit} ${d.status} ${d.status === "runnable" ? "candidates" : "scenarios"}.`);
       continue;
     }
     seen.add(d.id);
@@ -191,6 +193,19 @@ export function validatePlan(
     }
     if (status === "blocked" && !blockedReason) blockedReason = "The plan gave no reason.";
 
+    // A scenario is credited with probing a requirement only where one of its
+    // own comparisons rests on that requirement. A tag alone covers nothing.
+    const compared = new Set(assertions.flatMap((a) => [a.requirementId, ...(a.alsoVerifies ?? [])]));
+    const focus: NonNullable<PlannedScenario["focus"]> = [];
+    for (const f of d.focus ?? []) {
+      if (status !== "runnable") continue;
+      if (!compared.has(f.requirementId)) {
+        trimmed.push(`Scenario ${d.id} claims to probe ${f.requirementId} (${f.aspect}) without a comparison that rests on it; the claim was removed.`);
+      } else if (!focus.some((x) => x.requirementId === f.requirementId && x.aspect === f.aspect)) {
+        focus.push({ requirementId: f.requirementId, aspect: f.aspect });
+      }
+    }
+
     scenarios.push({
       scenario: {
         id: d.id,
@@ -207,7 +222,10 @@ export function validatePlan(
       blockedReason: status === "blocked" ? blockedReason : "",
       ambiguityIds: known(d.ambiguityIds, ambiguityIds, "ambiguity"),
       riskIds: known(d.riskIds, riskIds, "risk"),
+      ...(focus.length > 0 ? { focus } : {}),
     });
   }
-  return { plan: { scenarios, notes: [...problems, ...trimmed], clarifications, trimmedRunnable }, problems };
+  // More candidates than may run: code chooses, and the rest stay in the plan as deferred.
+  const plan = selectScenarios({ scenarios, notes: [...problems, ...trimmed], clarifications, trimmedRunnable }, maxScenarios);
+  return { plan, problems };
 }

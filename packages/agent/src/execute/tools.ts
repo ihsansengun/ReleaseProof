@@ -3,7 +3,7 @@ import type { BrowserContext, Locator, Page } from "playwright";
 import { z } from "zod";
 import { evaluateFormula, formulaVariables } from "../formula.ts";
 import { reconcile, scaleUnclear } from "../units.ts";
-import type { AssertionResult, Outcome, Scenario, Step } from "../schema.ts";
+import type { AssertionResult, Evidence, Outcome, Scenario, Step } from "../schema.ts";
 import type { SecretVault } from "../secrets.ts";
 
 /** Everything one scenario execution accumulates. */
@@ -20,6 +20,17 @@ export type Session = {
    */
   contested?: Set<string>;
   apiResponses: Map<string, { status: number; body: unknown }>;
+  /**
+   * What code noted along the way, for the evidence behind each comparison:
+   * whose credentials were last entered, the last step that could change
+   * state, and at which step each observation and API response was obtained.
+   */
+  trail?: {
+    actor?: { alias: string; step: number };
+    action?: { step: number; tool: string; what: string };
+    observed: Record<string, number>;
+    requests: Record<string, { step: number; method: string; path: string }>;
+  };
   assertionResults: AssertionResult[];
   steps: Step[];
   outcome?: Outcome;
@@ -365,6 +376,130 @@ async function screenshot(session: Session, name: string, locator?: Locator): Pr
   return path.basename(file);
 }
 
+// ---- evidence -------------------------------------------------------------
+
+const trailOf = (s: Session) => (s.trail ??= { observed: {}, requests: {} });
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
+const describeRef = (ref: { by: string; role?: string; value: string }) => `${ref.by}${ref.role ? ` ${ref.role}` : ""} "${clip(ref.value, 80)}"`;
+
+/**
+ * Notes, after a step that worked, what later evidence needs from it. `input`
+ * is the step as the executor wrote it: placeholders, never secret values.
+ */
+function noteStep(session: Session, tool: string, input: unknown): void {
+  const trail = trailOf(session);
+  const step = session.steps.length + 1;
+  const given = (input ?? {}) as { element?: { by: string; role?: string; value: string }; method?: string; path?: string };
+  // Entering an alias's secret is how a session takes on an identity. The alias is test data, not a person.
+  const alias = /\{\{secret:([A-Za-z][A-Za-z0-9_]*)\./.exec(JSON.stringify(input ?? null))?.[1];
+  if (alias && (tool === "fill" || tool === "api_request")) trail.actor = { alias, step };
+  if ((tool === "click" || tool === "fill" || tool === "select") && given.element) {
+    trail.action = { step, tool, what: describeRef(given.element) };
+  } else if (tool === "api_request" && given.method && given.method !== "GET") {
+    trail.action = { step, tool, what: `${given.method} ${clip(String(given.path ?? ""), 120)}` };
+  }
+}
+
+/** Assembles the record behind one comparison from what the session holds. Secrets are scrubbed. */
+async function gatherEvidence(
+  s: Session,
+  assertion: Scenario["assertions"][number],
+  target: Target,
+  found: { locator?: Locator; raw?: string; matched?: number },
+): Promise<Evidence> {
+  const trail = trailOf(s);
+  const formula = assertion.expected && "formula" in assertion.expected ? assertion.expected.formula : undefined;
+  const evidence: Evidence = {
+    step: s.steps.length + 1,
+    ...(assertion.requirementId
+      ? { requirement: { id: assertion.requirementId, ...(assertion.provenance ? { sourceId: assertion.provenance.sourceId, quote: clip(assertion.provenance.quote, 240) } : {}) } }
+      : {}),
+    expected: {
+      kind: assertion.kind,
+      ...(assertion.expected && "literal" in assertion.expected ? { literal: assertion.expected.literal } : {}),
+      ...(formula ? { formula } : {}),
+      ...(assertion.unit ? { unit: assertion.unit } : {}),
+    },
+    ...(trail.actor ? { actor: trail.actor } : {}),
+    resource: {},
+    before: (formula ? formulaVariables(formula) : [])
+      .filter((name) => Object.hasOwn(s.observations, name))
+      .map((name) => ({
+        name,
+        when: s.scenario.observations?.find((o) => o.name === name)?.when,
+        value: s.observations[name]!,
+        step: trail.observed[name],
+      })),
+    ...(trail.action ? { action: trail.action } : {}),
+    target: { locatedBy: "" },
+    ...(found.raw === undefined ? {} : { raw: clip(found.raw, 200) }),
+  };
+  if (target.source === "api") {
+    const response = s.apiResponses.get(target.responseId);
+    const request = trail.requests[target.responseId];
+    evidence.target = { locatedBy: `response ${target.responseId} ${target.field}${target.jsonPath ? ` at ${target.jsonPath}` : ""}${target.count ? " (count)" : ""}` };
+    if (response && request) {
+      evidence.resource.request = { ...request, status: response.status, body: clip(typeof response.body === "string" ? response.body : JSON.stringify(response.body ?? null), 300) };
+    }
+  } else {
+    const url = new URL(s.page.url());
+    evidence.resource.page = `${url.pathname}${url.search}`;
+    evidence.target = {
+      locatedBy: `${describeRef(target)}${target.pattern ? ` pattern ${clip(target.pattern, 80)}` : ""}${target.count ? " (count)" : ""}`,
+      ...(target.within ? { within: describeRef(target.within) } : {}),
+      matched: found.matched ?? (found.locator ? 1 : undefined),
+    };
+    if (found.locator && (found.matched ?? 1) === 1) {
+      evidence.target.visible = await found.locator.isVisible().catch(() => undefined);
+      evidence.target.element = await found.locator
+        .evaluate((el) => {
+          const text = (el.parentElement?.textContent ?? "").replace(/\s+/g, " ").trim();
+          return {
+            tag: el.tagName.toLowerCase(),
+            role: el.getAttribute("role") ?? undefined,
+            context: text.length > 120 ? `${text.slice(0, 120)}…` : text,
+          };
+        })
+        .catch(() => undefined);
+    }
+  }
+  return JSON.parse(s.vault.scrub(JSON.stringify(evidence))) as Evidence;
+}
+
+/**
+ * Says why a target is circular, if it is: the text it is located by already
+ * contains the expected value. Finding "$22.50" by searching for "$22.50"
+ * shows the value appears somewhere, not that the total is $22.50. A test id
+ * is a stable identity and is exempt, as is a declared heading or label
+ * located as one.
+ */
+export function circular(target: Target, expected: number | string, assertion: { kind: string; unit?: string; subject?: string }): string | undefined {
+  if (target.source !== "page" || target.count || target.by === "testid") return undefined;
+  // A declared heading or label is identified by being one, which is checked separately; its wording is what is read.
+  if (assertion.subject && assertion.subject !== "value") return undefined;
+  // A pattern escapes its punctuation ("22\\.50"); the escapes are dropped so the value in it is seen.
+  const texts = [target.value, (target.pattern ?? "").replace(/\\/g, "")];
+  const advice = "Finding it there shows only that the value appears somewhere. Identify the element by its label, role, container or test id.";
+  if (typeof expected === "number") {
+    const wanted = [expected, ...(assertion.unit === "currency-hundredths" ? [expected / 100] : []), ...(assertion.unit === "currency-units" ? [expected * 100] : [])];
+    for (const text of texts) {
+      for (const match of text.match(/\d[\d,]*(?:\.\d+)?/g) ?? []) {
+        const n = Number(match.replace(/,/g, ""));
+        if (wanted.some((w) => Math.abs(n - w) < 1e-9)) return `the target is located by the expected value itself ("${clip(text, 60)}" contains ${match}). ${advice}`;
+      }
+    }
+    return undefined;
+  }
+  const wantedText = squash(expected).toLowerCase();
+  if (wantedText === "") return undefined;
+  for (const text of texts) {
+    if (squash(text).toLowerCase().includes(wantedText)) {
+      return `the target is located by the expected text itself ("${clip(text, 60)}"). ${advice}${assertion.kind === "text_contains" ? " If the requirement is only that this text is shown, the plan must say so with a present assertion." : ""}`;
+    }
+  }
+  return undefined;
+}
+
 // ---- tools ----------------------------------------------------------------
 
 type Handlers = { [K in ToolName]: (s: Session, input: z.infer<(typeof schemas)[K]>) => Promise<string> };
@@ -417,6 +552,7 @@ const handlers: Handlers = {
     }
     const id = `R${s.apiResponses.size + 1}`;
     s.apiResponses.set(id, { status: response.status(), body: parsed });
+    trailOf(s).requests[id] = { step: s.steps.length + 1, method, path: url.pathname };
     return JSON.stringify({ responseId: id, status: response.status(), body: parsed });
   },
 
@@ -441,6 +577,7 @@ const handlers: Handlers = {
     const value = reconcile(mine?.unit, raw, read);
     if (!value.comparable) throw new Error(`Observation "${name}" was not recorded: ${value.why}.`);
     s.observations[name] = value.value;
+    trailOf(s).observed[name] = s.steps.length + 1;
     return `Recorded ${name} = ${value.value}${value.converted ? ` (read as ${read}, converted to the declared unit)` : ""}`;
   },
 
@@ -456,6 +593,8 @@ const handlers: Handlers = {
     let pass: boolean;
     let locator: Locator | undefined;
     let readAs: number | undefined;
+    let raw: string | undefined;
+    let matched: number | undefined;
 
     if (assertion.kind === "present" || assertion.kind === "absent") {
       // Existence is the question, so a target that matches nothing is an
@@ -467,7 +606,8 @@ const handlers: Handlers = {
           () => 0,
         );
       } else {
-        const found = buildLocator(s.page, target);
+        // Presence means shown: an element that is in the page but not visible is not there for the user.
+        const found = buildLocator(s.page, target).filter({ visible: true });
         const deadline = Date.now() + (assertion.kind === "present" ? LOCATE_TIMEOUT_MS : 1_000);
         count = await found.count();
         while (count === 0 && Date.now() < deadline) {
@@ -475,6 +615,7 @@ const handlers: Handlers = {
           count = await found.count();
         }
         if (count === 1) locator = found;
+        matched = count;
         // A role or a label says what kind of element to look for. If nothing
         // of that kind is there while the same words are plainly on the page,
         // the kind was a wrong guess, and "absent" would be an answer about
@@ -512,6 +653,9 @@ const handlers: Handlers = {
         "literal" in assertion.expected
           ? assertion.expected.literal
           : evaluateFormula(assertion.expected.formula, s.observations);
+      raw = read.raw;
+      const loop = circular(target, expected, assertion);
+      if (loop) throw new Error(`Assertion ${assertionId} was not compared: ${loop} No result was recorded.`);
       const numeric = (): number => {
         // The value read is brought to the unit the plan declared. Where the
         // unit cannot be established, nothing is compared: a guess about units
@@ -540,8 +684,9 @@ const handlers: Handlers = {
       }
     }
 
+    const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched });
     const shot = await screenshot(s, `check-${assertionId}`, locator);
-    s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), screenshot: shot });
+    s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, screenshot: shot });
     return `Recorded ${assertionId}: expected ${expected}, actual ${actual}${readAs === undefined ? "" : ` (read as ${readAs}, converted to the assertion's unit)`} -> ${pass ? "match" : "MISMATCH"}. This result is final.`;
   },
 
@@ -576,6 +721,7 @@ export async function runTool(
     output = `Error: ${(error as Error).message.split("\n")[0]}`;
   }
   output = session.vault.scrub(output);
+  if (ok) noteStep(session, name, input);
   const rationale = (input as { rationale?: unknown } | null)?.rationale;
   session.steps.push({
     tool: name,

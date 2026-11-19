@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { authorityLines } from "../report/authority.ts";
-import { failurePatterns } from "../report/patterns.ts";
+import { failureCounts, failurePatterns } from "../report/patterns.ts";
 import { redact } from "../report/diagnostics.ts";
 import { assess, headline, READINESS_LABEL } from "../report/readiness.ts";
 import { MODES } from "../report/run.ts";
+import { selectionLines } from "../report/selection.ts";
 import { STANDING_TEXT } from "../report/standing.ts";
 import type { CiResult } from "./run.ts";
 
@@ -110,10 +111,12 @@ export const ReportInput = z.object({
       }),
       plan: z.object({
         trimmedRunnable: z.number().int().nonnegative().optional(),
+        selection: z.object({ cap: z.number(), candidates: z.number(), policy: z.string(), boundaryGaps: z.array(z.string()) }).optional(),
         scenarios: z.array(
           z.object({
             status: z.string(),
             blockedReason: z.string(),
+            selection: z.object({ rank: z.number().optional(), score: z.number(), reasons: z.array(z.string()) }).optional(),
             scenario: z.object({
               id: z.string(),
               title: z.string(),
@@ -241,10 +244,10 @@ export function render(input: ReportInput, runUrl: string): Rendered {
           : "**commit not confirmed by the application**"
     })`,
     "",
-    "| | Passed / verified | Failed | Blocked | Unverified | Exercised only | Not planned |",
+    "| | Passed / verified | Failed | Blocked | Unverified | Exercised only | Not run (limit) | Not planned |",
     "|---|---|---|---|---|---|---|",
-    `| Scenarios (${run.plan.scenarios.length} planned, ${run.results.length} executed) | ${a.execution.passed} | ${a.execution.failed} | ${a.notRun + a.execution.blocked} | ${a.execution.unverified} | – | ${run.plan.trimmedRunnable ? `${run.plan.trimmedRunnable} dropped by the limit` : "–"} |`,
-    `| Documented requirements (${a.requirements.length}) | ${a.counts.verified} | ${a.counts.failed} | ${a.counts.blocked} | ${a.counts.unverified} | ${a.counts.exercised} | ${a.counts["not planned"]} |`,
+    `| Scenarios (${run.plan.scenarios.length} planned, ${run.results.length} executed) | ${a.execution.passed} | ${a.execution.failed} | ${a.notRun + a.execution.blocked} | ${a.execution.unverified} | – | ${a.deferred} | ${run.plan.trimmedRunnable ? `${run.plan.trimmedRunnable} dropped by the limit` : "–"} |`,
+    `| Documented requirements (${a.requirements.length}) | ${a.counts.verified} | ${a.counts.failed} | ${a.counts.blocked} | ${a.counts.unverified} | ${a.counts.exercised} | ${a.counts.deferred} | ${a.counts["not planned"]} |`,
     "",
     `- Questions for the ticket owner: ${run.analysis.ambiguities.length + run.plan.clarifications.length}`,
     `- Execution mode: ${MODES[run.executionMode]}`,
@@ -287,17 +290,23 @@ export function render(input: ReportInput, runUrl: string): Rendered {
     // or requirements would overstate it, so they are grouped by what the
     // observed values have in common.
     const patterns = failurePatterns(run);
-    const comparisons = patterns.reduce((n, p) => n + p.comparisons.length, 0);
+    const counts = failureCounts(run);
+    const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
     lines.push(
       "### Failures",
       "",
-      `${comparisons} failed comparison${comparisons === 1 ? "" : "s"} in ${failed} scenario${failed === 1 ? "" : "s"}, falling into **${patterns.length} distinct pattern${patterns.length === 1 ? "" : "s"}**. A pattern groups comparisons that are off in the same way; it is a guide to how many separate causes there may be, not a count of defects.`,
+      `- Failed assertions: **${counts.assertions}**`,
+      `- Failed scenarios: **${counts.scenarios}**`,
+      `- Failure patterns: **${counts.patterns}**`,
+      `- Confirmed distinct defects: **${counts.confirmed}**`,
       "",
-      "| Pattern | What the comparisons share | Comparisons | Requirements they rest on |",
-      "|---|---|---|---|",
+      `${plural(counts.assertions, "failed comparison", "failed comparisons")} in ${plural(counts.scenarios, "scenario", "scenarios")}, in ${plural(counts.patterns, "pattern", "patterns")}. A pattern groups failed comparisons that rest on a common approved requirement, or that are numbers off by the same amount. It is counted as a confirmed distinct defect only when one of its comparisons is backed by the application's own API response, by a second comparison through another target or by a second independent attempt, and the failure repeats. An unconfirmed pattern may be a defect, a wrong locator or a wrong expectation.`,
+      "",
+      "| Pattern | Evidence | What the comparisons share | Comparisons | Requirements they rest on | Why it is classed so |",
+      "|---|---|---|---|---|---|",
     );
     for (const p of patterns.slice(0, 20)) {
-      lines.push(`| ${p.id} | ${safe(p.description, 120)} | ${p.comparisons.map((c) => `${safe(c.scenarioId, 20)}/${safe(c.assertionId, 12)}`).join(", ")} | ${p.requirementIds.map((id) => safe(id, 10)).join(", ") || "–"} |`);
+      lines.push(`| ${p.id} | ${p.evidence === "confirmed" ? "**confirmed**" : "unconfirmed"} | ${safe(p.description, 160)} | ${p.comparisons.map((c) => `${safe(c.scenarioId, 20)}/${safe(c.assertionId, 12)}`).join(", ")} | ${p.requirementIds.map((id) => safe(id, 10)).join(", ") || "–"} | ${safe(p.basis, 200)} |`);
     }
     lines.push("");
     for (const result of run.results.filter((r) => r.verdict === "failed")) {
@@ -327,6 +336,8 @@ export function render(input: ReportInput, runUrl: string): Rendered {
     }
     lines.push("");
   }
+
+  lines.push(...selectionLines(run, (text, max = 300) => safe(text, max)));
 
   const setAside = run.results.flatMap((r) => (r.setAside ?? []).map((s) => ({ scenarioId: r.scenarioId, ...s })));
   if (setAside.length > 0) {

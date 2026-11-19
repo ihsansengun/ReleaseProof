@@ -70,9 +70,12 @@ Time per run: 6.7, 7.9, 9.5 and 11.0 minutes of the 15 allowed.
   and the owner's balance went from 17 to 20. Benchmark A missed this.
 - **Time-off, notice period counted inclusively: missed.** The defect shows
   only for an Approved request starting in two days. The executed scenarios
-  tried "tomorrow" and "today", both correctly refused on this build. Four
-  planned scenarios were cut by the limit of six; the log does not say
-  whether one of them covered the two-day boundary. Benchmark A and the
+  tried "tomorrow" and "today", both correctly refused on this build. No
+  scenario two days out was planned. (Corrected: an earlier version of this
+  record said four planned scenarios were cut by the limit. They were not.
+  The planner was told to plan at most six runnable scenarios and chose
+  those six itself; the other four were blocked by the planner on an open
+  question.) Benchmark A and the
   baseline both detected this defect.
 - **Shop, all three detected** (run 4): rounding to the nearest cent (S1,
   S8), a declined payment using up the code (S6), the minimum not
@@ -154,8 +157,10 @@ to 5%.
 - One run per build. Model output varies; a second run could differ. Four
   runs are evidence, not proof.
 - Three engine versions across the three configurations.
-- Scenario limits cut 6 to 9 planned scenarios per run. The missed defect
-  may sit in a scenario that was planned and not executed.
+- The planner chose which scenarios to run, up to the limit, in its own
+  sequence. The 4 to 9 other planned scenarios per run were blocked on open
+  questions, not cut by the limit. (Corrected, as above.) Nothing recorded
+  what a larger plan would have covered.
 - "Probable" marks a false positive judged from the redacted log alone.
 
 ## Found along the way, not fixed here
@@ -171,5 +176,5 @@ to 5%.
   (run 2).
 - The step listing in the job log starts late in long scenarios, which cut
   the cross-employee sign-in and call from view.
-- Which planned scenarios are executed when the limit is lower than the
-  plan is not ordered by risk.
+- Which scenarios run is decided by the planner alone, and nothing checks
+  that a stated threshold is probed just below, at and just above it.

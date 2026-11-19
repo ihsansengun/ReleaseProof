@@ -1,3 +1,4 @@
+import { selectionLines } from "./selection.ts";
 import { STANDING_TEXT } from "./standing.ts";
 import type { RunReport } from "../schema.ts";
 import { authorityLines } from "./authority.ts";
@@ -39,7 +40,8 @@ export function renderRunReport(run: RunReport): string {
     "",
     `- Scenarios executed: ${run.results.length} — ${count("passed")} passed, ${count("failed")} failed, ${count("blocked")} blocked during execution, ${count("unverified")} unverified`,
     `- Scenarios planned but not run: ${blocked.length} (waiting on a decision or a missing capability)`,
-    `- Documented requirements: ${assessment.counts.verified} verified, ${assessment.counts.failed} failed, ${assessment.counts.blocked} blocked, ${assessment.counts.unverified} unverified, ${assessment.counts.exercised} exercised only, ${assessment.counts["not planned"]} not planned (of ${documented.length})`,
+    ...(assessment.deferred > 0 ? [`- Scenarios planned and not run because of the scenario limit: ${assessment.deferred}`] : []),
+    `- Documented requirements: ${assessment.counts.verified} verified, ${assessment.counts.failed} failed, ${assessment.counts.blocked} blocked, ${assessment.counts.unverified} unverified, ${assessment.counts.exercised} exercised only, ${assessment.counts.deferred} not run (limit), ${assessment.counts["not planned"]} not planned (of ${documented.length})`,
     `- Clarification requests: ${run.analysis.ambiguities.length + run.plan.clarifications.length}`,
     `- Environment: ${run.environment.baseUrl}, commit \`${run.environment.deployedSha ?? "not reported by the application"}\`${!run.environment.deployedSha && run.environment.commitEstablished ? `; established otherwise: ${run.environment.commitEstablished}` : ""}`,
     ...(run.environment.instances === "per-scenario" ? ["- Every scenario, and every repeat of one, ran against its own freshly started application."] : []),
@@ -68,6 +70,7 @@ export function renderRunReport(run: RunReport): string {
   }
 
   const failures = run.results.filter((r) => r.verdict === "failed");
+  lines.push(...selectionLines(run, (text) => String(text), "##"));
   lines.push("## Failures", "");
   if (failures.length === 0) lines.push("None.", "");
   for (const failure of failures) {

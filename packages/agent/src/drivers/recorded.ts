@@ -17,7 +17,9 @@ export function planToDraft(plan: RunReport["plan"]): PlanDraft {
       setup: p.scenario.setup ?? "",
       fixtures: Object.entries(p.scenario.fixtures).map(([alias, type]) => ({ alias, type })),
       observations: (p.scenario.observations ?? []).map((o) => ({ name: o.name, what: o.what, when: o.when, unit: o.unit ?? "plain" })),
-      status: p.status,
+      ...(p.focus ? { focus: p.focus } : {}),
+      // A deferred scenario was runnable when planned; the selection is made again by code.
+      status: p.status === "deferred" ? "runnable" : p.status,
       blockedReason: p.blockedReason,
       ambiguityIds: p.ambiguityIds,
       assertions: p.scenario.assertions.map((a) => ({
