@@ -93,7 +93,7 @@ test("failed comparisons are grouped into patterns, so one defect seen many time
   assert.ok(patterns[1]!.comparisons.some((c) => c.scenarioId === "S5" && c.assertionId === "A1"));
   const alone = failurePatterns(run([{ id: "S9", requirementIds: [], assertions: [{ id: "A1", requirementId: "R1" }], outcomes: [{ assertionId: "A1", expected: "Saved", actual: "Error", pass: false }] }]));
   assert.deepEqual(alone.map((p) => p.description), ["comparisons resting on R1: text, presence or status that differs"]);
-  // No standing and no repeat on record: nothing is called a confirmed defect.
+  // No standing and no repeat on record: nothing is called a defect candidate.
   assert.ok(patterns.every((p) => p.evidence === "unconfirmed"));
   assert.deepEqual(failurePatterns(run([])), []);
 });
@@ -203,7 +203,7 @@ test("a failure can be inspected from the diagnostics alone, and nothing sensiti
 test("the pull request report gives the pattern count beside the failures and a column for exercised-only requirements", () => {
   const r = fullRun();
   const body = render({ status: "completed", repo: "acme/tool", pr: 7, headSha: "a".repeat(40), run: r } as Parameters<typeof render>[0], "https://example.invalid/run").body;
-  assert.match(body, /- Failed assertions: \*\*1\*\*\n- Failed scenarios: \*\*1\*\*\n- Failure patterns: \*\*1\*\*\n- Confirmed distinct defects: \*\*0\*\*/);
+  assert.match(body, /- Failed assertions: \*\*1\*\*\n- Failed scenarios: \*\*1\*\*\n- Failure patterns: \*\*1\*\*\n- Evidence-backed defect candidates: \*\*0\*\*/);
   assert.match(body, /\| F1 \| unconfirmed \| comparisons resting on R1: number off by 0\.01 \| S1\/A1 \| R1 \| rests on single page observations; nothing else confirms it \|/);
   assert.match(body, /\| \| Passed \/ verified \| Failed \| Blocked \| Unverified \| Exercised only \| Not run \(limit\) \| Not planned \|/);
 });

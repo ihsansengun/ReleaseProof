@@ -346,7 +346,7 @@ test("a text-presence check is the plan's to choose, and it means visible, in a 
 
 // ---- 4. assertions, scenarios, patterns, defects ---------------------------
 
-test("several failed assertions from one cause are one pattern, and only evidence makes a pattern a confirmed defect", () => {
+test("several failed assertions from one cause are one pattern, and only evidence makes a pattern a defect candidate, never a confirmed root cause", () => {
   const a = (id: string, requirementId: string, alsoVerifies: string[] = []): Assertion => ({ id, description: id, kind: "number_equals", expected: { literal: 0 }, requirementId, ...(alsoVerifies.length ? { alsoVerifies } : {}) });
   // The benchmark's shop run: a minimum that is not re-checked after the quantity drops shows up five times in S4.
   const s4 = scenario([a("A6", "R18"), a("A7", "R19"), a("A8", "R18", ["R19"]), a("A9", "R19"), a("A10", "R19")], { id: "S4" });
@@ -368,10 +368,10 @@ test("several failed assertions from one cause are one pattern, and only evidenc
   const patterns = failurePatterns(run);
   assert.deepEqual(patterns.map((p) => [p.id, p.evidence, p.comparisons.map((c) => `${c.scenarioId}/${c.assertionId}`).join(" "), p.requirementIds.join(" ")]), [
     // Five comparisons, two requirements, one cause: one pattern.
-    ["F1", "confirmed", "S4/A6 S4/A7 S4/A8 S4/A9 S4/A10", "R18 R19"],
+    ["F1", "evidence-backed", "S4/A6 S4/A7 S4/A8 S4/A9 S4/A10", "R18 R19"],
     // The heading read in place of the code is on its own, and is not a defect on this evidence.
     ["F2", "unconfirmed", "S1/A4", "R9"],
-    ["F3", "confirmed", "S1/A6 S1/A9", "R13"],
+    ["F3", "evidence-backed", "S1/A6 S1/A9", "R13"],
     // Backed by the API, but the failure did not repeat when replayed.
     ["F4", "unconfirmed", "S2/A1", "R5"],
     ["F5", "unconfirmed", "S3/A5", "R31"],
@@ -384,15 +384,17 @@ test("several failed assertions from one cause are one pattern, and only evidenc
   assert.match(patterns[3]!.basis, /backed by the application's own API response, but the failure did not repeat when replayed/);
 
   // Four numbers, four meanings.
-  assert.deepEqual(failureCounts(run), { assertions: 10, scenarios: 4, patterns: 5, confirmed: 2 });
+  assert.deepEqual(failureCounts(run), { assertions: 10, scenarios: 4, patterns: 5, candidates: 2 });
   const body = render({ status: "completed", repo: "acme/tool", pr: 7, headSha: "a".repeat(40), run } as Parameters<typeof render>[0], "https://example.invalid/r").body;
-  assert.match(body, /- Failed assertions: \*\*10\*\*\n- Failed scenarios: \*\*4\*\*\n- Failure patterns: \*\*5\*\*\n- Confirmed distinct defects: \*\*2\*\*/);
+  assert.match(body, /- Failed assertions: \*\*10\*\*\n- Failed scenarios: \*\*4\*\*\n- Failure patterns: \*\*5\*\*\n- Evidence-backed defect candidates: \*\*2\*\*/);
   assert.match(body, /An unconfirmed pattern may be a defect, a wrong locator or a wrong expectation\./);
   assert.match(body, /\| F2 \| unconfirmed \| comparisons resting on R9: text, presence or status that differs \| S1\/A4 \| R9 \| rests on single page observations; nothing else confirms it \|/);
-  assert.match(body, /\| F1 \| \*\*confirmed\*\* \|/);
-  assert.doesNotMatch(body, /distinct pattern\*\*|off by 203/);
+  assert.match(body, /\| F1 \| \*\*evidence-backed\*\* \|/);
+  assert.match(body, /whether two candidates share one root cause, or one candidate hides two, is not established by this report\./);
+  // Nothing in the report claims a confirmed defect or root cause.
+  assert.doesNotMatch(body, /distinct pattern\*\*|off by 203|[Cc]onfirmed (distinct )?defect|confirmed root cause/);
 
   // Without a repeat or any standing on record, nothing is called a defect.
   const bare = runOf(results.map((r) => ({ ...r, assertionResults: r.assertionResults.map(({ standing: _s, ...rest }) => rest) })), [s4, s1, s2, s3]);
-  assert.equal(failureCounts(bare).confirmed, 0);
+  assert.equal(failureCounts(bare).candidates, 0);
 });

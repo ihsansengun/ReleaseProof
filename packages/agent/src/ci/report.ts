@@ -298,15 +298,15 @@ export function render(input: ReportInput, runUrl: string): Rendered {
       `- Failed assertions: **${counts.assertions}**`,
       `- Failed scenarios: **${counts.scenarios}**`,
       `- Failure patterns: **${counts.patterns}**`,
-      `- Confirmed distinct defects: **${counts.confirmed}**`,
+      `- Evidence-backed defect candidates: **${counts.candidates}**`,
       "",
-      `${plural(counts.assertions, "failed comparison", "failed comparisons")} in ${plural(counts.scenarios, "scenario", "scenarios")}, in ${plural(counts.patterns, "pattern", "patterns")}. A pattern groups failed comparisons that rest on a common approved requirement, or that are numbers off by the same amount. It is counted as a confirmed distinct defect only when one of its comparisons is backed by the application's own API response, by a second comparison through another target or by a second independent attempt, and the failure repeats. An unconfirmed pattern may be a defect, a wrong locator or a wrong expectation.`,
+      `${plural(counts.assertions, "failed comparison", "failed comparisons")} in ${plural(counts.scenarios, "scenario", "scenarios")}, in ${plural(counts.patterns, "pattern", "patterns")}. A pattern groups failed comparisons that rest on a common approved requirement, or that are numbers off by the same amount. It is counted as an evidence-backed defect candidate only when one of its comparisons is backed by the application's own API response, by a second comparison through another target or by a second independent attempt, and the failure repeats. An unconfirmed pattern may be a defect, a wrong locator or a wrong expectation. Patterns are formed by a grouping rule, not by diagnosis: whether two candidates share one root cause, or one candidate hides two, is not established by this report.`,
       "",
       "| Pattern | Evidence | What the comparisons share | Comparisons | Requirements they rest on | Why it is classed so |",
       "|---|---|---|---|---|---|",
     );
     for (const p of patterns.slice(0, 20)) {
-      lines.push(`| ${p.id} | ${p.evidence === "confirmed" ? "**confirmed**" : "unconfirmed"} | ${safe(p.description, 160)} | ${p.comparisons.map((c) => `${safe(c.scenarioId, 20)}/${safe(c.assertionId, 12)}`).join(", ")} | ${p.requirementIds.map((id) => safe(id, 10)).join(", ") || "–"} | ${safe(p.basis, 200)} |`);
+      lines.push(`| ${p.id} | ${p.evidence === "evidence-backed" ? "**evidence-backed**" : "unconfirmed"} | ${safe(p.description, 160)} | ${p.comparisons.map((c) => `${safe(c.scenarioId, 20)}/${safe(c.assertionId, 12)}`).join(", ")} | ${p.requirementIds.map((id) => safe(id, 10)).join(", ") || "–"} | ${safe(p.basis, 200)} |`);
     }
     lines.push("");
     for (const result of run.results.filter((r) => r.verdict === "failed")) {
