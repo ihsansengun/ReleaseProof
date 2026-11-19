@@ -1,4 +1,5 @@
 import type { RunReport } from "../schema.ts";
+import { authorityLines } from "./authority.ts";
 import { assess, headline, READINESS_LABEL } from "./readiness.ts";
 
 const cell = (value: unknown) => String(value).replace(/\|/g, "\\|").replace(/\s+/g, " ");
@@ -92,12 +93,20 @@ export function renderRunReport(run: RunReport): string {
   lines.push(
     "## Requirement coverage",
     "",
-    "| Id | Status | Requirement | Source quote | Basis |",
-    "|---|---|---|---|---|",
+    "| Id | Status | Requirement | Source quote | Source | Basis |",
+    "|---|---|---|---|---|---|",
     ...assessment.requirements.map(
-      (r) => `| ${r.id} | ${r.status === "verified" ? "verified" : `**${r.status}**`} | ${cell(r.text)} | "${cell(r.quote)}" | ${cell(r.detail)} |`,
+      (r) =>
+        `| ${r.id} | ${r.status === "verified" ? "verified" : `**${r.status}**`} | ${cell(r.text)} | "${cell(r.quote)}" | ${cell(r.origin ?? "not recorded")} | ${cell(r.detail)} |`,
     ),
     "",
+  );
+  lines.push(
+    ...authorityLines(
+      { headSha: run.pullRequest.headSha, context: run.context, analysis: run.analysis },
+      (text, max = 400) => cell(String(text ?? "")).slice(0, max),
+      "###",
+    ),
   );
   const inferred = run.analysis.requirements.filter((r) => r.kind === "inferred");
   if (inferred.length > 0) {

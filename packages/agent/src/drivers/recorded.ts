@@ -46,7 +46,21 @@ export class RecordedDriver implements Driver {
   }
 
   async task<T>(job: TaskJob<T>): Promise<T> {
-    if (job.name === "analyse") return job.schema.parse(this.recording.analysis);
+    if (job.name === "analyse") {
+      // Older recordings name no source: the quote is then located in code,
+      // and takes its trust from wherever it is actually found.
+      const a = this.recording.analysis;
+      return job.schema.parse({
+        ...a,
+        requirements: a.requirements.map((r) => ({
+          ...r,
+          kind: r.kind === "inferred" ? "inferred" : "documented",
+          sourceId: r.sourceId ?? "",
+          relation: r.relation ?? "none",
+          relatedRequirementId: r.relatedRequirementId ?? "",
+        })),
+      });
+    }
     if (job.name === "plan" || job.name === "plan-repair") return job.schema.parse(planToDraft(this.recording.plan));
     throw new Error(`The recording has no answer for task "${job.name}".`);
   }

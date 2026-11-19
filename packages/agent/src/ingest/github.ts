@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import type { PullRequestComment } from "../approval.ts";
 import type { PullRequest } from "../schema.ts";
 
 async function get(path: string): Promise<unknown> {
@@ -19,7 +20,7 @@ export async function loadPullRequest(repo: string, number: number): Promise<Pul
     title: string;
     body: string | null;
     head: { sha: string; ref: string; repo: { full_name: string } | null };
-    base: { ref: string };
+    base: { ref: string; sha?: string };
     draft?: boolean;
   };
   const files: PullRequest["files"] = [];
@@ -44,10 +45,37 @@ export async function loadPullRequest(repo: string, number: number): Promise<Pul
     headSha: pr.head.sha,
     headRef: pr.head.ref,
     baseRef: pr.base.ref,
+    baseSha: pr.base.sha,
     headRepo: pr.head.repo?.full_name,
     draft: pr.draft,
     files,
   };
+}
+
+async function pages<T>(path: string): Promise<T[]> {
+  const all: T[] = [];
+  for (let page = 1; page <= 20; page++) {
+    const batch = (await get(`${path}${path.includes("?") ? "&" : "?"}per_page=100&page=${page}`)) as T[];
+    all.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return all;
+}
+
+/** The conversation comments on a pull request, as the code host records them (author id, timestamps). */
+export async function loadPullRequestComments(repo: string, number: number): Promise<PullRequestComment[]> {
+  return (await pages<PullRequestComment>(`/repos/${repo}/issues/${number}/comments`)).map((c) => ({
+    id: c.id,
+    body: c.body ?? "",
+    created_at: c.created_at,
+    updated_at: c.updated_at,
+    user: c.user ? { id: c.user.id, login: c.user.login, type: c.user.type } : null,
+  }));
+}
+
+/** The commits that make up a pull request as it stands. */
+export async function loadPullRequestCommits(repo: string, number: number): Promise<string[]> {
+  return (await pages<{ sha: string }>(`/repos/${repo}/pulls/${number}/commits`)).map((c) => c.sha);
 }
 
 /** Loads a pull request saved earlier as JSON, for running without network access. */

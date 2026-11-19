@@ -71,6 +71,8 @@ async function main(): Promise<number> {
         defaultBranch: values["default-branch"]!,
       },
       ticketsDir: values.tickets,
+      // The QA workflow runs this from its working copy of the default branch.
+      trustedRoot: process.cwd(),
       recordingsDir: values.recordings,
       previousRun: values.previous,
       full: values.full,

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { authorityLines } from "../report/authority.ts";
 import { assess, headline, READINESS_LABEL } from "../report/readiness.ts";
 import { MODES } from "../report/run.ts";
 import type { CiResult } from "./run.ts";
@@ -61,9 +62,45 @@ export const ReportInput = z.object({
       executionMode: z.enum(["autonomous", "replay", "recorded"]).default("recorded"),
       stopped: z.string().optional(),
       environment: z.object({ deployedSha: z.string().optional() }),
+      context: z
+        .object({
+          sources: z.array(z.object({ id: z.string(), kind: z.string(), trust: z.string(), origin: z.string(), basis: z.string() })).optional(),
+          docChanges: z
+            .array(
+              z.object({
+                path: z.string(),
+                kind: z.enum(["modified", "added-to-list", "removed"]),
+                hash: z.string().regex(/^[0-9a-f]{64}$/),
+                removedLines: z.array(z.string()),
+                addedLines: z.array(z.string()),
+                approval: z
+                  .object({ approver: z.string(), approverId: z.number(), commentId: z.number(), commit: z.string().regex(/^[0-9a-f]{40}$/) })
+                  .optional(),
+              }),
+            )
+            .optional(),
+          approvals: z
+            .array(z.object({ commentId: z.number(), author: z.string(), accepted: z.boolean(), reason: z.string(), changeHash: z.string().optional() }))
+            .optional(),
+          authorityNotices: z.array(z.string()).optional(),
+          protectedRevision: z.string().optional(),
+        })
+        .optional(),
       pullRequest: z.object({ headSha: z.string() }),
       analysis: z.object({
-        requirements: z.array(z.object({ id: z.string(), text: z.string(), kind: z.string(), quote: z.string() })),
+        requirements: z.array(
+          z.object({
+            id: z.string(),
+            text: z.string(),
+            kind: z.string(),
+            quote: z.string(),
+            sourceId: z.string().optional(),
+            trust: z.string().optional(),
+            origin: z.string().optional(),
+            relation: z.string().optional(),
+          }),
+        ),
+        conflicts: z.array(z.object({ id: z.string(), kind: z.string(), description: z.string() })).optional(),
         ambiguities: z.array(z.object({ id: z.string(), question: z.string() })),
       }),
       plan: z.object({
@@ -211,7 +248,9 @@ export function render(input: ReportInput, runUrl: string): Rendered {
         lines.push(
           `- ${safe(assertion?.description ?? outcome.assertionId, 240)}: expected \`${safe(outcome.expected, 80)}\`, actual \`${safe(outcome.actual, 80)}\``,
         );
-        if (requirement) lines.push(`  - Requirement ${safe(requirement.id, 10)}: "${safe(requirement.quote, 240)}"`);
+        if (requirement) {
+          lines.push(`  - Requirement ${safe(requirement.id, 10)}: "${safe(requirement.quote, 240)}"${requirement.origin ? ` (source: ${safe(requirement.origin, 200)})` : ""}`);
+        }
       }
       lines.push("");
     }
@@ -224,6 +263,10 @@ export function render(input: ReportInput, runUrl: string): Rendered {
     }
     lines.push("");
   }
+
+  lines.push(
+    ...authorityLines({ headSha: run.pullRequest.headSha, context: run.context, analysis: run.analysis }, (text, max = 300) => safe(text, max)),
+  );
 
   const open = a.requirements.filter((r) => r.status !== "verified" && r.status !== "failed");
   if (open.length > 0) {

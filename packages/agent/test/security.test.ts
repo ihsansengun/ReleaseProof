@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { configurationProblems } from "../src/ci/sandbox.ts";
 import { browserEnv } from "../src/execute/run.ts";
-import { buildContext, resolveDoc } from "../src/ingest/context.ts";
+import { buildContext, resolveDoc, UNESTABLISHED } from "../src/ingest/context.ts";
 import { Manifest, type PullRequest, type Ticket } from "../src/schema.ts";
 
 test("a listed document that is a symbolic link, or lies outside the application, is never read", async () => {
@@ -26,12 +26,13 @@ test("a listed document that is a symbolic link, or lies outside the application
 
   const manifest = Manifest.parse({ baseUrl: "http://localhost:1", docs: ["README.md", "NOTES.md", "ENV.md", "docs/up/secret.txt", "../secret.txt"] });
   const context = await buildContext(
-    { key: "X-1" } as Ticket,
-    { files: [] } as unknown as PullRequest,
+    { key: "X-1", summary: "s", description: "d", comments: [] } as Ticket,
+    { number: 1, title: "t", body: "", files: [] } as unknown as PullRequest,
     manifest,
     path.join(app, "releaseproof.yml"),
+    UNESTABLISHED("ticket.json"),
   );
-  assert.deepEqual(context.docs.map((d) => d.path), ["README.md"]);
+  assert.deepEqual(context.headDocs.map((d) => d.path), ["README.md"]);
   assert.doesNotMatch(JSON.stringify(context), /RUNNER-SECRET|PATH=/);
   assert.equal(context.omitted.length, 4);
 });
@@ -166,6 +167,7 @@ test("a hand-off containing a symbolic link is refused before anything is read",
     repo: "acme/widgets",
     trigger: { event: "workflow_dispatch", headBranch: "main", headSha: "a".repeat(40), defaultBranch: "main" },
     ticketsDir: dir,
+    trustedRoot: dir,
     recordingsDir: dir,
     full: true,
     limits: { maxTokens: 1, maxUsd: 1, maxMinutes: 1 },
@@ -188,6 +190,7 @@ test("the engine removes the model key from its own environment before doing any
     repo: "acme/widgets",
     trigger: { event: "workflow_dispatch", headBranch: "main", headSha: "a".repeat(40), defaultBranch: "main" },
     ticketsDir: dir,
+    trustedRoot: dir,
     recordingsDir: dir,
     full: true,
     limits: { maxTokens: 1, maxUsd: 1, maxMinutes: 1 },

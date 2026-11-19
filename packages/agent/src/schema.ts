@@ -1,3 +1,5 @@
+import type { ApprovalDecision } from "./approval.ts";
+import type { DocChange, SourceRecord, Trust } from "./sources.ts";
 import { z } from "zod";
 import type { UsageSummary } from "./budget.ts";
 
@@ -28,6 +30,13 @@ export const Assertion = z.object({
   /** Required for the comparing kinds; unused for present and absent. */
   expected: Expected.optional(),
   requirementId: z.string().optional(),
+  /**
+   * Where the expected value's authority comes from. Copied on by the plan
+   * validator from the source record; never written by a model.
+   */
+  provenance: z
+    .object({ sourceId: z.string(), trust: z.literal("authoritative"), origin: z.string(), quote: z.string() })
+    .optional(),
 });
 export type Assertion = z.infer<typeof Assertion>;
 
@@ -164,7 +173,11 @@ export type Ticket = {
   key: string;
   summary: string;
   description: string;
-  comments: { author: string; created: string; body: string }[];
+  comments: { author: string; created: string; body: string; id?: string; authorId?: string; updated?: string }[];
+  /** Jira's numeric issue id, and who reported the issue, when the record carries them. */
+  id?: string;
+  reporter?: { name: string; accountId?: string };
+  updated?: string;
 };
 
 export type PullRequest = {
@@ -175,6 +188,7 @@ export type PullRequest = {
   headSha: string;
   headRef: string;
   baseRef: string;
+  baseSha?: string;
   /** "owner/name" of the repository the head branch lives in. */
   headRepo?: string;
   draft?: boolean;
@@ -187,7 +201,19 @@ export type Doc = { path: string; text: string };
 export type RunContext = {
   ticket: Ticket;
   pullRequest: PullRequest;
+  /** Approved documents, as read at the protected revision. */
   docs: Doc[];
+  /** The same documents as the pull request has them. Never authoritative by themselves. */
+  headDocs: Doc[];
+  protectedRevision: string;
+  /** Every text of the run with the trust level code assigned to it. */
+  sources: SourceRecord[];
+  /** What the pull request changes in the documents that count as requirements. */
+  docChanges: DocChange[];
+  /** How approval commands on the pull request were judged. */
+  approvals: ApprovalDecision[];
+  /** Things a reader must know about how trust was assigned. */
+  authorityNotices: string[];
   /** Material left out to stay within the size budget. Never silent. */
   omitted: string[];
 };
@@ -208,16 +234,25 @@ export type AppMap = {
 
 // ---- analysis and plan (shapes the model fills in) ----------------------------
 
-export const Analysis = z.object({
+/** What the analyst model returns. It names a source and quotes it; it has no field for trust. */
+export const AnalysisDraft = z.object({
   featureSummary: z.string(),
   requirements: z.array(
     z.object({
       id: z.string(),
       text: z.string(),
       kind: z.enum(["documented", "inferred"]),
-      sourceType: z.enum(["ticket-description", "ticket-comment", "doc", "pull-request", "none"]),
-      /** Exact text copied from the source. Empty for inferred requirements. */
+      /** Id of the one source the quote is copied from. Empty for inferred requirements. */
+      sourceId: z.string(),
+      /** Exact text copied from that source. Empty for inferred requirements. */
       quote: z.string(),
+      /**
+       * Only for statements quoted from pull-request material: how the
+       * statement relates to the approved requirements.
+       */
+      relation: z.enum(["none", "consistent", "contradicts", "adds", "removes"]),
+      /** The approved requirement the relation refers to, or empty. */
+      relatedRequirementId: z.string(),
     }),
   ),
   ambiguities: z.array(
@@ -237,7 +272,43 @@ export const Analysis = z.object({
     }),
   ),
 });
-export type Analysis = z.infer<typeof Analysis>;
+export type AnalysisDraft = z.infer<typeof AnalysisDraft>;
+
+export type Requirement = {
+  id: string;
+  text: string;
+  /**
+   * documented  quoted from an authoritative source; may set an expected value
+   * claimed     quoted from pull-request or unverified material; never sets one
+   * inferred    no verifiable quote
+   */
+  kind: "documented" | "claimed" | "inferred";
+  quote: string;
+  /** Set by code from the source record the quote was verified against. */
+  sourceId?: string;
+  trust?: Trust;
+  origin?: string;
+  relation?: "none" | "consistent" | "contradicts" | "adds" | "removes";
+  relatedRequirementId?: string;
+  /** Present only in analyses recorded before sources had ids. */
+  sourceType?: string;
+};
+
+/** A disagreement between pull-request material and the approved requirements, or a change nobody accounted for. */
+export type Conflict = {
+  id: string;
+  kind: "contradiction" | "unstated-addition" | "removal" | "unclassified" | "rule-changed" | "change-not-analysed";
+  description: string;
+  claimId?: string;
+  requirementId?: string;
+  docPath?: string;
+};
+
+export type Analysis = Omit<AnalysisDraft, "requirements"> & {
+  requirements: Requirement[];
+  /** Computed by code. A run with any entry here cannot be reported as ready. */
+  conflicts?: Conflict[];
+};
 
 /** Flat on purpose: easy for a model to fill and for code to check. */
 export const PlanDraft = z.object({
@@ -295,7 +366,18 @@ export type RunReport = {
   pullRequest: { repo: string; number: number; headSha: string; title: string };
   environment: { baseUrl: string; deployedSha?: string };
   driver: string;
-  context: { docs: string[]; changedFiles: string[]; omitted: string[] };
+  context: {
+    docs: string[];
+    changedFiles: string[];
+    omitted: string[];
+    /** Every source with its trust level and origin; texts are in context.json. */
+    sources?: { id: string; kind: string; trust: Trust; origin: string; basis: string }[];
+    docChanges?: DocChange[];
+    approvals?: ApprovalDecision[];
+    authorityNotices?: string[];
+    /** Commit the approved documents and the owner list were read from. */
+    protectedRevision?: string;
+  };
   analysis: Analysis;
   analysisNotes: string[];
   plan: Plan;
@@ -314,7 +396,7 @@ export type RunReport = {
   usage?: UsageSummary;
   /** Why the run ended early, if it did. */
   stopped?: string;
-  /** Fingerprint of the ticket text, to tell whether requirements changed between runs. */
+  /** Fingerprint of every authoritative source, to tell whether requirements changed between runs. */
   ticketHash?: string;
   /** Set when this run re-ran an earlier run's scenarios instead of planning afresh. */
   retestOf?: {

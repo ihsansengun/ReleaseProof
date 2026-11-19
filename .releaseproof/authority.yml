@@ -1,0 +1,29 @@
+# Who may state or approve requirements for ReleaseProof runs in this repository.
+#
+# This file is read ONLY from the default branch, at the commit the QA stage
+# runs from. A pull request that edits it changes nothing about its own run.
+# Protect it: require review for changes to this path.
+requirementOwners:
+  # GitHub users, by immutable numeric id. They may approve a documentation
+  # change in a pull request with:
+  #   /releaseproof approve-requirements <commit> <change hash>
+  github:
+    - id: 16247839
+      login: ihsansengun
+
+  # Jira users, by account id. Their comments on a ticket are authoritative.
+  # Everyone else's comments are shown as unverified context.
+  jira:
+    - accountId: "712020:7364b2f7-52b7-4279-b7ff-d81a5ea796ed"
+      name: Don Palmer Rome
+
+  # Comment authors in the ticket fixture files under eval/tickets, by display
+  # name. A display name is not an identity, so this list is honoured only for
+  # fixture files on the default branch, never for live Jira.
+  # Listed: the people who answer for the requirement in those tickets.
+  # Not listed, and therefore unverified: the people who only ask questions
+  # there (Priya Raman, Tomasz Wieczorek).
+  fixtureAuthors:
+    - Daniel Okafor
+    - Helen Abara
+    - Priya (Product)

@@ -108,6 +108,18 @@ requests never share a group; and a run that the gate skips never joins one.
 There is no workflow-level group, because that is joined by every completed
 build before any gate.
 
+**Where requirements may come from.** Trust is assigned in code from where a
+text was read, before any model runs ([design](design/REQUIREMENT-AUTHORITY.md)).
+Authoritative: the Jira issue fetched over the authenticated API, comments
+by listed requirement owners, ticket files and listed documents as this
+stage's own working copy of the default branch has them, and documentation
+changes a listed owner approved with an explicit command. Everything the
+pull request controls (its description, its changes to documents, its
+manifest's document list, its copy of the owner list) can be quoted as a
+claim and can never set an expected value. Unapproved changes to requirement
+documents are always listed in the report, and any conflict keeps the Check
+from being green.
+
 ### Stage 3: report
 
 Downloads one file, `ci-result.json`, validates it against a schema, and

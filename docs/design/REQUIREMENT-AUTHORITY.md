@@ -1,6 +1,10 @@
 # Design: requirement-source authority
 
-Status: **proposed, not implemented.** For review.
+Status: **implemented** on branch `claude/beautiful-hypatia-oaqsrr`, with the
+decisions of the design review (both approval routes; owner-only Jira
+comments; contradictions give "Incomplete"; local documents unverified by
+default; owners in `.releaseproof/authority.yml`). Not yet merged, and not yet
+exercised by a live model or in GitHub Actions. See "As built" at the end.
 
 ## The problem
 
@@ -300,3 +304,46 @@ prompt-injection run with a controlled budget.
 4. Approval command, with test 8.
 5. Live Jira with author identities (needs a Jira site and token).
 6. The blind injection run.
+
+## As built
+
+Where the implementation is more specific than, or differs from, the text above:
+
+- **Approval command.** `/releaseproof approve-requirements <commit sha> <change hash>`.
+  The hash names one document change (path, protected text, pull request
+  text), so an approval covers that change and nothing else. The report
+  prints the exact command for each unapproved change. The commit must be one
+  of the pull request's commits as it stands; the hash must match the change
+  as it stands. The author is matched by numeric GitHub id. The whole comment
+  must be the command, and an edited comment is refused.
+  `/releaseproof revoke-requirements <change hash>` withdraws it.
+- **Conflicts.** Six kinds. Two are deterministic: `rule-changed` (the pull
+  request removes or rewrites approved text a requirement quotes) and
+  `change-not-analysed` (an unapproved change from which the analysis took
+  nothing). Four come from the model's classification of each claim, checked
+  in code: `contradiction`, `removal`, `unstated-addition`, and
+  `unclassified` for anything unclear or unsupported. Any conflict keeps the
+  run from "Ready".
+- **Fixture tickets** carry display names, not account ids. Their comments
+  are authoritative only for authors in `fixtureAuthors`, and that list is
+  honoured only for files read from the protected revision.
+- **Ticket providers.** `TicketProvider` in `ingest/jira.ts`, with a Jira
+  Cloud provider and a file provider. In CI: Jira first when configured, then
+  ticket files on the default branch. A provider that cannot answer ends the
+  run.
+- **Files.** `src/sources.ts`, `src/approval.ts`, `src/protected.ts`,
+  `src/report/authority.ts` are new. `attribute` and `findConflicts` are in
+  `src/analyse.ts`. Tests: `test/authority.test.ts`.
+
+Known gaps in the implementation:
+
+- A re-run that replays an earlier plan (`retest`) keeps that run's analysis.
+  It is only chosen when no authoritative source changed, but it does not
+  recompute conflicts or approvals for the new commit.
+- For live Jira, the issue's summary and description are authoritative
+  whoever last edited them. Jira decides who may edit an issue; that set can
+  be wider than the configured owner list. Comments are checked against the
+  owner list; the description is not. Checking the issue's change history
+  against the owner list would close this and is not implemented.
+- The analyst's output schema and prompt changed. No live model has run
+  against them yet.
