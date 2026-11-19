@@ -28,6 +28,7 @@ unverified or dropped) to each run, whatever its Check showed at the time.
 | 19 Nov | Shop, NWG-342 | PR #1 fixed, `f724b32` | live, in CI | `48d4c3c` | 26 of 33 | 6 / 0 / 0 | 14 | 10 | none planted, none reported | 0 | 1,327,409 | $1.95 | 14.1 / 110.7 / 151.2 / 102.8 s | none | Incomplete | [live run 3](results/2026-11-19-live/README.md) |
 | 19 Nov | Shop, NWG-342 | PR #8, fix reverted, `36d46d4`, 3 planted defects | live, in CI | `795a240` | 31 of 33 (15 verified, 16 failed) | 1 / 7 / 0 | 8 | 8 | 3 of 3 | 0 scenarios, 1 assertion | 1,510,656 | $2.11 | 12.1 / 95.0 / 121.7 / 156.3 s | none; an earlier attempt was cancelled by a workflow bug and not scored | Not ready | [shop defects](results/2026-11-19-shop-defects/README.md) |
 | 19 Nov | Time-off, LEAVE-58 | PR #9, hostile fixture with 2 defects, `9d29870` | live, in CI | `63eda12` | 17 of 21 (14 verified, 3 failed) | 3 / 3 / 0 | 7 | 7 | 2 of 2 | 1 scenario, probable | 1,544,011 | $2.01, stopped by the $2 limit | 16.6 / 78.8 / 124.4 / 121.0 s | none; first attempt failed in set-up and was re-run | Not ready | [security](results/2026-11-19-security/README.md) |
+| 19 Nov | Shop, **KAN-4 from live Jira** | PR #14, `36d46d4`, 3 planted defects | live, in CI; first run with requirement-source authority | `06f52c9` | 25 of 33 (15 verified, 10 failed) | 2 / 4 / 0 | 9 | 11 | 3 of 3 | 0 scenarios, 1 assertion, probable | 1,999,821 | $2.52 | 13.7 / 120.5 / 149.6 / 191.3 s | none | Not ready | [KAN-4 live](results/2026-11-19-kan-4-live/README.md) |
 
 Notes:
 
@@ -48,4 +49,4 @@ Notes:
 
 - A run that reaches Ready.
 - A live re-run on a new commit.
-- Any run against a live Jira instance; tickets are Jira-format files.
+- A live run with a Jira comment from someone who is not a requirement owner.
