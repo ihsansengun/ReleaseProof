@@ -27,8 +27,10 @@ results recorded with them are unchanged.
   with placeholders (`JIRA_EMAIL=placeholder`, `JIRA_API_TOKEN=proxy-injected`).
 - The engine issues GET requests only, for one issue and its comments, and
   does not follow redirects.
-- Whether the token is limited to read scopes is set where it was created
-  and cannot be seen from here.
+- The token is scope-limited and read-only, as confirmed by its owner:
+  `read:jira-work`, `read:jira-user`, `read:account`, `read:me` and
+  `read:servicedesk-request`. No write scope. The scopes cannot be seen from
+  the engine's side.
 
 ## Results
 
