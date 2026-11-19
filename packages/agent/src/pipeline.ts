@@ -1,4 +1,5 @@
 import { buildAuditTrail, renderAuditTrail } from "./report/audit.ts";
+import { buildDiagnostics, renderDiagnostics } from "./report/diagnostics.ts";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -91,6 +92,10 @@ async function writeRun(outDir: string, report: RunReport): Promise<RunReport> {
   const trail = buildAuditTrail(report);
   await writeFile(path.join(outDir, "audit.json"), JSON.stringify(trail, null, 2));
   await writeFile(path.join(outDir, "audit.md"), renderAuditTrail(trail));
+  // What did not pass, in a redacted form that is safe to show outside the artifact.
+  const diagnostics = buildDiagnostics(report);
+  await writeFile(path.join(outDir, "diagnostics.json"), JSON.stringify(diagnostics, null, 2));
+  await writeFile(path.join(outDir, "diagnostics.md"), renderDiagnostics(diagnostics));
   return report;
 }
 

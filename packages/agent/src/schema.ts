@@ -31,6 +31,11 @@ export const Assertion = z.object({
   expected: Expected.optional(),
   requirementId: z.string().optional(),
   /**
+   * Other approved requirements this same comparison also verifies. The
+   * expected value still rests on `requirementId` alone.
+   */
+  alsoVerifies: z.array(z.string()).optional(),
+  /**
    * Where the expected value's authority comes from. Copied on by the plan
    * validator from the source record; never written by a model.
    */
@@ -436,6 +441,8 @@ export const PlanDraft = z.object({
           expectedText: z.string().nullable(),
           expectedFormula: z.string().nullable(),
           requirementId: z.string(),
+          /** Ids of other documented requirements this same comparison verifies. Empty if none. */
+          alsoVerifies: z.array(z.string()),
         }),
       ),
     }),

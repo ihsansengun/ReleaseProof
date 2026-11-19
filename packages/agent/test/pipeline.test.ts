@@ -64,6 +64,7 @@ const assertion = (over: Partial<PlanDraft["scenarios"][number]["assertions"][nu
   expectedNumber: 5,
   expectedText: null,
   expectedFormula: null,
+  alsoVerifies: [] as string[],
   requirementId: "R1",
   ...over,
 });

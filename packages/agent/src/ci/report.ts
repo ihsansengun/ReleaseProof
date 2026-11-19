@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { authorityLines } from "../report/authority.ts";
+import { failurePatterns } from "../report/patterns.ts";
 import { assess, headline, READINESS_LABEL } from "../report/readiness.ts";
 import { MODES } from "../report/run.ts";
 import type { CiResult } from "./run.ts";
@@ -114,7 +115,7 @@ export const ReportInput = z.object({
               id: z.string(),
               title: z.string(),
               requirementIds: z.array(z.string()).optional(),
-              assertions: z.array(z.object({ id: z.string(), description: z.string(), requirementId: z.string().optional() })),
+              assertions: z.array(z.object({ id: z.string(), description: z.string(), requirementId: z.string().optional(), alsoVerifies: z.array(z.string()).optional() })),
             }),
           }),
         ),
@@ -208,10 +209,10 @@ export function render(input: ReportInput, runUrl: string): Rendered {
           : "**commit not confirmed by the application**"
     })`,
     "",
-    "| | Passed / verified | Failed | Blocked | Unverified | Not planned |",
-    "|---|---|---|---|---|---|",
-    `| Scenarios (${run.plan.scenarios.length} planned, ${run.results.length} executed) | ${a.execution.passed} | ${a.execution.failed} | ${a.notRun + a.execution.blocked} | ${a.execution.unverified} | ${run.plan.trimmedRunnable ? `${run.plan.trimmedRunnable} dropped by the limit` : "–"} |`,
-    `| Documented requirements (${a.requirements.length}) | ${a.counts.verified} | ${a.counts.failed} | ${a.counts.blocked} | ${a.counts.unverified} | ${a.counts["not planned"]} |`,
+    "| | Passed / verified | Failed | Blocked | Unverified | Exercised only | Not planned |",
+    "|---|---|---|---|---|---|---|",
+    `| Scenarios (${run.plan.scenarios.length} planned, ${run.results.length} executed) | ${a.execution.passed} | ${a.execution.failed} | ${a.notRun + a.execution.blocked} | ${a.execution.unverified} | – | ${run.plan.trimmedRunnable ? `${run.plan.trimmedRunnable} dropped by the limit` : "–"} |`,
+    `| Documented requirements (${a.requirements.length}) | ${a.counts.verified} | ${a.counts.failed} | ${a.counts.blocked} | ${a.counts.unverified} | ${a.counts.exercised} | ${a.counts["not planned"]} |`,
     "",
     `- Questions for the ticket owner: ${run.analysis.ambiguities.length + run.plan.clarifications.length}`,
     `- Execution mode: ${MODES[run.executionMode]}`,
@@ -243,7 +244,23 @@ export function render(input: ReportInput, runUrl: string): Rendered {
   lines.push("");
 
   if (failed > 0) {
-    lines.push("### Failures", "");
+    // One defect often shows up in several comparisons. Counting comparisons
+    // or requirements would overstate it, so they are grouped by what the
+    // observed values have in common.
+    const patterns = failurePatterns(run);
+    const comparisons = patterns.reduce((n, p) => n + p.comparisons.length, 0);
+    lines.push(
+      "### Failures",
+      "",
+      `${comparisons} failed comparison${comparisons === 1 ? "" : "s"} in ${failed} scenario${failed === 1 ? "" : "s"}, falling into **${patterns.length} distinct pattern${patterns.length === 1 ? "" : "s"}**. A pattern groups comparisons that are off in the same way; it is a guide to how many separate causes there may be, not a count of defects.`,
+      "",
+      "| Pattern | What the comparisons share | Comparisons | Requirements they rest on |",
+      "|---|---|---|---|",
+    );
+    for (const p of patterns.slice(0, 20)) {
+      lines.push(`| ${p.id} | ${safe(p.description, 120)} | ${p.comparisons.map((c) => `${safe(c.scenarioId, 20)}/${safe(c.assertionId, 12)}`).join(", ")} | ${p.requirementIds.map((id) => safe(id, 10)).join(", ") || "–"} |`);
+    }
+    lines.push("");
     for (const result of run.results.filter((r) => r.verdict === "failed")) {
       const planned = run.plan.scenarios.find((s) => s.scenario.id === result.scenarioId);
       lines.push(`**${safe(result.scenarioId, 20)} ${safe(result.title, 160)}**`);
@@ -343,10 +360,13 @@ async function github(method: string, path: string, token: string, body?: unknow
  * tested commit and keeps one comment on the pull request up to date.
  * Nothing from the result is executed or followed; it is only displayed.
  */
-export async function publish(raw: unknown, runUrl: string, token: string): Promise<Rendered & { posted: string[] }> {
+export async function publish(raw: unknown, runUrl: string, token: string, options: { post?: boolean } = {}): Promise<Rendered & { posted: string[] }> {
   const input = ReportInput.parse(raw satisfies unknown as CiResult);
   const rendered = render(input, runUrl);
   const posted: string[] = [];
+  // For an application in a repository this workflow cannot write to, the
+  // result is rendered for the run's own summary and nothing is posted.
+  if (options.post === false) return { ...rendered, posted };
   if (!input.headSha || !input.pr) return { ...rendered, posted };
 
   await github("POST", `/repos/${input.repo}/check-runs`, token, {

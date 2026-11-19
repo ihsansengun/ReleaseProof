@@ -23,6 +23,9 @@ on:
         description: Pull request number to test
         required: true
         type: string
+      repository:
+        description: Another public repository that holds the application, as owner/name. Empty means this repository
+        type: string
       verify_only:
         description: Only build, start and check isolation. No ticket is read and no model is called
         type: boolean
@@ -66,6 +69,7 @@ jobs:
       - name: Write the request
         env:
           PR: ${{ inputs.pr || github.event.pull_request.number }}
+          TARGET: ${{ inputs.repository }}
           VERIFY_ONLY: ${{ inputs.verify_only || false }}
           FULL: ${{ inputs.full || false }}
           MAX_USD: ${{ inputs.max_usd }}
@@ -76,7 +80,7 @@ jobs:
         run: |
           case "$PR" in (''|*[!0-9]*) echo "Not a pull request number"; exit 1;; esac
           mkdir request
-          jq -n --argjson pr "$PR" '{pr: $pr}' > request/meta.json
+          jq -n --argjson pr "$PR" --arg repo "$TARGET" '{pr: $pr} + (if $repo == "" then {} else {repo: $repo} end)' > request/meta.json
           echo "$FULL" > request/full
           echo "$VERIFY_ONLY" > request/verify-only
           # Requests to tighten this run's limits. The QA workflow validates
