@@ -9,6 +9,7 @@ import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
 import { BridgeDriver } from "./drivers/bridge.ts";
 import { ApiDriver, type Driver } from "./drivers/driver.ts";
+import { routingFromEnv } from "./routing.ts";
 import { loadManifest } from "./env.ts";
 import { runScenario } from "./execute/run.ts";
 import { loadPullRequest, loadPullRequestComments, loadPullRequestCommits, loadPullRequestFile } from "./ingest/github.ts";
@@ -33,7 +34,7 @@ const USAGE = `Usage:
 Options:
   --driver api|bridge|recorded   how the model is attached (default api)
   --recording <run.json>         recorded: an earlier run to replay instead of a live model
-  --max-usd, --max-tokens, --max-minutes   run budget (defaults 8, 3000000, 25)
+  --max-usd, --max-tokens, --max-minutes   run budget (defaults 2, 3000000, 25)
   --port <n>            bridge: port to serve jobs on (default 4200)
   --base-url <url>      override the manifest's baseUrl
   --expect-sha <sha>    refuse to run unless the environment reports this commit
@@ -51,7 +52,8 @@ Options:
   --confirm             run-scenario: replay a failure once without the model
 
 Environment:
-  RELEASEPROOF_MODEL, RELEASEPROOF_EFFORT   api driver (default claude-opus-5-5, medium)
+  RELEASEPROOF_MODEL_<STAGE>, RELEASEPROOF_EFFORT_<STAGE>   api driver, per stage
+      (ANALYSE, PLAN: claude-sonnet-5-5; DISCOVER, EXECUTE: claude-haiku-5-5; ESCALATE: claude-sonnet-5-5)
   GITHUB_TOKEN                              optional, for private repositories
   JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN when --ticket is a key, not a file`;
 
@@ -180,8 +182,7 @@ async function main(): Promise<number> {
       if (!values.recording) throw new Error("--driver recorded needs --recording <run.json>");
       return new RecordedDriver(JSON.parse(await readFile(values.recording, "utf8")) as RunReport);
     }
-    const effort = (process.env.RELEASEPROOF_EFFORT ?? "medium") as "low" | "medium" | "high";
-    return new ApiDriver({ model: process.env.RELEASEPROOF_MODEL ?? "claude-opus-5-5", effort, budget });
+    return new ApiDriver({ routing: routingFromEnv(process.env), budget });
   };
 
   if (command === "run") {
@@ -216,6 +217,7 @@ async function main(): Promise<number> {
         maxScenarios: Number(values["max-scenarios"]),
         concurrency: Number(values.concurrency),
         allowShaMismatch: values["allow-sha-mismatch"],
+        escalation: process.env.RELEASEPROOF_ESCALATION !== "off",
       });
       const { documented, covered, assessment } = coverage(report);
       const count = (v: string) => report.results.filter((r) => r.verdict === v).length;

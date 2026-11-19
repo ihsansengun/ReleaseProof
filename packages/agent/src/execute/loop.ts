@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { Budget } from "../budget.ts";
+import { Budget } from "../budget.ts";
+import type { Stage } from "../routing.ts";
 import type { Usage } from "../schema.ts";
 import { runTool, toolDefinitions, type Session, type ToolName } from "./tools.ts";
 
@@ -17,7 +18,14 @@ export type SessionJob = {
   briefing: string;
   tools: readonly ToolName[];
   maxToolCalls: number;
+  /** Which stage's model runs the session. Defaults to execution. */
+  stage?: Stage;
 };
+
+/** Output allowance of one executor turn. */
+const TURN_MAX_TOKENS = 8_000;
+/** Allowance for what one turn adds to the prompt before the next (tool results, mostly page snapshots). */
+const TURN_GROWTH_TOKENS = 12_000;
 
 /**
  * Bounded tool loop against the model API. Ends when the executor calls
@@ -30,9 +38,13 @@ export async function runAgentLoop(session: Session, job: SessionJob, options: L
   const tools = toolDefinitions.filter((t) => job.tools.includes(t.name));
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: job.briefing }];
   let toolCalls = 0;
+  // Size of the next prompt, estimated from the last one the API measured.
+  let nextPrompt = Math.ceil((job.system.length + job.briefing.length + JSON.stringify(tools).length) / 3);
 
   while (!session.outcome) {
-    const over = options.budget.exceeded();
+    // Asked before every call: could the dearest possible outcome of this
+    // call take the run, or this stage, past its limit?
+    const over = options.budget.refuses(Budget.worstCase(options.model, nextPrompt + TURN_GROWTH_TOKENS, TURN_MAX_TOKENS));
     if (over) {
       session.outcome = { kind: "stopped", reason: `Run budget exhausted: ${over}.` };
       break;
@@ -42,7 +54,7 @@ export async function runAgentLoop(session: Session, job: SessionJob, options: L
     try {
       response = await options.client.beta.messages.create({
         model: options.model,
-        max_tokens: 16000,
+        max_tokens: TURN_MAX_TOKENS,
         system: job.system,
         tools,
         messages,
@@ -71,6 +83,8 @@ export async function runAgentLoop(session: Session, job: SessionJob, options: L
     }
 
     options.budget.record(response.usage, response.model);
+    nextPrompt =
+      response.usage.input_tokens + (response.usage.cache_read_input_tokens ?? 0) + (response.usage.cache_creation_input_tokens ?? 0) + response.usage.output_tokens;
     usage.turns++;
     usage.inputTokens +=
       response.usage.input_tokens +

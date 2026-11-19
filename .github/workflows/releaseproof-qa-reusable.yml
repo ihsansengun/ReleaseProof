@@ -348,8 +348,25 @@ jobs:
           JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL || vars.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          # Which model does which stage. Unset means the defaults in
+          # packages/agent/src/routing.ts: Sonnet for analysis, planning and
+          # escalation, Haiku for discovery and execution. The dearest model
+          # is refused unless RELEASEPROOF_ALLOW_OPUS is "on".
           RELEASEPROOF_MODEL: ${{ vars.RELEASEPROOF_MODEL }}
+          RELEASEPROOF_MODEL_ANALYSE: ${{ vars.RELEASEPROOF_MODEL_ANALYSE }}
+          RELEASEPROOF_MODEL_PLAN: ${{ vars.RELEASEPROOF_MODEL_PLAN }}
+          RELEASEPROOF_MODEL_DISCOVER: ${{ vars.RELEASEPROOF_MODEL_DISCOVER }}
+          RELEASEPROOF_MODEL_EXECUTE: ${{ vars.RELEASEPROOF_MODEL_EXECUTE }}
+          RELEASEPROOF_MODEL_ESCALATE: ${{ vars.RELEASEPROOF_MODEL_ESCALATE }}
+          RELEASEPROOF_ALLOW_OPUS: ${{ vars.RELEASEPROOF_ALLOW_OPUS }}
+          RELEASEPROOF_ESCALATION: ${{ vars.RELEASEPROOF_ESCALATION }}
           RELEASEPROOF_EFFORT: ${{ vars.RELEASEPROOF_EFFORT }}
+          RELEASEPROOF_EFFORT_ANALYSE: ${{ vars.RELEASEPROOF_EFFORT_ANALYSE }}
+          RELEASEPROOF_EFFORT_PLAN: ${{ vars.RELEASEPROOF_EFFORT_PLAN }}
+          RELEASEPROOF_EFFORT_EXECUTE: ${{ vars.RELEASEPROOF_EFFORT_EXECUTE }}
+          RELEASEPROOF_EFFORT_ESCALATE: ${{ vars.RELEASEPROOF_EFFORT_ESCALATE }}
+          RELEASEPROOF_MAX_USD_EXECUTE: ${{ vars.RELEASEPROOF_MAX_USD_EXECUTE }}
+          RELEASEPROOF_MAX_USD_ESCALATE: ${{ vars.RELEASEPROOF_MAX_USD_ESCALATE }}
           RELEASEPROOF_FALLBACKS: ${{ vars.RELEASEPROOF_FALLBACKS }}
           MAX_USD: ${{ vars.RELEASEPROOF_MAX_USD }}
           MAX_TOKENS: ${{ vars.RELEASEPROOF_MAX_TOKENS }}

@@ -514,6 +514,12 @@ export type RunReport = {
   usage?: UsageSummary;
   /** Why the run ended early, if it did. */
   stopped?: string;
+  /**
+   * Scenarios re-run on the escalation model because their first run gave no
+   * trustworthy verdict. A failure that the model-free repeat reproduced is
+   * never among them.
+   */
+  escalations?: { scenarioId: string; why: string; before: string; after: string; kept: "escalated run" | "first run" }[];
   /** Fingerprint of every authoritative source, to tell whether requirements changed between runs. */
   ticketHash?: string;
   /** Set when this run re-ran an earlier run's scenarios instead of planning afresh. */

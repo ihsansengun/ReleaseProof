@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
-import { BudgetExceeded, type Budget } from "../budget.ts";
+import { Budget, BudgetExceeded, pricesFor } from "../budget.ts";
+import { describeRouting, supportsFallbacks, type Routing, type Stage } from "../routing.ts";
 import { runAgentLoop, type SessionJob } from "../execute/loop.ts";
 import type { Session } from "../execute/tools.ts";
 import type { Usage } from "../schema.ts";
@@ -40,10 +41,8 @@ export function describeApiError(error: unknown): string {
 }
 
 export type ApiDriverOptions = {
-  model: string;
-  /** Model for tool-using sessions (sign-in, scenario execution). Defaults to `model`. */
-  executorModel?: string;
-  effort: "low" | "medium" | "high" | "xhigh" | "max";
+  /** Which model and effort each stage uses. */
+  routing: Routing;
   budget: Budget;
   /** Defaults to true. Turn off if the API rejects the fallback parameters. */
   fallbacks?: boolean;
@@ -57,6 +56,9 @@ export type ApiDriverOptions = {
 const REQUEST_TIMEOUT_MS = 180_000;
 const TASK_TIMEOUT_MS = 600_000;
 const MAX_RETRIES = 4;
+/** Output allowance of an analysis or planning call, and the least that is worth starting one with. */
+const TASK_MAX_TOKENS = 32_000;
+const TASK_MIN_TOKENS = 4_000;
 
 /**
  * Calls the model API directly. The client retries rate limits, overload and
@@ -69,10 +71,7 @@ export class ApiDriver implements Driver {
   private client: Anthropic;
 
   constructor(private options: ApiDriverOptions) {
-    this.label =
-      options.executorModel && options.executorModel !== options.model
-        ? `${options.model} (analysis and planning), ${options.executorModel} (execution)`
-        : options.model;
+    this.label = describeRouting(options.routing);
     this.client = new Anthropic({
       timeout: REQUEST_TIMEOUT_MS,
       maxRetries: MAX_RETRIES,
@@ -82,15 +81,25 @@ export class ApiDriver implements Driver {
   }
 
   async task<T>(job: TaskJob<T>): Promise<T> {
-    const over = this.options.budget.exceeded();
+    const stage: Stage = job.name === "analyse" ? "analyse" : "plan";
+    const model = this.options.routing.models[stage];
+    const { budget } = this.options;
+    // The prompt's size is estimated generously (three characters a token),
+    // and the output allowance is cut to what the remaining budget can pay
+    // for, so this call cannot take the run past its limit.
+    const promptTokens = Math.ceil((job.instructions.length + job.input.length) / 3);
+    const prices = pricesFor(model, promptTokens);
+    const affordable = Math.floor(((budget.remainingUsd() - Budget.worstCase(model, promptTokens, 0)) * 1_000_000) / prices.output);
+    const maxTokens = Math.min(TASK_MAX_TOKENS, affordable);
+    const over = budget.exceeded() ?? (maxTokens < TASK_MIN_TOKENS ? `what is left of the cost limit ($${budget.remainingUsd().toFixed(2)}) does not cover the ${job.name} task` : undefined);
     if (over) throw new BudgetExceeded(over);
     const stream = this.client.messages.stream(
       {
-        model: this.options.model,
-        max_tokens: 32000,
+        model,
+        max_tokens: maxTokens,
         system: job.instructions,
         messages: [{ role: "user", content: job.input }],
-        output_config: { effort: "high", format: zodOutputFormat(job.schema) },
+        output_config: { effort: this.options.routing.efforts[stage], format: zodOutputFormat(job.schema) },
       },
       { timeout: TASK_TIMEOUT_MS },
     );
@@ -112,12 +121,14 @@ export class ApiDriver implements Driver {
   }
 
   session(session: Session, job: SessionJob & { name: string }): Promise<Usage> {
+    const stage: Stage = job.stage ?? "execute";
+    const model = this.options.routing.models[stage];
     return runAgentLoop(session, job, {
       client: this.client,
-      model: this.options.executorModel ?? this.options.model,
-      effort: this.options.effort,
+      model,
+      effort: this.options.routing.efforts[stage],
       budget: this.options.budget,
-      fallbacks: this.options.fallbacks ?? true,
+      fallbacks: (this.options.fallbacks ?? true) && supportsFallbacks(model),
     });
   }
 

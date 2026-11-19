@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
 import type { Driver } from "../drivers/driver.ts";
+import type { Stage } from "../routing.ts";
 import { createFixtures, deployedSha } from "../env.ts";
 import { renderReport } from "../report/markdown.ts";
 import type { Manifest, Scenario, ScenarioResult, Step, Usage } from "../schema.ts";
@@ -187,7 +188,7 @@ async function notStarted(options: RunOptions, reason: string): Promise<Scenario
 
 export type RunOptions = SessionOptions & {
   maxToolCalls?: number;
-  mode: { kind: "agent"; driver: Driver } | { kind: "replay"; steps: Step[] };
+  mode: { kind: "agent"; driver: Driver; stage?: Stage } | { kind: "replay"; steps: Step[] };
 };
 
 /** Runs one scenario start to finish, driven by a model or by a recording. */
@@ -219,6 +220,7 @@ export async function runScenario(options: RunOptions): Promise<ScenarioResult> 
           briefing: briefing(options.scenario, open.manifest, open.fixtures, open.serverDate),
           tools: ALL_TOOLS,
           maxToolCalls: options.maxToolCalls ?? 60,
+          stage: options.mode.stage,
         });
       } else {
         await replaySteps(open.session, options.mode.steps);
