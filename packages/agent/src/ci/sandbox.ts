@@ -1,11 +1,19 @@
 import { execFile } from "node:child_process";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
+import { hostEnv } from "../hostenv.ts";
 import type { Manifest } from "../schema.ts";
 
 const run = promisify(execFile);
 // Every docker call passes an argument array: nothing from a manifest is ever
 // interpreted by a shell on the host.
-const docker = (args: string[], timeout = 120_000) => run("docker", args, { timeout, maxBuffer: 16 * 1024 * 1024 });
+// The docker client also gets a minimal environment: it has no use for the
+// engine's credentials, and a container's environment is only ever what the
+// explicit --env arguments say.
+const docker = (args: string[], timeout = 120_000) =>
+  run("docker", args, { timeout, maxBuffer: 16 * 1024 * 1024, env: hostEnv(process.env) });
 
 export const IMAGE = "releaseproof-app";
 const CONTAINER = "releaseproof-app";
@@ -40,6 +48,8 @@ export type Isolation = {
   /** Names of the variables the application process can see. */
   environment: string[];
   unexpectedEnvironment: string[];
+  /** What the container engine says the container was started with. Does not rely on anything inside the image. */
+  configuration: string[];
   outboundNetwork: "blocked" | "REACHABLE";
   rootFilesystem: "read-only" | "WRITABLE";
   user: string;
@@ -94,36 +104,170 @@ export async function startSandbox(options: { start: Start; sha: string }): Prom
   }
 }
 
-/** Asks the running container what it can see and reach. Run on every CI run, not assumed. */
+/** Runs a program that belongs to the trusted side, with a minimal environment. */
+async function trusted(command: string, args: string[], timeout = 30_000): Promise<{ ok: boolean; out: string }> {
+  const root = typeof process.getuid === "function" && process.getuid() === 0;
+  const [file, argv] = root ? [command, args] : ["sudo", ["-n", command, ...args]];
+  return run(file, argv, { timeout, env: hostEnv(process.env) }).then(
+    (r) => ({ ok: true, out: r.stdout.trim() }),
+    (e: { stdout?: string; stderr?: string }) => ({ ok: false, out: `${e.stdout ?? ""}${e.stderr ?? ""}`.trim() }),
+  );
+}
+
+/** Reads the fields of /proc/<pid>/status that say who a process is and what it may do. */
+export function processFacts(status: string): { uid: string; capabilities: string; noNewPrivileges: boolean } {
+  const field = (name: string) => new RegExp(`^${name}:\\s*(.*)$`, "m").exec(status)?.[1]?.trim() ?? "";
+  return {
+    uid: field("Uid").split(/\s+/)[1] ?? "",
+    capabilities: field("CapEff"),
+    noNewPrivileges: field("NoNewPrivs") === "1",
+  };
+}
+
+const NETWORK_PROBE = `
+const tries = ["https://example.com", "http://1.1.1.1", "http://169.254.169.254/", "http://168.63.129.16/"];
+Promise.all(tries.map((u) => fetch(u, { signal: AbortSignal.timeout(4000), redirect: "manual" }).then(() => u, () => null)))
+  .then((r) => console.log(JSON.stringify(r.filter(Boolean))));
+`;
+
+/**
+ * Checks the sandbox from the trusted side only. Nothing here runs a program
+ * from the application image or believes anything the container says:
+ *
+ *   settings      what the container engine reports it started
+ *   process       the kernel's record of the application's main process
+ *   network       this engine's own Node, placed in the container's network
+ *                 namespace, tries to reach the outside
+ *   filesystem    the engine is asked to write into the container's root
+ *
+ * Any check that cannot be carried out counts as a failure.
+ */
 export async function probeIsolation(start: Start): Promise<Isolation> {
-  const exec = (args: string[]) =>
-    docker(["exec", CONTAINER, ...args], 30_000).then(
-      (r) => r.stdout.trim(),
-      (e: { stdout?: string }) => (e.stdout ?? "").trim(),
-    );
-  const environment = (await exec(["env"]))
-    .split("\n")
-    .map((line) => line.split("=")[0]!)
-    .filter(Boolean)
-    .sort();
+  const configuration = await inspectConfiguration(start);
+  const inspected = await docker(["inspect", CONTAINER]).then(
+    (r) => JSON.parse(r.stdout)[0] as { State?: { Pid?: number; Running?: boolean }; Config?: { Env?: string[] } },
+    () => ({}) as { State?: { Pid?: number; Running?: boolean }; Config?: { Env?: string[] } },
+  );
+  const pid = inspected.State?.Running ? (inspected.State.Pid ?? 0) : 0;
+  if (!pid) configuration.push("the container's main process could not be identified");
+
+  const environment = (inspected.Config?.Env ?? []).map((entry) => entry.split("=")[0]!).sort();
   const allowed = new Set([...BASE_ENV, ...Object.keys(start.env), ...(start.commitEnv ? [start.commitEnv] : [])]);
   const unexpectedEnvironment = environment.filter((name) => !allowed.has(name));
-  const network = await exec([
-    "node", "-e",
-    "fetch('https://example.com',{signal:AbortSignal.timeout(5000)}).then(()=>console.log('REACHABLE'),()=>console.log('blocked'))",
-  ]);
-  const filesystem = await exec(["sh", "-c", "touch /app/.probe 2>/dev/null && echo WRITABLE || echo read-only"]);
-  const user = await exec(["id", "-u"]);
-  const outboundNetwork = network === "blocked" ? "blocked" : "REACHABLE";
-  const rootFilesystem = filesystem === "read-only" ? "read-only" : "WRITABLE";
+
+  // The kernel's view of the process, read on the host.
+  const facts = pid ? processFacts(await readFile(`/proc/${pid}/status`, "utf8").catch(() => "")) : { uid: "", capabilities: "", noNewPrivileges: false };
+  if (pid && !/^0+$/.test(facts.capabilities)) configuration.push(`the application process holds capabilities (${facts.capabilities || "unreadable"})`);
+  if (pid && !facts.noNewPrivileges) configuration.push("the application process may gain privileges");
+
+  // Outbound network, tried with this engine's own Node inside the container's network namespace.
+  let outboundNetwork: Isolation["outboundNetwork"] = "REACHABLE";
+  if (pid) {
+    const attempt = await trusted("nsenter", ["--target", String(pid), "--net", process.execPath, "-e", NETWORK_PROBE]);
+    try {
+      if (attempt.ok && (JSON.parse(attempt.out) as string[]).length === 0) outboundNetwork = "blocked";
+    } catch {
+      // unreadable result: stays REACHABLE, which fails the check
+    }
+    if (!attempt.ok) configuration.push("the network could not be tested from the trusted side");
+  }
+
+  // Root filesystem: ask the engine to put a file there. A read-only root refuses.
+  const marker = path.join(tmpdir(), `releaseproof-probe-${process.pid}`);
+  await writeFile(marker, "probe");
+  const copy = await docker(["cp", marker, `${CONTAINER}:/releaseproof-probe`], 30_000).then(
+    () => "WRITABLE" as const,
+    (e: { stderr?: string }) => (/read-only/i.test(e.stderr ?? "") ? ("read-only" as const) : ("WRITABLE" as const)),
+  );
+  await rm(marker, { force: true });
+  const rootFilesystem = copy;
+
+  const user = facts.uid;
   return {
     environment,
     unexpectedEnvironment,
+    configuration,
     outboundNetwork,
     rootFilesystem,
     user,
-    ok: unexpectedEnvironment.length === 0 && outboundNetwork === "blocked" && rootFilesystem === "read-only" && user !== "0",
+    ok:
+      configuration.length === 0 &&
+      unexpectedEnvironment.length === 0 &&
+      outboundNetwork === "blocked" &&
+      rootFilesystem === "read-only" &&
+      user !== "" &&
+      user !== "0",
   };
+}
+
+/**
+ * Checks the running container's settings as the container engine reports
+ * them. Returns the problems found, empty if none.
+ */
+export function configurationProblems(
+  inspected: {
+    Config?: { Env?: string[]; User?: string };
+    HostConfig?: {
+      ReadonlyRootfs?: boolean;
+      Privileged?: boolean;
+      CapDrop?: string[] | null;
+      CapAdd?: string[] | null;
+      SecurityOpt?: string[] | null;
+      NetworkMode?: string;
+      Binds?: string[] | null;
+      PidsLimit?: number | null;
+      Memory?: number;
+      PidMode?: string;
+      IpcMode?: string;
+    };
+    Mounts?: { Type?: string; Destination?: string }[];
+    NetworkSettings?: { Networks?: Record<string, unknown> };
+  },
+  network: { Internal?: boolean },
+  allowedEnv: Set<string>,
+  imageEnv: Set<string>,
+): string[] {
+  const problems: string[] = [];
+  const host = inspected.HostConfig ?? {};
+  if (host.ReadonlyRootfs !== true) problems.push("root filesystem is not read-only");
+  if (host.Privileged) problems.push("container is privileged");
+  if (!(host.CapDrop ?? []).some((c) => c.toUpperCase() === "ALL")) problems.push("capabilities are not all dropped");
+  if ((host.CapAdd ?? []).length > 0) problems.push("capabilities were added");
+  if (!(host.SecurityOpt ?? []).some((o) => o.startsWith("no-new-privileges"))) problems.push("privilege escalation is not disabled");
+  if (host.NetworkMode !== NETWORK) problems.push("container is not on the isolated network");
+  const networks = Object.keys(inspected.NetworkSettings?.Networks ?? {});
+  if (networks.length !== 1 || networks[0] !== NETWORK) problems.push("container is attached to another network");
+  if (network.Internal !== true) problems.push("the network has a route out");
+  if ((host.Binds ?? []).length > 0) problems.push("host paths are mounted");
+  if ((inspected.Mounts ?? []).some((m) => m.Type !== "tmpfs")) problems.push("a volume or host path is mounted");
+  if (!host.PidsLimit || host.PidsLimit <= 0) problems.push("no process limit");
+  if (!host.Memory || host.Memory <= 0) problems.push("no memory limit");
+  if (host.PidMode === "host" || host.IpcMode === "host") problems.push("host namespaces are shared");
+  const user = inspected.Config?.User ?? "";
+  if (user === "" || user.split(":")[0] === "0" || user.split(":")[0] === "root") problems.push("container runs as root");
+  for (const entry of inspected.Config?.Env ?? []) {
+    const name = entry.split("=")[0]!;
+    if (!allowedEnv.has(name) && !imageEnv.has(name)) problems.push(`unexpected environment variable ${name}`);
+  }
+  return problems;
+}
+
+async function inspectConfiguration(start: Start): Promise<string[]> {
+  try {
+    const container = JSON.parse((await docker(["inspect", CONTAINER])).stdout)[0];
+    const network = await docker(["network", "inspect", NETWORK]).then(
+      (r) => JSON.parse(r.stdout)[0] as { Internal?: boolean },
+      () => ({}) as { Internal?: boolean },
+    );
+    const image = JSON.parse((await docker(["image", "inspect", IMAGE])).stdout)[0];
+    const imageEnv = new Set<string>(((image?.Config?.Env ?? []) as string[]).map((e) => e.split("=")[0]!));
+    const allowed = new Set([...Object.keys(start.env), ...(start.commitEnv ? [start.commitEnv] : [])]);
+    // Variables baked into the image were put there by the build, which never
+    // sees a secret; they are reported by name in `environment` all the same.
+    return configurationProblems(container, network, allowed, imageEnv);
+  } catch (error) {
+    return [`container configuration could not be read: ${(error as Error).message.split("\n")[0]!.slice(0, 120)}`];
+  }
 }
 
 export async function sandboxLogs(lines = 200): Promise<string> {

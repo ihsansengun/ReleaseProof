@@ -1,3 +1,4 @@
+import { hostEnv } from "../hostenv.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
@@ -34,6 +35,9 @@ export type OpenSession = {
   startedAt: Date;
 };
 
+/** The browser's environment: the engine-wide allow-list, never the engine's own environment. */
+export const browserEnv = hostEnv;
+
 /**
  * Starts an isolated browser for one scenario, checks the environment and
  * prepares fixtures. If the scenario cannot start, `session.outcome` is
@@ -44,7 +48,10 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   const startedAt = new Date();
   await mkdir(outDir, { recursive: true });
 
-  const browser = await chromium.launch();
+  // The browser renders untrusted pages. It gets a minimal environment, so
+  // nothing the engine holds (model key, tokens) is in a process that parses
+  // content from the application under test.
+  const browser = await chromium.launch({ env: browserEnv(process.env) });
   const context = await browser.newContext({ baseURL: manifest.baseUrl });
   const origin = new URL(manifest.baseUrl).origin;
   await context.tracing.start({ screenshots: true, snapshots: true });

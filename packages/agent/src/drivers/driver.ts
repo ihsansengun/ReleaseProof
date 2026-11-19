@@ -47,6 +47,8 @@ export type ApiDriverOptions = {
   budget: Budget;
   /** Defaults to true. Turn off if the API rejects the fallback parameters. */
   fallbacks?: boolean;
+  /** The model key, when the caller holds it instead of the environment. */
+  apiKey?: string;
   /** For tests: point the client somewhere else. Credentials otherwise come from the environment. */
   client?: { baseURL: string; apiKey: string };
 };
@@ -71,7 +73,12 @@ export class ApiDriver implements Driver {
       options.executorModel && options.executorModel !== options.model
         ? `${options.model} (analysis and planning), ${options.executorModel} (execution)`
         : options.model;
-    this.client = new Anthropic({ timeout: REQUEST_TIMEOUT_MS, maxRetries: MAX_RETRIES, ...options.client });
+    this.client = new Anthropic({
+      timeout: REQUEST_TIMEOUT_MS,
+      maxRetries: MAX_RETRIES,
+      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+      ...options.client,
+    });
   }
 
   async task<T>(job: TaskJob<T>): Promise<T> {
