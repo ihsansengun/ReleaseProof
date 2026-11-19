@@ -58,7 +58,8 @@ export function verifyApprovals(
 
   const ordered = [...comments].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id - b.id);
   for (const comment of ordered) {
-    const body = comment.body ?? "";
+    // Leading and trailing whitespace is not content; anything else is.
+    const body = (comment.body ?? "").trim();
     if (!LOOKS_LIKE_COMMAND.test(body)) continue;
     const author = comment.user?.login ?? "unknown";
     const refuse = (reason: string, changeHash?: string) => decisions.push({ commentId: comment.id, author, accepted: false, reason, changeHash });

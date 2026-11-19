@@ -119,7 +119,7 @@ export async function buildContext(
   });
   // Approval commands are judged in code, from the code host's record of each comment.
   const verified = verifyApprovals(authority.comments ?? [], set.docChanges, authority.authority, authority.commits ?? []);
-  set = applyApprovals({ ...set, docChanges: verified.docChanges });
+  set = applyApprovals({ ...set, docChanges: verified.docChanges }, headDocs);
 
   return {
     ticket,

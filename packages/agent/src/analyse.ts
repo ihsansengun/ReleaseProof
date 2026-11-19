@@ -48,13 +48,25 @@ Use short ids: R1, R2… for requirements, Q1… for ambiguities, K1… for risk
  * says about trust is read. A requirement is "documented" only if its quote
  * is in an authoritative source.
  */
-export function attribute(draft: AnalysisDraft, sources: SourceRecord[]): { analysis: Analysis; notes: string[] } {
+export function attribute(
+  draft: AnalysisDraft,
+  sources: SourceRecord[],
+  /** Set only when replaying an analysis recorded before sources had ids. Never for a live model. */
+  options: { locateUnnamed?: boolean } = {},
+): { analysis: Analysis; notes: string[] } {
   const notes: string[] = [];
   const requirements: Requirement[] = draft.requirements.map((r) => {
     const legacy = (r as { sourceType?: string }).sourceType;
     if (r.kind !== "documented") return { id: r.id, text: r.text, kind: "inferred", quote: "", relation: "none" };
     if (legacy === "pull-request" || legacy === "none") {
       notes.push(`${r.id} was downgraded from documented to inferred: its source is not an approved source.`);
+      return { id: r.id, text: r.text, kind: "inferred", quote: "", relation: "none" };
+    }
+    // Only an analysis recorded before sources had ids may leave the source
+    // unnamed; its quote is then located in code. A model that omits the id
+    // gets no such search: the quote is checked against one named source.
+    if (!r.sourceId && !options.locateUnnamed) {
+      notes.push(`${r.id} was downgraded from documented to inferred: it names no source.`);
       return { id: r.id, text: r.text, kind: "inferred", quote: "", relation: "none" };
     }
     const result = attributeQuote(r.sourceId ?? "", r.quote, sources);
@@ -174,7 +186,7 @@ export async function analyse(
     renderAppMap(appMap),
   ].join("\n\n");
   const raw = await driver.task({ name: "analyse", instructions: INSTRUCTIONS, input, schema: AnalysisDraft });
-  const { analysis, notes } = attribute(raw, context.sources);
+  const { analysis, notes } = attribute(raw, context.sources, { locateUnnamed: !driver.live });
   const conflicts = findConflicts(analysis.requirements, context.sources, context.docChanges, context.headDocs);
   return { analysis: { ...analysis, conflicts }, notes };
 }

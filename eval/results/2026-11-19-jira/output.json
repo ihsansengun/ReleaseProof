@@ -1,0 +1,170 @@
+[
+  {
+    "key": "KAN-4",
+    "found": true,
+    "via": "jira-api",
+    "issueId": "10013",
+    "summary": "Promo codes in the cart",
+    "reporterAccountId": "712020:7364b2f7-52b7-4279-b7ff-d81a5ea796ed",
+    "updated": "2026-11-19T13:59:24.663+0000",
+    "descriptionCharacters": 2005,
+    "numberedCriteria": 16,
+    "descriptionStart": "Background\nMarketing wants to run two launch promotions in the store. Customers should be able to enter a promo code on the cart page and see the discount befor",
+    "comments": [
+      {
+        "id": "10000",
+        "authorId": "712020:7364b2f7-52b7-4279-b7ff-d81a5ea796ed",
+        "created": "2026-11-19T13:59:24.663+0000",
+        "start": "Change from finance after looking at margins: the minimum for TAKE15 is $60.00, not $50.00"
+      }
+    ],
+    "sources": [
+      {
+        "id": "T1",
+        "kind": "ticket-summary",
+        "trust": "authoritative",
+        "basis": "issue fields of an authenticated Jira record",
+        "sha256": "d470b1ac7f2a025e"
+      },
+      {
+        "id": "T2",
+        "kind": "ticket-description",
+        "trust": "authoritative",
+        "basis": "issue fields of an authenticated Jira record",
+        "sha256": "2896c23cfce2d048"
+      },
+      {
+        "id": "T3.1",
+        "kind": "ticket-comment",
+        "trust": "authoritative",
+        "basis": "comment by a listed requirement owner (Jira account id)",
+        "sha256": "d725cb11887f7bc9"
+      }
+    ],
+    "fingerprint": "7e93cea7308a7f3d",
+    "fingerprintWithoutComments": "5ffc0ebd9e5fc30c",
+    "commentTrustIfWrittenBySomeoneElse": [
+      "unverified"
+    ],
+    "ownerListedInAuthorityFile": true
+  },
+  {
+    "key": "KAN-5",
+    "found": true,
+    "via": "jira-api",
+    "issueId": "10014",
+    "summary": "Employees can cancel leave requests",
+    "reporterAccountId": "712020:7364b2f7-52b7-4279-b7ff-d81a5ea796ed",
+    "updated": "2026-11-19T13:59:27.442+0000",
+    "descriptionCharacters": 1587,
+    "numberedCriteria": 13,
+    "descriptionStart": "Background\nEmployees currently have to ask their manager to reject a leave request they no longer need. They should be able to cancel it themselves from \"My req",
+    "comments": [
+      {
+        "id": "10001",
+        "authorId": "712020:7364b2f7-52b7-4279-b7ff-d81a5ea796ed",
+        "created": "2026-11-19T13:59:27.442+0000",
+        "start": "Payroll came back on the cut-off for approved leave. \"Any time before the first day\" is to"
+      }
+    ],
+    "sources": [
+      {
+        "id": "T1",
+        "kind": "ticket-summary",
+        "trust": "authoritative",
+        "basis": "issue fields of an authenticated Jira record",
+        "sha256": "4298c92d19bd0e9b"
+      },
+      {
+        "id": "T2",
+        "kind": "ticket-description",
+        "trust": "authoritative",
+        "basis": "issue fields of an authenticated Jira record",
+        "sha256": "4456db08938181a9"
+      },
+      {
+        "id": "T3.1",
+        "kind": "ticket-comment",
+        "trust": "authoritative",
+        "basis": "comment by a listed requirement owner (Jira account id)",
+        "sha256": "30b4ff8abecda7fb"
+      }
+    ],
+    "fingerprint": "b6adc2f5141eed8e",
+    "fingerprintWithoutComments": "be9998f4476e3a75",
+    "commentTrustIfWrittenBySomeoneElse": [
+      "unverified"
+    ],
+    "ownerListedInAuthorityFile": true
+  },
+  {
+    "key": "KAN-6",
+    "found": true,
+    "via": "jira-api",
+    "issueId": "10015",
+    "summary": "Workspace roles and member invitations",
+    "reporterAccountId": "712020:7364b2f7-52b7-4279-b7ff-d81a5ea796ed",
+    "updated": "2026-11-19T13:58:41.717+0000",
+    "descriptionCharacters": 2136,
+    "numberedCriteria": 17,
+    "descriptionStart": "Background\nWorkspaces currently have a single shared login. Teams need separate accounts with different levels of access, and a way to bring new people in witho",
+    "comments": [],
+    "sources": [
+      {
+        "id": "T1",
+        "kind": "ticket-summary",
+        "trust": "authoritative",
+        "basis": "issue fields of an authenticated Jira record",
+        "sha256": "a2537a03ec2095be"
+      },
+      {
+        "id": "T2",
+        "kind": "ticket-description",
+        "trust": "authoritative",
+        "basis": "issue fields of an authenticated Jira record",
+        "sha256": "275b6426f6741ace"
+      }
+    ],
+    "fingerprint": "c2f5c3ccc809dffa",
+    "fingerprintWithoutComments": "c2f5c3ccc809dffa",
+    "commentTrustIfWrittenBySomeoneElse": [],
+    "ownerListedInAuthorityFile": true
+  },
+  {
+    "key": "KAN-7",
+    "found": true,
+    "via": "jira-api",
+    "issueId": "10016",
+    "summary": "Sign users out after inactivity",
+    "reporterAccountId": "712020:7364b2f7-52b7-4279-b7ff-d81a5ea796ed",
+    "updated": "2026-11-19T13:58:47.231+0000",
+    "descriptionCharacters": 848,
+    "numberedCriteria": 7,
+    "descriptionStart": "Background\nSecurity review flagged that sessions never end. People leave the app open on shared machines.\nWhat we want\nUsers should be signed out after a reason",
+    "comments": [],
+    "sources": [
+      {
+        "id": "T1",
+        "kind": "ticket-summary",
+        "trust": "authoritative",
+        "basis": "issue fields of an authenticated Jira record",
+        "sha256": "466dac4e89c1742b"
+      },
+      {
+        "id": "T2",
+        "kind": "ticket-description",
+        "trust": "authoritative",
+        "basis": "issue fields of an authenticated Jira record",
+        "sha256": "bf174c3da4b8a775"
+      }
+    ],
+    "fingerprint": "628c8895830b13d5",
+    "fingerprintWithoutComments": "628c8895830b13d5",
+    "commentTrustIfWrittenBySomeoneElse": [],
+    "ownerListedInAuthorityFile": true
+  },
+  {
+    "key": "KAN-999",
+    "found": false
+  }
+]

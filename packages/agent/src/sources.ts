@@ -162,6 +162,11 @@ export function buildSources(input: SourceInputs): SourceSet {
         : prov.trustedByFlag
           ? "local file, trusted by the development-mode flag --trust-local-docs"
           : "local file whose revision could not be established";
+  if (prov.via === "jira-api") {
+    notices.push(
+      "The ticket's summary and description are trusted because Jira returned them over its authenticated API. Jira's own permissions decide who may edit an issue, and that can include people outside the configured requirement owners. Comments are checked against the owner list; the description is not.",
+    );
+  }
   if (prov.via === "local-file") {
     notices.push(
       prov.trustedByFlag
@@ -272,18 +277,38 @@ export function buildSources(input: SourceInputs): SourceSet {
  * approval commands have been verified in code; a change without a verified
  * approval is left exactly as it was.
  */
-export function applyApprovals(set: SourceSet): SourceSet {
-  const sources = set.sources.map((source) => {
-    if (source.kind !== "pr-doc-change") return source;
+export function applyApprovals(set: SourceSet, headDocs: Doc[] = []): SourceSet {
+  const approvedChange = (path: string | undefined) => set.docChanges.find((c) => c.path === path && c.approval);
+  const sources = set.sources.flatMap((source): SourceRecord[] => {
+    // Precedence: once a change to an approved document is approved, the
+    // document as amended is what counts. The superseded text stops being a
+    // source, so a requirement can no longer rest on a rule that was removed.
+    if (source.kind === "approved-doc") {
+      const change = approvedChange(source.path);
+      if (!change?.approval) return [source];
+      if (change.kind === "removed") return [];
+      const amended = headDocs.find((d) => d.path === source.path)?.text;
+      if (amended === undefined) return [source];
+      return [
+        {
+          ...source,
+          text: amended,
+          sha256: sha256(amended),
+          origin: `${source.origin}, as amended in this pull request with the approval of ${change.approval.approver} (GitHub user ${change.approval.approverId}, comment ${change.approval.commentId})`,
+          basis: `approved document with an amendment approved by a listed requirement owner; approval bound to change ${change.hash.slice(0, 12)}`,
+        },
+      ];
+    }
+    if (source.kind !== "pr-doc-change") return [source];
     const change = set.docChanges.find((c) => c.hash === source.changeHash && c.approval);
-    if (!change?.approval) return source;
-    return {
+    if (!change?.approval) return [source];
+    return [{
       ...source,
       kind: "amendment" as const,
       trust: "authoritative" as const,
       origin: `change to ${change.path} in this pull request, approved by ${change.approval.approver} (GitHub user ${change.approval.approverId}) in comment ${change.approval.commentId} for commit ${change.approval.commit.slice(0, 12)}`,
       basis: `approved by a listed requirement owner; approval bound to change ${change.hash.slice(0, 12)}`,
-    };
+    }];
   });
   return { ...set, sources };
 }

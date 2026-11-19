@@ -1,3 +1,4 @@
+import { buildAuditTrail, renderAuditTrail } from "./report/audit.ts";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -84,6 +85,10 @@ function stageTimer(budget: Budget, timings: RunReport["timings"]) {
 async function writeRun(outDir: string, report: RunReport): Promise<RunReport> {
   await writeFile(path.join(outDir, "run.json"), JSON.stringify(report, null, 2));
   await writeFile(path.join(outDir, "report.md"), renderRunReport(report));
+  // The audit trail: source -> requirement -> assertion -> evidence.
+  const trail = buildAuditTrail(report);
+  await writeFile(path.join(outDir, "audit.json"), JSON.stringify(trail, null, 2));
+  await writeFile(path.join(outDir, "audit.md"), renderAuditTrail(trail));
   return report;
 }
 
@@ -133,7 +138,8 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
       docs: context.docs.map((d) => d.path),
       changedFiles: context.pullRequest.files.map((f) => f.path),
       omitted: context.omitted,
-      sources: context.sources.map((s) => ({ id: s.id, kind: s.kind, trust: s.trust, origin: s.origin, basis: s.basis })),
+      sources: context.sources.map((s) => ({ id: s.id, kind: s.kind, trust: s.trust, origin: s.origin, basis: s.basis, sha256: s.sha256 })),
+      owners: options.authority.authority.requirementOwners,
       docChanges: context.docChanges,
       approvals: context.approvals,
       authorityNotices: [...(options.authorityNotices ?? []), ...context.authorityNotices],

@@ -1,5 +1,5 @@
 import type { ApprovalDecision } from "./approval.ts";
-import type { DocChange, SourceRecord, Trust } from "./sources.ts";
+import type { Authority, DocChange, SourceRecord, Trust } from "./sources.ts";
 import { z } from "zod";
 import type { UsageSummary } from "./budget.ts";
 
@@ -371,7 +371,9 @@ export type RunReport = {
     changedFiles: string[];
     omitted: string[];
     /** Every source with its trust level and origin; texts are in context.json. */
-    sources?: { id: string; kind: string; trust: Trust; origin: string; basis: string }[];
+    sources?: { id: string; kind: string; trust: Trust; origin: string; basis: string; sha256?: string }[];
+    /** The requirement owners in force for this run, as read from the protected revision. */
+    owners?: Authority["requirementOwners"];
     docChanges?: DocChange[];
     approvals?: ApprovalDecision[];
     authorityNotices?: string[];

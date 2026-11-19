@@ -15,7 +15,7 @@ requirementOwners:
   # Everyone else's comments are shown as unverified context.
   jira:
     - accountId: "712020:7364b2f7-52b7-4279-b7ff-d81a5ea796ed"
-      name: Don Palmer Rome
+      name: product owner of the KAN project
 
   # Comment authors in the ticket fixture files under eval/tickets, by display
   # name. A display name is not an identity, so this list is honoured only for

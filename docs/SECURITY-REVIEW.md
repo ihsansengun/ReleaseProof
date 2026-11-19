@@ -66,6 +66,25 @@ commit as well, and treat text that the pull request adds or changes as
 in the report, but never as the expectation for a comparison when it
 contradicts the ticket, and never as the only basis for "verified".
 
+### Requirement sources (added after the review)
+
+Finding 2 is addressed in code: trust is assigned from where a text was read,
+and pull-request material can never set an expected value
+([design](design/REQUIREMENT-AUTHORITY.md)). One authorisation gap in that
+area is **open and should not be read as solved**:
+
+- **Jira issue descriptions can be edited by people outside the configured
+  requirement owners.** The engine trusts an issue's summary and description
+  because Jira returned them to an authenticated request. Who may edit an
+  issue is decided by Jira's permission scheme, which this system neither
+  reads nor controls, and which commonly allows every project member to
+  edit. Only comments are checked against the owner list. Someone who can
+  edit the ticket can therefore change what is tested, and the run will
+  treat the change as approved. Every report whose ticket came from live
+  Jira carries a note saying so. Closing the gap means reading the issue's
+  change history and accepting only edits by listed owners; that is in the
+  backlog and not implemented.
+
 ## Boundary by boundary
 
 **Stage 1 (build).** No secrets, read-only token, `persist-credentials:

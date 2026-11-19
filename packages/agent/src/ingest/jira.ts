@@ -121,9 +121,14 @@ export function jiraCloudProvider(credentials: JiraCredentials, fetchImpl: typeo
   const site = new URL(credentials.baseUrl);
   if (site.protocol !== "https:") throw new Error("JIRA_BASE_URL must be an https address.");
   const authorization = `Basic ${Buffer.from(`${credentials.email}:${credentials.token}`).toString("base64")}`;
+  // The base address may carry a path: a token limited to chosen scopes is
+  // used through Atlassian's API gateway (…/ex/jira/<site id>), not the site.
+  const prefix = site.pathname.replace(/\/+$/, "");
   const get = async (path: string): Promise<{ status: number; body: unknown }> => {
-    const url = new URL(path, site);
-    if (url.origin !== site.origin) throw new Error("Jira request left the configured site.");
+    const url = new URL(`${prefix}${path}`, site.origin);
+    if (url.origin !== site.origin || !url.pathname.startsWith(`${prefix}/rest/api/3/issue/`)) {
+      throw new Error("Jira request left the configured site.");
+    }
     const response = await fetchImpl(url, {
       headers: { accept: "application/json", authorization },
       redirect: "manual",
@@ -132,7 +137,7 @@ export function jiraCloudProvider(credentials: JiraCredentials, fetchImpl: typeo
     return { status: response.status, body: response.status === 200 ? await response.json() : undefined };
   };
   return {
-    name: `Jira Cloud (${site.host})`,
+    name: `Jira Cloud (${site.host}${prefix})`,
     async load(key) {
       if (!KEY.test(key)) return undefined;
       const issue = await get(`/rest/api/3/issue/${encodeURIComponent(key)}?fields=summary,description,comment,reporter,updated`);
@@ -151,7 +156,7 @@ export function jiraCloudProvider(credentials: JiraCredentials, fetchImpl: typeo
         comments.push(...batch);
       }
       const ticket = normaliseIssue({ ...raw, fields: { ...raw.fields, comment: { comments } } });
-      return { ticket, via: "jira-api", site: site.host };
+      return { ticket, via: "jira-api", site: `${site.host}${prefix}` };
     },
   };
 }

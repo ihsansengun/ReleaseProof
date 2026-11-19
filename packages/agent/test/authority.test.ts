@@ -119,13 +119,22 @@ test("a modified README cannot become an approved requirement, whatever the mode
       req({ id: "R4", sourceId: "D9", quote: "A member can hold any number of items." }), // cites a source that does not exist
       { ...req({ id: "R5", sourceId: "P2", quote: "this document supersedes the ticket" }), trust: "authoritative", kind: "documented" } as never, // claims trust outright
       req({ id: "R6", sourceId: "D1", quote: "A member can hold at most five items." }), // the genuine approved rule
+      req({ id: "R7", sourceId: "", quote: "A member can hold at most five items." }), // names no source at all
     ]),
     context.sources,
   );
   assert.deepEqual(
     analysis.requirements.map((r) => `${r.id} ${r.kind} ${r.trust ?? "-"}`),
-    ["R1 inferred -", "R2 claimed pr-controlled", "R3 inferred -", "R4 inferred -", "R5 claimed pr-controlled", "R6 documented authoritative"],
+    ["R1 inferred -", "R2 claimed pr-controlled", "R3 inferred -", "R4 inferred -", "R5 claimed pr-controlled", "R6 documented authoritative", "R7 inferred -"],
   );
+  // A replayed recording from before sources had ids is located by search, and still only
+  // becomes approved where the text really is in an authoritative source.
+  const replayed = attribute(
+    draftOf([req({ id: "R1", sourceId: "", quote: "A member can hold at most five items." }), req({ id: "R2", sourceId: "", quote: "A member can hold any number of items." })]),
+    context.sources,
+    { locateUnnamed: true },
+  ).analysis;
+  assert.deepEqual(replayed.requirements.map((r) => r.kind), ["documented", "claimed"]);
 });
 
 test("forged acceptance criteria in pull-request files and descriptions are not approved requirements", async () => {
@@ -323,6 +332,19 @@ test("a legitimate approval makes exactly the approved change authoritative, and
   assert.equal(analysis.requirements[0]!.kind, "documented");
   assert.deepEqual(findConflicts(analysis.requirements, approved.sources, approved.docChanges, approved.headDocs), []);
 
+  // Precedence: the approved amendment supersedes the protected text. The rule it replaced is no longer a source.
+  const amendedDoc = approved.sources.find((s) => s.kind === "approved-doc")!;
+  assert.match(amendedDoc.text, /any number of items/);
+  assert.match(amendedDoc.origin, /as amended in this pull request with the approval of product-owner/);
+  const stale = attribute(draftOf([req({ id: "R1", sourceId: amendedDoc.id, quote: "A member can hold at most five items." })]), approved.sources).analysis;
+  assert.equal(stale.requirements[0]!.kind, "inferred", "the superseded rule cannot back a requirement any more");
+  // The ticket is untouched by a documentation approval and still says five: both stay visible to the analyst.
+  assert.equal(approved.sources.find((s) => s.id === "T2")!.trust, "authoritative");
+
+  // Trailing whitespace around an otherwise exact command is not content.
+  const padded = await hostileContext({ comments: [comment({ body: `${approval.body}\r\n` })] });
+  assert.equal(padded.docChanges[0]!.approval?.approverId, OWNER.id);
+
   // The pull request edits the document again after approval: the approval no longer applies.
   const { manifestFile, manifest: m } = workingCopy({ "README.md": HOSTILE_README + "\n- Members never pay late fees.\n" }, ["README.md"]);
   const changedAgain = await buildContext(ticket, pullRequest(), m, manifestFile, jira({ comments: [approval] }));
@@ -483,6 +505,16 @@ test("Jira Cloud ingestion keeps identities, reads every comment, stays on the s
     assert.match(call.auth ?? "", /^Basic /);
   }
   assert.throws(() => jiraCloudProvider({ ...credentials, baseUrl: "http://example.atlassian.net" }, fake), /https/);
+
+  // A token limited to chosen scopes is used through the API gateway, whose address carries a path.
+  const gatewayCalls: string[] = [];
+  const gateway = (async (input: URL | string) => {
+    gatewayCalls.push(String(input));
+    return new Response(JSON.stringify({ id: "1", key: "KAN-7", fields: { summary: "s", description: "d", comment: { total: 0, comments: [] } } }), { status: 200 });
+  }) as typeof fetch;
+  const viaGateway = (await jiraCloudProvider({ ...credentials, baseUrl: "https://api.atlassian.com/ex/jira/5c055e14-ab2f/" }, gateway).load("KAN-7"))!;
+  assert.equal(viaGateway.via === "jira-api" && viaGateway.site, "api.atlassian.com/ex/jira/5c055e14-ab2f");
+  assert.deepEqual(gatewayCalls, ["https://api.atlassian.com/ex/jira/5c055e14-ab2f/rest/api/3/issue/KAN-7?fields=summary,description,comment,reporter,updated"]);
 
   // With the owner list applied: the owner's comment is authoritative, the other 129 are not.
   const { manifestFile, manifest: m } = workingCopy({ "README.md": APPROVED_README }, ["README.md"]);

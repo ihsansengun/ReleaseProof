@@ -335,6 +335,20 @@ Where the implementation is more specific than, or differs from, the text above:
   `src/report/authority.ts` are new. `attribute` and `findConflicts` are in
   `src/analyse.ts`. Tests: `test/authority.test.ts`.
 
+- **Precedence after an approval.** An approved change replaces the
+  protected text of that document as the source: the superseded rule can no
+  longer back a requirement. Between an owner's later comment and earlier
+  ticket text, both remain authoritative and the analyst is told to follow
+  the later one; that ordering is not enforced in code.
+- **Naming a source.** A live model must name the source of every quote. Only
+  a replayed recording from before sources had ids has its quotes located by
+  search, and they still become approved only where an authoritative source
+  contains them.
+- **Audit trail.** `src/report/audit.ts` writes `audit.json` and `audit.md`
+  for every run: source, amendment, requirement, assertion, evidence.
+- **Live Jira** was verified read-only against a real workspace
+  (`eval/results/2026-11-19-jira/`).
+
 Known gaps in the implementation:
 
 - A re-run that replays an earlier plan (`retest`) keeps that run's analysis.

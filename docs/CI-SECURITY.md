@@ -120,6 +120,19 @@ claim and can never set an expected value. Unapproved changes to requirement
 documents are always listed in the report, and any conflict keeps the Check
 from being green.
 
+One limit of this: a Jira issue's summary and description are trusted on
+the strength of Jira's own edit permissions, which may include people who
+are not listed requirement owners. Comments are checked against the owner
+list; the description is not. That is an open gap.
+
+**Audit trail.** Every run writes `audit.json` and `audit.md` next to its
+report, and they are part of the evidence artifact. For each expected value
+that was compared they give the chain: source (origin, trust, hash), any
+approved amendment (approver, comment, commit, change hash), the requirement
+with its verified quote, the assertion with its expected value, and the
+evidence (observed value, verdict, model-free repeat, step record and
+screenshot). They are built by code from the run's records.
+
 ### Stage 3: report
 
 Downloads one file, `ci-result.json`, validates it against a schema, and
