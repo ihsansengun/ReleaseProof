@@ -231,7 +231,7 @@ jobs:
         run: |
           # Re-written field by field; only strings survive, and the next job
           # can only ever lower its own limits with them.
-          jq '{maxUsd, maxScenarios, maxMinutes, disableFallbacks, executorModel}
+          jq '{maxUsd, maxScenarios, maxMinutes, disableFallbacks, executorModel, routing}
               | with_entries(select(.value != null and (.value | type) == "string"))' request/limits.json > handoff/limits.json \
             || echo '{}' > handoff/limits.json
 
@@ -367,6 +367,8 @@ jobs:
           RELEASEPROOF_EFFORT_ESCALATE: ${{ vars.RELEASEPROOF_EFFORT_ESCALATE }}
           RELEASEPROOF_MAX_USD_EXECUTE: ${{ vars.RELEASEPROOF_MAX_USD_EXECUTE }}
           RELEASEPROOF_MAX_USD_ESCALATE: ${{ vars.RELEASEPROOF_MAX_USD_ESCALATE }}
+          # Tells the engine which evidence the upload steps below will store, so the report says so truthfully.
+          RELEASEPROOF_FULL_EVIDENCE: ${{ vars.RELEASEPROOF_FULL_EVIDENCE }}
           RELEASEPROOF_FALLBACKS: ${{ vars.RELEASEPROOF_FALLBACKS }}
           MAX_USD: ${{ vars.RELEASEPROOF_MAX_USD }}
           MAX_TOKENS: ${{ vars.RELEASEPROOF_MAX_TOKENS }}

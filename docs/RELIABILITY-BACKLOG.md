@@ -15,3 +15,22 @@ too, the number is given. Evidence for each item is linked.
 | R6 | Set-up depends on Ubuntu's package mirrors | One run failed before testing anything when the mirrors returned 503 | A run can be lost to an outage unrelated to the application | Open. Cache the browser and its packages. Security backlog 8 |
 | R7 | A Check belongs to a commit, not a pull request | The KAN-4 run's Check also became the latest Check on another pull request with the same head commit | A reader of the other pull request sees a result for a different ticket | Open. Security backlog 16 |
 | R8 | Evidence cannot be read from the development environment | Step records, screenshots and audit trails are in the Actions artifact, whose storage host is not reachable from where results are written up | Several conclusions in the evaluation records are marked "probable" for this reason alone | **Implemented.** Every run writes `diagnostics.md` and `diagnostics.json`: for each scenario that did not pass, each comparison with expected, observed, requirement, source, how the value was located and the screenshot's name, plus the last 12 steps. The same is printed in the job log, redacted (e-mail addresses, credentials, tokens, long opaque values), bounded and prefixed. Screenshots and full step records stay in the evidence artifact. Limit: on a public repository an artifact can be downloaded by any signed-in GitHub user; GitHub offers no narrower setting, so the artifact is not a private store |
+
+## Fixed after the first routing benchmark (19 November 2026)
+
+Found in [benchmark A](../eval/results/2026-11-19-routing-benchmark/README.md).
+
+| Problem seen | What changed |
+|---|---|
+| A plan used one observation name for two moments; a total was compared with a stale subtotal and reported as a defect | A plan declares every observation with the one moment it is read at. A name cannot be recorded twice, and once a second reading has been attempted no formula that uses the name can be checked: the assertion stays unchecked and the scenario is unverified |
+| 2160 was expected and "$21.60" was shown; the comparison failed | Numeric assertions and observations declare a unit. A value shown with a currency sign is converted to the declared unit, and both values are recorded. Where the unit cannot be established, or the two sides differ by exactly a factor of 100 with no unit shown, nothing is compared. A formula may not combine amounts in different units |
+| When a scenario was re-run on the escalation model, the first attempt's reason and steps were lost | Whichever attempt is not kept stays on record whole and appears in the diagnostics |
+| A scenario passed on a defective build and its steps could not be examined | The redacted diagnostics cover every executed scenario. For a pass: each comparison, how the value was located, and the readings, comparisons and application responses it rests on. The complete redacted step list is in `diagnostics.json` |
+| The report ended "Full report, steps and screenshots" although only redacted evidence is published | The closing line says which evidence was stored |
+
+Limits of these fixes:
+
+- The unit of a value from an API response can never be read off the response. Only the factor-of-100 case is caught there.
+- Converting assumes a currency with hundredths.
+- Whether a passing scenario tested the rule in its title is now checkable by a reader. Code does not judge it.
+

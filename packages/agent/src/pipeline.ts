@@ -267,7 +267,15 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
         // The escalated run replaces the first only if it is conclusive: it
         // passed on its own comparisons, or it failed and the failure repeats.
         const conclusive = second.verdict === "passed" || (second.verdict === "failed" && confirmation === "reproduced");
-        report.escalations.push({ scenarioId: scenario.id, why, before: first.verdict, after: second.verdict, kept: conclusive ? "escalated run" : "first run" });
+        // Whichever run is not kept stays on record whole: why it ended as it did, its steps and its comparisons.
+        report.escalations.push({
+          scenarioId: scenario.id,
+          why,
+          before: first.verdict,
+          after: second.verdict,
+          kept: conclusive ? "escalated run" : "first run",
+          other: conclusive ? first : second,
+        });
         if (!conclusive) continue;
         second = { ...second, reason: `${second.reason} (re-run on the escalation model: ${why})` };
         report.results[report.results.indexOf(first)] = second;

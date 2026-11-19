@@ -1,6 +1,7 @@
 import type { ApprovalDecision } from "./approval.ts";
 import type { Authority, DocChange, SourceRecord, Supersession, Trust } from "./sources.ts";
 import { z } from "zod";
+import { Unit } from "./units.ts";
 import type { UsageSummary } from "./budget.ts";
 
 // ---- scenarios and assertions (what the engine executes) --------------------
@@ -23,10 +24,23 @@ export const AssertionKind = z.enum([
   "absent",
 ]);
 
+/** One value the executor records at one moment of a scenario, for use in formulas. */
+export const Observation = z.object({
+  name: z.string(),
+  /** What is read. */
+  what: z.string(),
+  /** The moment in the scenario at which it is read. One name is one moment. */
+  when: z.string(),
+  unit: Unit.default("plain"),
+});
+export type Observation = z.infer<typeof Observation>;
+
 export const Assertion = z.object({
   id: z.string(),
   description: z.string(),
   kind: AssertionKind,
+  /** For numeric kinds: the unit of the expected value. Absent in plans made before units were declared. */
+  unit: Unit.optional(),
   /** Required for the comparing kinds; unused for present and absent. */
   expected: Expected.optional(),
   requirementId: z.string().optional(),
@@ -59,6 +73,11 @@ export const Scenario = z.object({
   setup: z.string().optional(),
   /** alias -> fixture type declared in the environment manifest. */
   fixtures: z.record(z.string(), z.string()).default({}),
+  /**
+   * The values to record, each at its own moment. Absent in plans made before
+   * observations were declared; then any name may be recorded.
+   */
+  observations: z.array(Observation).optional(),
   assertions: z.array(Assertion),
 });
 export type Scenario = z.infer<typeof Scenario>;
@@ -191,6 +210,8 @@ export const AssertionResult = z.object({
   actual: z.union([z.number(), z.string()]),
   pass: z.boolean(),
   target: z.unknown(),
+  /** The number as it was read, when it was converted to the assertion's unit before comparing. */
+  readAs: z.number().optional(),
   screenshot: z.string().optional(),
 });
 export type AssertionResult = z.infer<typeof AssertionResult>;
@@ -428,6 +449,18 @@ export const PlanDraft = z.object({
       /** Data to create through the application's interface first. Empty if none. */
       setup: z.string(),
       fixtures: z.array(z.object({ alias: z.string(), type: z.string() })),
+      /**
+       * Every value a formula uses, each recorded at ONE moment. The same value
+       * read at two moments is two observations with two names.
+       */
+      observations: z.array(
+        z.object({
+          name: z.string(),
+          what: z.string(),
+          when: z.string(),
+          unit: Unit,
+        }),
+      ),
       status: z.enum(["runnable", "blocked"]),
       /** Why it cannot run, if blocked. Empty otherwise. */
       blockedReason: z.string(),
@@ -440,6 +473,8 @@ export const PlanDraft = z.object({
           expectedNumber: z.number().nullable(),
           expectedText: z.string().nullable(),
           expectedFormula: z.string().nullable(),
+          /** Unit of the expected value for numeric kinds; "plain" for anything that is not money. */
+          unit: Unit,
           requirementId: z.string(),
           /** Ids of other documented requirements this same comparison verifies. Empty if none. */
           alsoVerifies: z.array(z.string()),
@@ -519,7 +554,15 @@ export type RunReport = {
    * trustworthy verdict. A failure that the model-free repeat reproduced is
    * never among them.
    */
-  escalations?: { scenarioId: string; why: string; before: string; after: string; kept: "escalated run" | "first run" }[];
+  escalations?: {
+    scenarioId: string;
+    why: string;
+    before: string;
+    after: string;
+    kept: "escalated run" | "first run";
+    /** The run whose result was NOT kept, whole: its reason, steps and comparisons stay inspectable. */
+    other?: ScenarioResult;
+  }[];
   /** Fingerprint of every authoritative source, to tell whether requirements changed between runs. */
   ticketHash?: string;
   /** Set when this run re-ran an earlier run's scenarios instead of planning afresh. */

@@ -32,6 +32,18 @@ export const DEFAULT_ROUTING: Routing = {
 const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 
 /**
+ * Named configurations a maintainer can choose when starting a run by hand.
+ * A preset is a statement by the person who started the run, so it may name
+ * the dearest model without the separate switch; the run's cost limit still
+ * applies.
+ */
+export const PRESETS: Record<string, { models?: Partial<Record<Stage, string>>; efforts?: Partial<Record<Stage, Effort>> }> = {
+  default: {},
+  // The dearest model where a run decides what to test, the cheapest where it clicks through pages.
+  "opus-planning": { models: { analyse: OPUS, plan: OPUS }, efforts: { analyse: "high", plan: "high" } },
+};
+
+/**
  * Reads the routing from the environment:
  *
  *   RELEASEPROOF_MODEL_<STAGE>    model for one stage (ANALYSE, PLAN, DISCOVER, EXECUTE, ESCALATE)
@@ -43,7 +55,17 @@ const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
  *
  * A value that is not a known model or effort is an error, not a fallback.
  */
-export function routingFromEnv(env: Record<string, string | undefined>, overrides: Partial<Record<Stage, string>> = {}): Routing {
+export function routingFromEnv(
+  env: Record<string, string | undefined>,
+  overrides: Partial<Record<Stage, string>> = {},
+  preset?: string,
+): Routing {
+  if (preset !== undefined && preset !== "default") {
+    const chosen = PRESETS[preset];
+    if (!chosen) throw new Error(`"${preset.slice(0, 40)}" is not a routing preset. Known: ${Object.keys(PRESETS).join(", ")}.`);
+    const base = routingFromEnv(env, overrides);
+    return { ...base, models: { ...base.models, ...chosen.models, ...overrides }, efforts: { ...base.efforts, ...chosen.efforts } };
+  }
   const routing: Routing = { models: { ...DEFAULT_ROUTING.models }, efforts: { ...DEFAULT_ROUTING.efforts }, escalation: env.RELEASEPROOF_ESCALATION !== "off" };
   const set = (value: string | undefined) => (value === undefined || value.trim() === "" ? undefined : value.trim());
   for (const stage of STAGES) {

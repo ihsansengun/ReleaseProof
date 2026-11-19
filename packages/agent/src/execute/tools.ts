@@ -1,7 +1,8 @@
 import path from "node:path";
 import type { BrowserContext, Locator, Page } from "playwright";
 import { z } from "zod";
-import { evaluateFormula } from "../formula.ts";
+import { evaluateFormula, formulaVariables } from "../formula.ts";
+import { reconcile, scaleUnclear } from "../units.ts";
 import type { AssertionResult, Outcome, Scenario, Step } from "../schema.ts";
 import type { SecretVault } from "../secrets.ts";
 
@@ -13,6 +14,11 @@ export type Session = {
   page: Page;
   outDir: string;
   observations: Record<string, number>;
+  /**
+   * Observations the executor tried to record a second time. Their recorded
+   * value belongs to an earlier moment, so no formula may use them any more.
+   */
+  contested?: Set<string>;
   apiResponses: Map<string, { status: number; body: unknown }>;
   assertionResults: AssertionResult[];
   steps: Step[];
@@ -212,7 +218,23 @@ function parseNumber(text: string): number {
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 
 /** Reads the raw text behind a target, plus the element to highlight if any. */
-async function readTarget(session: Session, target: Target): Promise<{ text: string; locator?: Locator }> {
+async function readTarget(session: Session, target: Target): Promise<{ text: string; raw: string; locator?: Locator }> {
+  const read = await readText(session, target);
+  return { raw: read.text, ...read, ...narrowed(read.text, target) };
+}
+
+/** Applies the target's pattern, if it has one. */
+function narrowed(text: string, target: Target): { text: string } {
+  if (target.source === "api" || target.count || !target.pattern) return { text };
+  const match = new RegExp(target.pattern).exec(text);
+  if (!match || match[1] === undefined) {
+    throw new Error(`Pattern ${target.pattern} with one capture group did not match "${text}".`);
+  }
+  return { text: match[1] };
+}
+
+/** The text behind a target before any pattern narrows it, plus the element to highlight if any. */
+async function readText(session: Session, target: Target): Promise<{ text: string; locator?: Locator }> {
   if (target.source === "api") {
     const response = session.apiResponses.get(target.responseId);
     if (!response) throw new Error(`Unknown responseId "${target.responseId}".`);
@@ -244,13 +266,6 @@ async function readTarget(session: Session, target: Target): Promise<{ text: str
     text = squash(name[1]!.replace(/\\(.)/g, "$1"));
   } else {
     text = squash(await locator.innerText());
-  }
-  if (target.pattern) {
-    const match = new RegExp(target.pattern).exec(text);
-    if (!match || match[1] === undefined) {
-      throw new Error(`Pattern ${target.pattern} with one capture group did not match "${text}".`);
-    }
-    text = match[1];
   }
   return { text, locator };
 }
@@ -329,13 +344,26 @@ const handlers: Handlers = {
   },
 
   async observe(s, { name, target }) {
-    if (Object.hasOwn(s.observations, name)) {
-      throw new Error(`Observation "${name}" is already recorded as ${s.observations[name]}.`);
+    const declared = s.scenario.observations;
+    const mine = declared?.find((o) => o.name === name);
+    if (declared && !mine) {
+      throw new Error(`The plan declares no observation "${name}". Declared: ${declared.map((o) => `${o.name} (${o.when})`).join("; ") || "none"}.`);
     }
-    const { text } = await readTarget(s, target);
-    const value = parseNumber(text);
-    s.observations[name] = value;
-    return `Recorded ${name} = ${value}`;
+    if (Object.hasOwn(s.observations, name)) {
+      // One name is one moment. A second reading would silently change what
+      // every formula means, so it is refused, and the name is marked: a
+      // formula that uses it can no longer be trusted to mean this moment.
+      (s.contested ??= new Set()).add(name);
+      throw new Error(
+        `Observation "${name}" is already recorded as ${s.observations[name]}${mine ? `, for this moment: ${mine.when}` : ""}. It cannot be recorded again, and no assertion whose formula uses it can be checked from here on.`,
+      );
+    }
+    const { text, raw } = await readTarget(s, target);
+    const read = parseNumber(text);
+    const value = reconcile(mine?.unit, raw, read);
+    if (!value.comparable) throw new Error(`Observation "${name}" was not recorded: ${value.why}.`);
+    s.observations[name] = value.value;
+    return `Recorded ${name} = ${value.value}${value.converted ? ` (read as ${read}, converted to the declared unit)` : ""}`;
   },
 
   async check(s, { assertionId, target }) {
@@ -349,6 +377,7 @@ const handlers: Handlers = {
     let actual: number | string;
     let pass: boolean;
     let locator: Locator | undefined;
+    let readAs: number | undefined;
 
     if (assertion.kind === "present" || assertion.kind === "absent") {
       // Existence is the question, so a target that matches nothing is an
@@ -379,15 +408,35 @@ const handlers: Handlers = {
       if (!assertion.expected) throw new Error(`Assertion ${assertionId} has no expected value in the plan.`);
       const read = await readTarget(s, target);
       locator = read.locator;
+      if ("formula" in assertion.expected) {
+        const stale = formulaVariables(assertion.expected.formula).filter((v) => s.contested?.has(v));
+        if (stale.length > 0) {
+          throw new Error(
+            `Assertion ${assertionId} cannot be checked: its formula uses ${stale.join(", ")}, which the scenario needed at more than one moment while the plan gives it one. No result was recorded.`,
+          );
+        }
+      }
       expected =
         "literal" in assertion.expected
           ? assertion.expected.literal
           : evaluateFormula(assertion.expected.formula, s.observations);
+      const numeric = (): number => {
+        // The value read is brought to the unit the plan declared. Where the
+        // unit cannot be established, nothing is compared: a guess about units
+        // must not become a pass or a failure.
+        const parsed = parseNumber(read.text);
+        const value = reconcile(assertion.unit, read.raw, parsed);
+        if (!value.comparable) throw new Error(`Assertion ${assertionId} was not compared: ${value.why}. No result was recorded.`);
+        if (value.converted) readAs = parsed;
+        return value.value;
+      };
       if (assertion.kind === "number_equals") {
-        actual = parseNumber(read.text);
+        actual = numeric();
         pass = Math.abs(actual - Number(expected)) < 1e-9;
+        const unclear = pass ? undefined : scaleUnclear(assertion.unit, read.raw, Number(expected), actual);
+        if (unclear) throw new Error(`Assertion ${assertionId} was not compared: ${unclear}. No result was recorded.`);
       } else if (assertion.kind === "number_at_least" || assertion.kind === "number_at_most") {
-        actual = parseNumber(read.text);
+        actual = numeric();
         const difference = actual - Number(expected);
         pass = assertion.kind === "number_at_least" ? difference > -1e-9 : difference < 1e-9;
       } else if (assertion.kind === "text_equals") {
@@ -400,8 +449,8 @@ const handlers: Handlers = {
     }
 
     const shot = await screenshot(s, `check-${assertionId}`, locator);
-    s.assertionResults.push({ assertionId, expected, actual, pass, target, screenshot: shot });
-    return `Recorded ${assertionId}: expected ${expected}, actual ${actual} -> ${pass ? "match" : "MISMATCH"}. This result is final.`;
+    s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), screenshot: shot });
+    return `Recorded ${assertionId}: expected ${expected}, actual ${actual}${readAs === undefined ? "" : ` (read as ${readAs}, converted to the assertion's unit)`} -> ${pass ? "match" : "MISMATCH"}. This result is final.`;
   },
 
   async finish(s, { outcome, reason }) {
