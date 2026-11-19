@@ -25,9 +25,9 @@ with the pull request number. Results appear as a Check run and a comment.
 For a live model, add the repository secret `ANTHROPIC_API_KEY`; without it
 runs replay recorded responses and say so.
 
-Not yet: the automatic pull-request trigger, posting questions to Jira. The
-model API driver is tested against a stand-in but has not run against the
-live API.
+Automatic runs on every pull request are off until the repository variable
+`RELEASEPROOF_AUTO_TRIGGER` is set to `on`. Not built: posting questions to
+Jira. Live results: [eval/results/2026-11-19-live](eval/results/2026-11-19-live/README.md).
 
 ## Run it
 

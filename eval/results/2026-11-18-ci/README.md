@@ -118,8 +118,10 @@ None of these were reported as passes or failures.
 
 ## Still unverified
 
-- Any live model run in CI, and therefore real cost per run, the budget
-  stopping a live run, and model fallback during a retest.
-- The automatic `pull_request` trigger and cancellation of a superseded run.
+Updated 19 November: live model runs have since been made; see
+[../2026-11-19-live/README.md](../2026-11-19-live/README.md).
+
+- The budget stopping a live run, and model fallback during a retest.
+- Cancellation of a superseded run.
 - Pull requests from forks, beyond stopping after the build stage.
 - Jira's live API.

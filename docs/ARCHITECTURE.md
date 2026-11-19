@@ -172,9 +172,11 @@ Verified by execution (see `eval/results/`):
 
 CI: a three-stage GitHub Actions integration runs on `main`, started manually, and has posted Check runs and comments on both fixture pull requests using recorded model responses (see `eval/results/2026-11-18-ci/` and `docs/CI-SECURITY.md`).
 
-Built but not run: the direct model API driver (`drivers/driver.ts`, `execute/loop.ts`). All model work so far went through the HTTP bridge. Jira's live REST API is likewise unexercised.
+The direct model API driver has run live in CI twice (`eval/results/2026-11-19-live/`): once on a correct build, all passing, and once on a build with two known defects, both detected, at about $1.30–1.55 per run.
 
-Not enabled: the automatic pull-request trigger (prepared, awaiting review of the security boundaries).
+Not exercised: Jira's live REST API; a live run on the shop; a live run that reaches a budget limit.
+
+Not enabled: automatic runs. The trigger is on `main`, but pull-request-triggered builds are tested only when the repository variable `RELEASEPROOF_AUTO_TRIGGER` is `on`, which awaits the security review.
 
 Not built: posting questions to Jira, failure investigation beyond replay, fork pull-request approval.
 
