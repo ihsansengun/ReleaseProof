@@ -40,6 +40,8 @@ export type Isolation = {
   /** Names of the variables the application process can see. */
   environment: string[];
   unexpectedEnvironment: string[];
+  /** What the container engine says the container was started with. Does not rely on anything inside the image. */
+  configuration: string[];
   outboundNetwork: "blocked" | "REACHABLE";
   rootFilesystem: "read-only" | "WRITABLE";
   user: string;
@@ -101,6 +103,7 @@ export async function probeIsolation(start: Start): Promise<Isolation> {
       (r) => r.stdout.trim(),
       (e: { stdout?: string }) => (e.stdout ?? "").trim(),
     );
+  const configuration = await inspectConfiguration(start);
   const environment = (await exec(["env"]))
     .split("\n")
     .map((line) => line.split("=")[0]!)
@@ -119,11 +122,80 @@ export async function probeIsolation(start: Start): Promise<Isolation> {
   return {
     environment,
     unexpectedEnvironment,
+    configuration,
     outboundNetwork,
     rootFilesystem,
     user,
-    ok: unexpectedEnvironment.length === 0 && outboundNetwork === "blocked" && rootFilesystem === "read-only" && user !== "0",
+    ok: configuration.length === 0 && unexpectedEnvironment.length === 0 && outboundNetwork === "blocked" && rootFilesystem === "read-only" && user !== "0",
   };
+}
+
+/**
+ * Checks the running container's settings as the container engine reports
+ * them. The in-container probe runs programs from the untrusted image, which
+ * could lie; this does not. Returns the problems found, empty if none.
+ */
+export function configurationProblems(
+  inspected: {
+    Config?: { Env?: string[]; User?: string };
+    HostConfig?: {
+      ReadonlyRootfs?: boolean;
+      Privileged?: boolean;
+      CapDrop?: string[] | null;
+      CapAdd?: string[] | null;
+      SecurityOpt?: string[] | null;
+      NetworkMode?: string;
+      Binds?: string[] | null;
+      PidsLimit?: number | null;
+      Memory?: number;
+      PidMode?: string;
+      IpcMode?: string;
+    };
+    Mounts?: { Type?: string; Destination?: string }[];
+    NetworkSettings?: { Networks?: Record<string, unknown> };
+  },
+  network: { Internal?: boolean },
+  allowedEnv: Set<string>,
+  imageEnv: Set<string>,
+): string[] {
+  const problems: string[] = [];
+  const host = inspected.HostConfig ?? {};
+  if (host.ReadonlyRootfs !== true) problems.push("root filesystem is not read-only");
+  if (host.Privileged) problems.push("container is privileged");
+  if (!(host.CapDrop ?? []).some((c) => c.toUpperCase() === "ALL")) problems.push("capabilities are not all dropped");
+  if ((host.CapAdd ?? []).length > 0) problems.push("capabilities were added");
+  if (!(host.SecurityOpt ?? []).some((o) => o.startsWith("no-new-privileges"))) problems.push("privilege escalation is not disabled");
+  if (host.NetworkMode !== NETWORK) problems.push("container is not on the isolated network");
+  const networks = Object.keys(inspected.NetworkSettings?.Networks ?? {});
+  if (networks.length !== 1 || networks[0] !== NETWORK) problems.push("container is attached to another network");
+  if (network.Internal !== true) problems.push("the network has a route out");
+  if ((host.Binds ?? []).length > 0) problems.push("host paths are mounted");
+  if ((inspected.Mounts ?? []).some((m) => m.Type !== "tmpfs")) problems.push("a volume or host path is mounted");
+  if (!host.PidsLimit || host.PidsLimit <= 0) problems.push("no process limit");
+  if (!host.Memory || host.Memory <= 0) problems.push("no memory limit");
+  if (host.PidMode === "host" || host.IpcMode === "host") problems.push("host namespaces are shared");
+  const user = inspected.Config?.User ?? "";
+  if (user === "" || user.split(":")[0] === "0" || user.split(":")[0] === "root") problems.push("container runs as root");
+  for (const entry of inspected.Config?.Env ?? []) {
+    const name = entry.split("=")[0]!;
+    if (!allowedEnv.has(name) && !imageEnv.has(name)) problems.push(`unexpected environment variable ${name}`);
+  }
+  return problems;
+}
+
+async function inspectConfiguration(start: Start): Promise<string[]> {
+  try {
+    const container = JSON.parse((await docker(["inspect", CONTAINER])).stdout)[0];
+    const network = JSON.parse((await docker(["network", "inspect", NETWORK])).stdout)[0];
+    const image = JSON.parse((await docker(["image", "inspect", IMAGE])).stdout)[0];
+    const imageEnv = new Set<string>(((image?.Config?.Env ?? []) as string[]).map((e) => e.split("=")[0]!));
+    const allowed = new Set([...Object.keys(start.env), ...(start.commitEnv ? [start.commitEnv] : [])]);
+    // Variables baked into the image were put there by the build, which never
+    // sees a secret; they are reported by name in `environment` all the same.
+    return configurationProblems(container, network, allowed, imageEnv);
+  } catch (error) {
+    return [`container configuration could not be read: ${(error as Error).message.split("\n")[0]!.slice(0, 120)}`];
+  }
 }
 
 export async function sandboxLogs(lines = 200): Promise<string> {

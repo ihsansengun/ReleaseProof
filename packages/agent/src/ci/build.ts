@@ -1,3 +1,4 @@
+import { resolveDoc } from "../ingest/context.ts";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
@@ -61,6 +62,9 @@ export async function ciBuild(options: {
   meta.appDir = appDir;
 
   const manifestFile = path.join(prDir, appDir, MANIFEST);
+  if ("refused" in (await resolveDoc(path.join(prDir, appDir), MANIFEST))) {
+    return done(`The manifest of ${appDir} is not a regular file.`);
+  }
   const manifest = await loadManifest(manifestFile).catch((error: Error) => error);
   if (manifest instanceof Error) return done(`The manifest of ${appDir} is not valid: ${manifest.message.split("\n")[0]}`);
   if (!manifest.start) return done(`The manifest of ${appDir} has no "start" section, so the application cannot be started in CI.`);
@@ -72,9 +76,12 @@ export async function ciBuild(options: {
   const root = path.resolve(prDir, appDir);
   await copyFile(manifestFile, path.join(outDir, "context", MANIFEST));
   for (const relative of manifest.docs) {
-    const source = path.resolve(root, relative);
-    if (!source.startsWith(root + path.sep) || !existsSync(source)) continue;
-    const target = path.join(outDir, "context", path.relative(root, source));
+    // Symbolic links are refused: one could point at a file on this runner.
+    const resolved = await resolveDoc(root, relative);
+    if ("refused" in resolved) continue;
+    const source = resolved.file;
+    const target = path.join(outDir, "context", relative);
+    if (!path.resolve(target).startsWith(path.resolve(outDir, "context") + path.sep)) continue;
     await mkdir(path.dirname(target), { recursive: true });
     await copyFile(source, target);
   }

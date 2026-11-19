@@ -34,6 +34,15 @@ export type OpenSession = {
   startedAt: Date;
 };
 
+const BROWSER_ENV = /^(PATH|HOME|USER|LOGNAME|SHELL|LANG|LANGUAGE|TZ|TMPDIR|DISPLAY|LC_[A-Z]+|XDG_[A-Z_]+|FONTCONFIG_[A-Z_]+)$/;
+
+/** The variables a browser needs to start; everything else, credentials included, is left out. */
+export function browserEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => BROWSER_ENV.test(entry[0]) && entry[1] !== undefined),
+  );
+}
+
 /**
  * Starts an isolated browser for one scenario, checks the environment and
  * prepares fixtures. If the scenario cannot start, `session.outcome` is
@@ -44,7 +53,10 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   const startedAt = new Date();
   await mkdir(outDir, { recursive: true });
 
-  const browser = await chromium.launch();
+  // The browser renders untrusted pages. It gets a minimal environment, so
+  // nothing the engine holds (model key, tokens) is in a process that parses
+  // content from the application under test.
+  const browser = await chromium.launch({ env: browserEnv(process.env) });
   const context = await browser.newContext({ baseURL: manifest.baseUrl });
   const origin = new URL(manifest.baseUrl).origin;
   await context.tracing.start({ screenshots: true, snapshots: true });
