@@ -12,6 +12,7 @@ import { loadTicket } from "./ingest/jira.ts";
 import { retestRun, runPipeline } from "./pipeline.ts";
 import { Budget, DEFAULT_LIMITS, DEFAULT_PRICES } from "./budget.ts";
 import { RecordedDriver } from "./drivers/recorded.ts";
+import { headline } from "./report/readiness.ts";
 import { coverage } from "./report/run.ts";
 import { Scenario, Step, type RunReport, type ScenarioResult } from "./schema.ts";
 
@@ -131,8 +132,9 @@ async function main(): Promise<number> {
         concurrency: Number(values.concurrency),
         allowShaMismatch: values["allow-sha-mismatch"],
       });
-      const { documented, covered } = coverage(report);
+      const { documented, covered, assessment } = coverage(report);
       const count = (v: string) => report.results.filter((r) => r.verdict === v).length;
+      console.log(`\n${headline(assessment)}`);
       console.log(
         `\n${report.ticketKey}: ${count("passed")} passed, ${count("failed")} failed, ${count("blocked")} blocked, ${count("unverified")} unverified; ${report.plan.scenarios.filter((s) => s.status === "blocked").length} not run; ${covered}/${documented.length} documented requirements compared`,
       );

@@ -1,23 +1,13 @@
 import type { RunReport } from "../schema.ts";
+import { assess, headline, READINESS_LABEL } from "./readiness.ts";
 
 const cell = (value: unknown) => String(value).replace(/\|/g, "\\|").replace(/\s+/g, " ");
 
 /** Which documented requirements were actually compared against the application. */
 export function coverage(run: RunReport) {
-  const compared = new Map<string, Set<string>>();
-  for (const planned of run.plan.scenarios) {
-    const result = run.results.find((r) => r.scenarioId === planned.scenario.id);
-    if (!result) continue;
-    for (const assertion of planned.scenario.assertions) {
-      const outcome = result.assertionResults.find((a) => a.assertionId === assertion.id);
-      if (!outcome || !assertion.requirementId) continue;
-      const set = compared.get(assertion.requirementId) ?? new Set();
-      set.add(`${planned.scenario.id}/${assertion.id} ${outcome.pass ? "match" : "MISMATCH"}`);
-      compared.set(assertion.requirementId, set);
-    }
-  }
+  const assessment = assess(run);
   const documented = run.analysis.requirements.filter((r) => r.kind === "documented");
-  return { documented, compared, covered: documented.filter((r) => compared.has(r.id)).length };
+  return { documented, covered: assessment.counts.verified + assessment.counts.failed, assessment };
 }
 
 export const MODES = {
@@ -28,7 +18,7 @@ export const MODES = {
 
 /** The QA report for one ticket and pull request. */
 export function renderRunReport(run: RunReport): string {
-  const { documented, compared, covered } = coverage(run);
+  const { documented, assessment } = coverage(run);
   const count = (verdict: string) => run.results.filter((r) => r.verdict === verdict).length;
   const blocked = run.plan.scenarios.filter((s) => s.status === "blocked");
   const lines: string[] = [];
@@ -38,11 +28,16 @@ export function renderRunReport(run: RunReport): string {
     "",
     `**${run.pullRequest.title}** · ${run.pullRequest.repo} @ \`${run.pullRequest.headSha.slice(0, 10)}\``,
     "",
-    "## Summary",
+    `## Release readiness: ${READINESS_LABEL[assessment.readiness]}`,
+    "",
+    headline(assessment),
+    "",
+    ...(assessment.reasons.length > 0 ? ["Why it is not \"ready\":", "", ...assessment.reasons.map((r) => `- ${r}`), ""] : []),
+    "## Execution results",
     "",
     `- Scenarios executed: ${run.results.length} — ${count("passed")} passed, ${count("failed")} failed, ${count("blocked")} blocked during execution, ${count("unverified")} unverified`,
     `- Scenarios planned but not run: ${blocked.length} (waiting on a decision or a missing capability)`,
-    `- Documented requirements compared against the application: ${covered} of ${documented.length}`,
+    `- Documented requirements: ${assessment.counts.verified} verified, ${assessment.counts.failed} failed, ${assessment.counts.blocked} blocked, ${assessment.counts.unverified} unverified, ${assessment.counts["not planned"]} not planned (of ${documented.length})`,
     `- Clarification requests: ${run.analysis.ambiguities.length + run.plan.clarifications.length}`,
     `- Environment: ${run.environment.baseUrl}, commit \`${run.environment.deployedSha ?? "not reported"}\``,
     `- Execution mode: ${MODES[run.executionMode ?? "recorded"]}`,
@@ -97,10 +92,10 @@ export function renderRunReport(run: RunReport): string {
   lines.push(
     "## Requirement coverage",
     "",
-    "| Id | Requirement | Source quote | Compared by |",
-    "|---|---|---|---|",
-    ...documented.map(
-      (r) => `| ${r.id} | ${cell(r.text)} | "${cell(r.quote)}" | ${[...(compared.get(r.id) ?? ["**not compared**"])].join("<br>")} |`,
+    "| Id | Status | Requirement | Source quote | Basis |",
+    "|---|---|---|---|---|",
+    ...assessment.requirements.map(
+      (r) => `| ${r.id} | ${r.status === "verified" ? "verified" : `**${r.status}**`} | ${cell(r.text)} | "${cell(r.quote)}" | ${cell(r.detail)} |`,
     ),
     "",
   );

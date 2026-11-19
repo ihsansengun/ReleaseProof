@@ -6,6 +6,11 @@ export type Prices = { input: number; output: number; cacheRead: number; cacheWr
 
 /** List prices for the default model. An estimate: the invoice is authoritative. */
 export const DEFAULT_PRICES: Prices = { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 };
+/** List prices per model. A model not listed here is charged at the default, which is the dearest. */
+export const MODEL_PRICES: Record<string, Prices> = {
+  "claude-opus-5-5": DEFAULT_PRICES,
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+};
 export const DEFAULT_LIMITS: Limits = { maxTokens: 3_000_000, maxUsd: 8, maxMinutes: 25 };
 
 export type StageUsage = {
@@ -15,6 +20,8 @@ export type StageUsage = {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   toolCalls: number;
+  /** Estimated cost of this stage's calls, each at the price of the model that served it. */
+  usd: number;
 };
 
 export type UsageSummary = {
@@ -35,6 +42,7 @@ const empty = (): StageUsage => ({
   cacheReadTokens: 0,
   cacheWriteTokens: 0,
   toolCalls: 0,
+  usd: 0,
 });
 
 /** What a model API response reports about its own size. */
@@ -69,8 +77,15 @@ export class Budget {
     return (this.byStage[this.stage] ??= empty());
   }
 
-  record(usage: ReportedUsage) {
+  record(usage: ReportedUsage, model?: string) {
     const s = this.current();
+    const p = (model && MODEL_PRICES[model]) || this.prices;
+    s.usd +=
+      (usage.input_tokens * p.input +
+        usage.output_tokens * p.output +
+        (usage.cache_read_input_tokens ?? 0) * p.cacheRead +
+        (usage.cache_creation_input_tokens ?? 0) * p.cacheWrite) /
+      1_000_000;
     s.calls++;
     s.inputTokens += usage.input_tokens;
     s.outputTokens += usage.output_tokens;
@@ -95,12 +110,7 @@ export class Budget {
   }
 
   costUsd(): number {
-    const t = this.total();
-    const p = this.prices;
-    return (
-      (t.inputTokens * p.input + t.outputTokens * p.output + t.cacheReadTokens * p.cacheRead + t.cacheWriteTokens * p.cacheWrite) /
-      1_000_000
-    );
+    return this.total().usd;
   }
 
   minutes(): number {

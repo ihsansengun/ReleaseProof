@@ -46,14 +46,31 @@ const Requested = z
     maxMinutes: z.coerce.number().positive().optional().catch(undefined),
     maxScenarios: z.coerce.number().int().positive().optional().catch(undefined),
     disableFallbacks: z.coerce.string().optional().catch(undefined),
+    executorModel: z.string().optional().catch(undefined),
   })
   .catch({});
+
+/** Models a manual run may ask for as the executor. Anything else is ignored. */
+export const EXECUTOR_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5"];
+
+/**
+ * Turns the application's log into lines that are safe to print in a job log:
+ * bounded, without control characters, and prefixed so that no line can be
+ * read by the runner as a workflow command.
+ */
+export function logTail(log: string, maxLines = 60, maxChars = 300): string[] {
+  return log
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "")
+    .slice(-maxLines)
+    .map((line) => `app| ${line.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, maxChars)}`);
+}
 
 /** A request may tighten the configured limits. It can never loosen them. */
 export function tighten(
   base: { limits: Limits; maxScenarios: number },
   requested: unknown,
-): { limits: Limits; maxScenarios: number; disableFallbacks: boolean } {
+): { limits: Limits; maxScenarios: number; disableFallbacks: boolean; executorModel?: string } {
   const r = Requested.parse(requested ?? {});
   return {
     limits: {
@@ -63,6 +80,7 @@ export function tighten(
     },
     maxScenarios: Math.min(base.maxScenarios, r.maxScenarios ?? Infinity),
     disableFallbacks: r.disableFallbacks === "true",
+    executorModel: r.executorModel && EXECUTOR_MODELS.includes(r.executorModel) ? r.executorModel : undefined,
   };
 }
 
@@ -185,8 +203,10 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
       const model = process.env.RELEASEPROOF_MODEL || "claude-opus-5-5";
       const fallbacks = process.env.RELEASEPROOF_FALLBACKS !== "off" && !effective.disableFallbacks;
       console.log(`driver: live model ${model} (an API key is configured); fallbacks ${fallbacks ? "on" : "off"}`);
+      if (effective.executorModel) console.log(`executor model for this run: ${effective.executorModel}`);
       driver = new ApiDriver({
         model,
+        executorModel: effective.executorModel,
         effort: (process.env.RELEASEPROOF_EFFORT || "medium") as "low" | "medium" | "high",
         budget,
         fallbacks,
@@ -216,7 +236,10 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     return finish("error", `ReleaseProof could not complete: ${(error as Error).message.split("\n")[0]!.slice(0, 300)}`);
   } finally {
     await mkdir(options.outDir, { recursive: true });
-    await writeFile(path.join(options.outDir, "application.log"), await sandboxLogs());
+    const log = await sandboxLogs();
+    await writeFile(path.join(options.outDir, "application.log"), log);
+    console.log("application log (last lines, as text):");
+    for (const line of logTail(log)) console.log(line);
     await stopSandbox();
   }
 }

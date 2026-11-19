@@ -1,9 +1,10 @@
 # Live model runs in CI, 18–19 November 2026
 
 The first runs in which a live model, called through the direct API driver,
-did the analysis, planning and execution inside GitHub Actions. Both were
-started manually from `main` at `94afc7a`, on the time-off app, with
-`claude-opus-5-5`, planning from scratch.
+did the analysis, planning and execution inside GitHub Actions. All were
+started manually from `main`, with `claude-opus-5-5`, planning from scratch:
+runs 1 and 2 on the time-off app at `94afc7a`, run 3 on the shop at
+`48d4c3c`.
 
 Sources for every figure here: the run logs and the comments the workflow
 posted, saved as [comment-pr2.md](comment-pr2.md) and
@@ -54,7 +55,47 @@ $3.00, 6 scenarios, 15 minutes.
   that replay is in the artifact's `run.json` and is not shown in the
   comment or the log, so it is not reported here.
 
-## Usage, cost and time
+## Run 3: live path on the shop, correct build
+
+[QA run 44500644918](https://github.com/ihsansengun/ReleaseProof/actions/runs/44500644918)
+on [pull request #1](https://github.com/ihsansengun/ReleaseProof/pull/1) at
+`f724b32`, the fixed commit of the promo-code feature (ticket `NWG-342`).
+Limits: $3.00, 6 scenarios, 15 minutes.
+
+- Check as posted: success, "0 failed, 6 passed, 0 not verified (autonomous)".
+- 6 scenarios run (the cap), 14 planned scenarios blocked on open questions,
+  10 questions raised.
+- 26 of 33 documented requirements compared; 7 were never compared.
+- No defect expected and none reported; no false positive.
+
+**The green Check was misleading.** Nothing that ran failed, but seven
+documented requirements were untested and fourteen scenarios never started.
+Under the readiness rule introduced after this run (see
+[docs/CI-SECURITY.md](../../../docs/CI-SECURITY.md), "Result semantics"), the
+same result is reported as **Incomplete** with a neutral Check. Run 1 would
+also be Incomplete (20 of 23 requirements, 6 scenarios blocked).
+
+| | Run 3 |
+|---|---|
+| Model calls | 111 |
+| Tool calls | 200 |
+| Input tokens, uncached | 25,805 |
+| Cache-read tokens | 1,137,851 |
+| Cache-write tokens | 110,393 |
+| Output tokens | 53,360 |
+| Total tokens | 1,327,409 |
+| Estimated cost | $1.95 of $3.00 |
+| Discover / analyse / plan / execute | 14.1 / 110.7 / 151.2 / 102.8 s |
+| Whole QA job, with install | 441 s |
+| Model API errors after retries | none |
+| Stopped by the budget | no |
+| Human interventions | none |
+| Isolation probe | ok; 11 environment variables, none a credential |
+
+Per-stage token counts were not printed by the workflow at the time and the
+artifact could not be downloaded, so they are not recorded for runs 1 to 3.
+
+## Usage, cost and time, runs 1 and 2
 
 | | Run 1 | Run 2 |
 |---|---|---|
@@ -100,7 +141,8 @@ ran because the server date is now in the briefing.
 
 ## What they do not establish
 
-- Two runs on one application. The shop has not had a live run.
+- Three runs, one of them on the shop. No live defect-detection run on the
+  shop yet.
 - No live run hit a budget limit, so budget enforcement is still shown only
   against the stand-in API.
 - No re-run after a new commit with a live model.

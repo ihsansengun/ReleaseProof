@@ -8,10 +8,25 @@ export async function loadManifest(file: string, baseUrlOverride?: string): Prom
   return Manifest.parse(baseUrlOverride ? { ...raw, baseUrl: baseUrlOverride } : raw);
 }
 
+/**
+ * Resolves a path the manifest declares against the application's address.
+ * The manifest comes from the pull request, so a path that would send the
+ * request to another host is refused.
+ */
+export function onOrigin(baseUrl: string, declaredPath: string): string {
+  const base = new URL(baseUrl);
+  if (!declaredPath.startsWith("/") || declaredPath.startsWith("//") || declaredPath.includes("\\")) {
+    throw new Error(`The manifest path "${declaredPath.slice(0, 80)}" must start with a single "/".`);
+  }
+  const url = new URL(declaredPath, base);
+  if (url.origin !== base.origin) throw new Error(`The manifest path "${declaredPath.slice(0, 80)}" leaves the application.`);
+  return url.toString();
+}
+
 /** Which commit the environment says it is running, if it says. */
 export async function deployedSha(request: APIRequestContext, manifest: Manifest): Promise<string | undefined> {
   if (!manifest.version) return undefined;
-  const response = await request.get(new URL(manifest.version.path, manifest.baseUrl).toString());
+  const response = await request.get(onOrigin(manifest.baseUrl, manifest.version.path), { maxRedirects: 0 });
   if (!response.ok()) return undefined;
   const body = (await response.json().catch(() => null)) as { sha?: unknown } | null;
   return typeof body?.sha === "string" ? body.sha : undefined;
@@ -42,8 +57,9 @@ export async function createFixtures(
   for (const [alias, type] of Object.entries(wanted)) {
     const fixture = manifest.fixtures[type];
     if (!fixture) throw new Error(`The environment manifest declares no "${type}" fixture.`);
-    const response = await request.fetch(new URL(fixture.path, manifest.baseUrl).toString(), {
+    const response = await request.fetch(onOrigin(manifest.baseUrl, fixture.path), {
       method: fixture.method,
+      maxRedirects: 0,
       data: fillTemplate(fixture.body, `${scenarioId}-${alias}`.toLowerCase()) as object | undefined,
     });
     if (!response.ok()) {

@@ -41,6 +41,8 @@ export function describeApiError(error: unknown): string {
 
 export type ApiDriverOptions = {
   model: string;
+  /** Model for tool-using sessions (sign-in, scenario execution). Defaults to `model`. */
+  executorModel?: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
   budget: Budget;
   /** Defaults to true. Turn off if the API rejects the fallback parameters. */
@@ -65,7 +67,10 @@ export class ApiDriver implements Driver {
   private client: Anthropic;
 
   constructor(private options: ApiDriverOptions) {
-    this.label = options.model;
+    this.label =
+      options.executorModel && options.executorModel !== options.model
+        ? `${options.model} (analysis and planning), ${options.executorModel} (execution)`
+        : options.model;
     this.client = new Anthropic({ timeout: REQUEST_TIMEOUT_MS, maxRetries: MAX_RETRIES, ...options.client });
   }
 
@@ -86,7 +91,7 @@ export class ApiDriver implements Driver {
       this.options.budget.noteError(describeApiError(error));
       throw error;
     });
-    this.options.budget.record(response.usage);
+    this.options.budget.record(response.usage, response.model);
     if (response.stop_reason === "refusal") throw new Error(`The model declined the ${job.name} task.`);
     if (response.stop_reason === "max_tokens") throw new Error(`The ${job.name} output was cut off at the output limit.`);
     const text = response.content.find((b) => b.type === "text")?.text ?? "";
@@ -102,7 +107,7 @@ export class ApiDriver implements Driver {
   session(session: Session, job: SessionJob & { name: string }): Promise<Usage> {
     return runAgentLoop(session, job, {
       client: this.client,
-      model: this.options.model,
+      model: this.options.executorModel ?? this.options.model,
       effort: this.options.effort,
       budget: this.options.budget,
       fallbacks: this.options.fallbacks ?? true,
