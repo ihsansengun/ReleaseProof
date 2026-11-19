@@ -14,7 +14,11 @@ export type Readiness = "not ready" | "incomplete" | "ready";
 /** The parts of a run this needs. Both the full run report and the CI stage's validated view fit. */
 export type ReadinessInput = {
   stopped?: string;
-  analysis: { requirements: { id: string; text: string; kind: string; quote: string }[] };
+  analysis: {
+    requirements: { id: string; text: string; kind: string; quote: string; origin?: string }[];
+    /** Disagreements between pull-request material and the approved requirements. */
+    conflicts?: { id: string; kind: string; description: string }[];
+  };
   plan: {
     /** Runnable scenarios the planner wrote that were dropped to respect the limit. */
     trimmedRunnable?: number;
@@ -40,6 +44,8 @@ export type RequirementCoverage = {
   id: string;
   text: string;
   quote: string;
+  /** Where the requirement's authority comes from, when the run recorded it. */
+  origin?: string;
   status: RequirementStatus;
   /** Where the status comes from: comparisons made, or why none was. */
   detail: string;
@@ -86,7 +92,7 @@ export function assess(run: ReadinessInput): Assessment {
         }
       }
 
-      const base = { id: requirement.id, text: requirement.text, quote: requirement.quote };
+      const base = { id: requirement.id, text: requirement.text, quote: requirement.quote, origin: requirement.origin };
       if (mismatch) return { ...base, status: "failed" as const, detail: comparisons.join("; ") };
       if (comparisons.length > 0) return { ...base, status: "verified" as const, detail: comparisons.join("; ") };
       if (uncompared.length > 0) return { ...base, status: "unverified" as const, detail: uncompared.join("; ") };
@@ -117,7 +123,11 @@ export function assess(run: ReadinessInput): Assessment {
   if (trimmed > 0) reasons.push(`${trimmed} runnable scenario${trimmed === 1 ? " was" : "s were"} dropped to stay within the scenario limit`);
   if (run.stopped) reasons.push("the run ended early");
   if (run.results.length === 0) reasons.push("no scenario was executed");
-  if (requirements.length === 0) reasons.push("no documented requirement was identified");
+  if (requirements.length === 0) reasons.push("no approved requirement was identified");
+  const conflicts = run.analysis.conflicts?.length ?? 0;
+  if (conflicts > 0) {
+    reasons.push(`${conflicts} conflict${conflicts === 1 ? "" : "s"} between this pull request's own statements and the approved requirements ${conflicts === 1 ? "is" : "are"} unresolved`);
+  }
 
   const readiness: Readiness = execution.failed > 0 || counts.failed > 0 ? "not ready" : reasons.length > 0 ? "incomplete" : "ready";
   return { readiness, reasons, execution, notRun, requirements, counts };

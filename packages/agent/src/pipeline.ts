@@ -1,3 +1,4 @@
+import { buildAuditTrail, renderAuditTrail } from "./report/audit.ts";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -6,7 +7,8 @@ import type { Budget } from "./budget.ts";
 import { discover } from "./discover.ts";
 import type { Driver } from "./drivers/driver.ts";
 import { runScenario } from "./execute/run.ts";
-import { buildContext } from "./ingest/context.ts";
+import { buildContext, type AuthorityInputs } from "./ingest/context.ts";
+import { fingerprint } from "./sources.ts";
 import { plan as makePlan } from "./plan.ts";
 import { renderRunReport } from "./report/run.ts";
 import type { Manifest, PullRequest, RunReport, Scenario, ScenarioResult, Ticket } from "./schema.ts";
@@ -16,6 +18,9 @@ export type PipelineOptions = {
   pullRequest: PullRequest;
   manifest: Manifest;
   manifestFile: string;
+  /** Where requirements may come from, as established by the caller. */
+  authority: AuthorityInputs;
+  authorityNotices?: string[];
   driver: Driver;
   budget: Budget;
   outDir: string;
@@ -40,6 +45,7 @@ async function pool<T, R>(items: T[], limit: number, worker: (item: T) => Promis
   return results;
 }
 
+/** Fingerprint of a ticket's text alone. Kept for runs made before sources had trust levels. */
 export const ticketHash = (ticket: Ticket) =>
   createHash("sha256")
     .update(JSON.stringify([ticket.summary, ticket.description, ticket.comments.map((c) => c.body)]))
@@ -79,6 +85,10 @@ function stageTimer(budget: Budget, timings: RunReport["timings"]) {
 async function writeRun(outDir: string, report: RunReport): Promise<RunReport> {
   await writeFile(path.join(outDir, "run.json"), JSON.stringify(report, null, 2));
   await writeFile(path.join(outDir, "report.md"), renderRunReport(report));
+  // The audit trail: source -> requirement -> assertion -> evidence.
+  const trail = buildAuditTrail(report);
+  await writeFile(path.join(outDir, "audit.json"), JSON.stringify(trail, null, 2));
+  await writeFile(path.join(outDir, "audit.md"), renderAuditTrail(trail));
   return report;
 }
 
@@ -121,14 +131,22 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
   let runnable: Scenario[];
   try {
     const context = await timed("ingest", () =>
-      buildContext(options.ticket, options.pullRequest, manifest, options.manifestFile),
+      buildContext(options.ticket, options.pullRequest, manifest, options.manifestFile, options.authority),
     );
     await save("context.json", context);
     report.context = {
       docs: context.docs.map((d) => d.path),
       changedFiles: context.pullRequest.files.map((f) => f.path),
       omitted: context.omitted,
+      sources: context.sources.map((s) => ({ id: s.id, kind: s.kind, trust: s.trust, origin: s.origin, basis: s.basis, sha256: s.sha256 })),
+      owners: options.authority.authority.requirementOwners,
+      docChanges: context.docChanges,
+      approvals: context.approvals,
+      authorityNotices: [...(options.authorityNotices ?? []), ...context.authorityNotices],
+      protectedRevision: context.protectedRevision,
     };
+    // Changes whenever an authoritative source changes, and only then.
+    report.ticketHash = fingerprint(context.sources);
 
     const appMap = await timed("discover", () => discover(manifest, driver, path.join(outDir, "discovery")));
     await save("appmap.json", appMap);

@@ -10,8 +10,19 @@ import { RecordedDriver } from "../drivers/recorded.ts";
 import { loadManifest } from "../env.ts";
 import { hostEnv } from "../hostenv.ts";
 import { loadPullRequest } from "../ingest/github.ts";
-import { loadTicket } from "../ingest/jira.ts";
-import { retestRun, runPipeline, ticketHash } from "../pipeline.ts";
+import { buildContext, type AuthorityInputs } from "../ingest/context.ts";
+import { loadPullRequestComments, loadPullRequestCommits } from "../ingest/github.ts";
+import {
+  fileTicketProvider,
+  jiraCloudProvider,
+  loadFromProviders,
+  takeJiraCredentials,
+  type LoadedTicket,
+  type TicketProvider,
+} from "../ingest/jira.ts";
+import { retestRun, runPipeline } from "../pipeline.ts";
+import { readProtectedCheckout } from "../protected.ts";
+import { fingerprint } from "../sources.ts";
 import type { RunReport } from "../schema.ts";
 import { IMAGE, probeIsolation, sandboxLogs, startSandbox, stopSandbox, type Isolation } from "./sandbox.ts";
 
@@ -110,6 +121,8 @@ export type CiRunOptions = {
   /** How the build that produced `incoming` was started. */
   trigger: { event: string; headBranch: string; headSha: string; defaultBranch: string };
   ticketsDir: string;
+  /** This stage's own working copy of the default branch: the protected revision. */
+  trustedRoot: string;
   recordingsDir: string;
   previousRun?: string;
   full: boolean;
@@ -152,6 +165,7 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
   // also gets an allow-listed environment, so this is the second of two locks.
   const apiKey = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
+  const jira = takeJiraCredentials(process.env);
 
   try {
     // The hand-off is plain files. A link in it could point anywhere on this
@@ -178,7 +192,6 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     }
 
     const pullRequest = await loadPullRequest(options.repo, meta.pr);
-    delete process.env.GITHUB_TOKEN;
     if (pullRequest.headSha !== meta.headSha) {
       return finish("skipped", "The pull request has moved on to a newer commit since this build started.");
     }
@@ -192,9 +205,40 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
 
     const key = TICKET_KEY.exec(pullRequest.title)?.[0];
     if (!key) return finish("skipped", "The pull request title names no ticket (expected a key such as ABC-123).");
-    const ticketFile = path.join(options.ticketsDir, `${key}.json`);
-    if (!existsSync(ticketFile)) return finish("skipped", `No ticket ${key} is available to this run.`);
-    const ticket = await loadTicket(ticketFile);
+
+    // Requirements come from two places only, both outside the pull request's
+    // reach: Jira over its authenticated API, and files in this stage's own
+    // working copy of the default branch. A provider that cannot answer (network,
+    // credentials) ends the run; nothing falls back to pull-request text.
+    const providers: TicketProvider[] = [];
+    if (jira) providers.push(jiraCloudProvider(jira));
+    providers.push(fileTicketProvider(options.ticketsDir));
+    let loaded: LoadedTicket | undefined;
+    try {
+      loaded = await loadFromProviders(key, providers);
+    } catch (error) {
+      return finish("error", `The ticket ${key} could not be read: ${(error as Error).message.split("\n")[0]!.slice(0, 200)} Nothing was tested.`);
+    }
+    if (!loaded) return finish("skipped", `No ticket ${key} is available to this run.`);
+    const ticket = loaded.ticket;
+    console.log(`ticket: ${key} from ${loaded.via === "jira-api" ? `Jira (${loaded.site})` : "a ticket file on the default branch"}`);
+
+    // Everything that decides what counts as a requirement is read from this
+    // stage's own working copy, which is the default branch at a pinned commit.
+    const protectedMaterial = await readProtectedCheckout(options.trustedRoot, meta.appDir);
+    const authority: AuthorityInputs = {
+      ticketProvenance:
+        loaded.via === "jira-api"
+          ? { via: "jira-api", site: loaded.site }
+          : { via: "protected-file", revision: protectedMaterial.revision, path: path.relative(options.trustedRoot, loaded.path) },
+      authority: protectedMaterial.authority,
+      protectedRevision: protectedMaterial.revision,
+      approvedDocs: protectedMaterial.approvedDocs,
+      comments: await loadPullRequestComments(options.repo, meta.pr),
+      commits: await loadPullRequestCommits(options.repo, meta.pr),
+    };
+    delete process.env.GITHUB_TOKEN;
+    console.log(`requirements: protected revision ${protectedMaterial.revision.slice(0, 12)}, ${protectedMaterial.approvedDocs.length} approved document(s), ${protectedMaterial.authority.requirementOwners.github.length} GitHub and ${protectedMaterial.authority.requirementOwners.jira.length} Jira requirement owner(s)`);
 
     // The image is loaded and run; it is never unpacked or executed on the host.
     await run("docker", ["load", "--input", path.join(options.incoming, "image.tar")], { timeout: 10 * 60_000, env: hostEnv(process.env) });
@@ -248,14 +292,23 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
       options.previousRun && existsSync(options.previousRun)
         ? (JSON.parse(await readFile(options.previousRun, "utf8")) as RunReport)
         : undefined;
-    const retestable = canRetest(previous, meta.pr, ticketHash(ticket), options.full);
+    // A previous plan is reused only if no authoritative source has changed since.
+    const sourcesNow = fingerprint((await buildContext(ticket, pullRequest, manifest, manifestFile, authority)).sources);
+    const retestable = canRetest(previous, meta.pr, sourcesNow, options.full);
     console.log(retestable ? "mode: re-running the previous run's scenarios" : "mode: planning afresh");
 
     const runDir = path.join(options.outDir, "run");
     const common = { pullRequest, manifest, driver, budget, outDir: runDir, concurrency: options.concurrency };
     result.run = retestable
       ? await retestRun({ ...common, previous: previous! })
-      : await runPipeline({ ...common, ticket, manifestFile, maxScenarios: effective.maxScenarios });
+      : await runPipeline({
+          ...common,
+          ticket,
+          manifestFile,
+          maxScenarios: effective.maxScenarios,
+          authority,
+          authorityNotices: protectedMaterial.notices,
+        });
     await driver.close();
     return finish("completed");
   } catch (error) {

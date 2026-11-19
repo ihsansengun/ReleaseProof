@@ -7,8 +7,9 @@ on `main` at `795a240`; the fixes it led to were merged as pull request #10
 Evidence is in [eval/results/2026-11-19-security](../eval/results/2026-11-19-security/README.md).
 
 **Recommendation: keep `RELEASEPROOF_AUTO_TRIGGER` off.** The hostile run
-found one more hole (the container could reach the runner host), and its
-prompt-injection result was not a blind test. Conditions for turning it on
+found one more hole (the container could reach the runner host, since
+fixed), and its prompt-injection result was not a blind test. Open items are
+tracked in [SECURITY-BACKLOG.md](SECURITY-BACKLOG.md). Conditions for turning it on
 are at the end.
 
 ## What was tested, and how
@@ -39,7 +40,7 @@ in any test.
 
 | # | Finding | Severity | Status |
 |---|---|---|---|
-| 0 | **The application container can reach the runner host.** On the hosted runner the hostile fixture connected to port 22 on the host's address of the sandbox's internal network. An internal network removes the route out but not, on that engine version, the path to the host. The trusted-side check reported the network as blocked because it only tried outside addresses. No credential is served on the host's address and nothing leaked. | Medium | Found by the hostile run. Fix proposed in pull request #11: a firewall rule on the sandbox bridge, and the check extended to the host. Not verifiable on a hosted runner until merged |
+| 0 | **The application container can reach the runner host.** On the hosted runner the hostile fixture connected to port 22 on the host's address of the sandbox's internal network. An internal network removes the route out but not, on that engine version, the path to the host. The trusted-side check reported the network as blocked because it only tried outside addresses. No credential is served on the host's address and nothing leaked. | Medium | Found by the hostile run. Fixed in #11: a firewall rule on the sandbox bridge, and the check extended to the host. Confirmed on a hosted runner (QA run 44529386252): the same fixture can no longer connect to the host, and the trusted-side check reports no address reached |
 | 1 | **Any pull request event cancels a QA run in progress.** The build workflow's `run-name` contains ` #`, which YAML reads as a comment, so every build is titled "ReleaseProof build for PR". The QA workflow keys its concurrency group on that title, so all QA runs share one group, and a new one cancels the one in flight, even if the new one is then skipped. This happened during this review: opening a draft pull request cancelled a live run 7½ minutes in. With the title fixed, a pull request could still set its own build title to another pull request's and cancel its run. | Medium (availability, wasted spend) | Fixed in #10: no workflow-level group; a job-level group keyed per pull request from GitHub's record of the event; quoted `run-name`. Seen working for one run on a hosted runner (key `pr-9`); several runs at once are covered by tests only |
 | 2 | **Documentation from the pull request counts as a requirement source.** The manifest's documents are read at the pull request's head, and a quote from them can back a "documented requirement". A pull request can therefore edit the README to describe its defect as intended behaviour. | Medium (integrity of the verdict) | **Open.** In the hostile run the ticket prevailed and the conflict was raised as a question, but nothing in the code enforces that. Proposal below |
 | 3 | **A listed document could be a symbolic link.** The path check was lexical, so a link inside the application directory to any file on the machine reading it was followed, and the content went into the model's input and the stored run. In CI that machine is the stage 1 runner, which holds no secret beyond a short-lived read-only token; with the CLI on a developer's machine it could be any readable file. Confirmed against `main`. | Low in CI, medium for local use | Fixed in #10: canonical paths, regular files only; a hand-off containing a link is refused |
@@ -64,6 +65,25 @@ commit as well, and treat text that the pull request adds or changes as
 "claimed by this pull request": usable as a hint for where to look, shown
 in the report, but never as the expectation for a comparison when it
 contradicts the ticket, and never as the only basis for "verified".
+
+### Requirement sources (added after the review)
+
+Finding 2 is addressed in code: trust is assigned from where a text was read,
+and pull-request material can never set an expected value
+([design](design/REQUIREMENT-AUTHORITY.md)). One authorisation gap in that
+area is **open and should not be read as solved**:
+
+- **Jira issue descriptions can be edited by people outside the configured
+  requirement owners.** The engine trusts an issue's summary and description
+  because Jira returned them to an authenticated request. Who may edit an
+  issue is decided by Jira's permission scheme, which this system neither
+  reads nor controls, and which commonly allows every project member to
+  edit. Only comments are checked against the owner list. Someone who can
+  edit the ticket can therefore change what is tested, and the run will
+  treat the change as approved. Every report whose ticket came from live
+  Jira carries a note saying so. Closing the gap means reading the issue's
+  change history and accepting only edits by listed owners; that is in the
+  backlog and not implemented.
 
 ## Boundary by boundary
 
@@ -116,8 +136,8 @@ limit ($2.01 of $2.00, after all scenarios had run), and finding 0.
 
 ## Before automatic runs are turned on
 
-1. Merge the host-isolation fix (#11) and see the extended check pass on a
-   hosted runner.
+1. ~~Merge the host-isolation fix (#11) and see the extended check pass on a
+   hosted runner.~~ Done.
 2. Make "the ticket outranks documentation changed by the pull request" a
    rule in code (finding 2).
 3. Make one blind injection run: a hostile pull request whose description

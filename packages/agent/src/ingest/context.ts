@@ -1,6 +1,8 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import { verifyApprovals, type PullRequestComment } from "../approval.ts";
 import type { AppMap, Doc, Manifest, PullRequest, RunContext, Ticket } from "../schema.ts";
+import { applyApprovals, buildSources, NO_AUTHORITY, type Authority, type TicketProvenance } from "../sources.ts";
 
 const DOC_BUDGET = 60_000;
 const DIFF_BUDGET = 80_000;
@@ -23,19 +25,46 @@ export async function resolveDoc(root: string, relative: string): Promise<{ file
   return { file };
 }
 
+/** What the caller established about where requirements may come from. Built by trusted code only. */
+export type AuthorityInputs = {
+  ticketProvenance: TicketProvenance;
+  authority: Authority;
+  /** Commit the approved documents and owner list were read from, or a description of why there is none. */
+  protectedRevision: string;
+  /** Documents listed by the manifest at the protected revision, read there. Empty if none could be established. */
+  approvedDocs: Doc[];
+  /** Comments on the pull request, from the code host's authenticated API, and the pull request's commits. */
+  comments?: PullRequestComment[];
+  commits?: string[];
+  /** Development-mode override. Never set by the CI stage. */
+  trustLocalDocs?: boolean;
+};
+
+/** For callers with nothing established: everything local is unverified. */
+export const UNESTABLISHED = (ticketPath: string): AuthorityInputs => ({
+  ticketProvenance: { via: "local-file", path: ticketPath, trustedByFlag: false },
+  authority: NO_AUTHORITY,
+  protectedRevision: "none established",
+  approvedDocs: [],
+});
+
 /**
  * Assembles what was read, within a size budget. Anything that does not fit
- * is left out whole and named in `omitted`; nothing is cut silently.
+ * is left out whole and named in `omitted`; nothing is cut silently. Trust
+ * is assigned here, by code, from where each text was read.
  */
 export async function buildContext(
   ticket: Ticket,
   pullRequest: PullRequest,
   manifest: Manifest,
   manifestFile: string,
+  authority: AuthorityInputs,
 ): Promise<RunContext> {
   const omitted: string[] = [];
 
-  const docs: Doc[] = [];
+  // The documents as the pull request has them. These are never authoritative
+  // by themselves: they are compared with the protected copies.
+  const headDocs: Doc[] = [];
   let docChars = 0;
   for (const relative of manifest.docs) {
     const resolved = await resolveDoc(path.dirname(manifestFile), relative);
@@ -49,8 +78,18 @@ export async function buildContext(
     } else if (docChars + text.length > DOC_BUDGET) {
       omitted.push(`document ${relative} (${text.length} characters, over the documentation budget)`);
     } else {
-      docs.push({ path: relative, text });
+      headDocs.push({ path: relative, text });
       docChars += text.length;
+    }
+  }
+  const approvedDocs: Doc[] = [];
+  let approvedChars = 0;
+  for (const doc of authority.approvedDocs) {
+    if (approvedChars + doc.text.length > DOC_BUDGET) {
+      omitted.push(`approved document ${doc.path} (${doc.text.length} characters, over the documentation budget)`);
+    } else {
+      approvedDocs.push(doc);
+      approvedChars += doc.text.length;
     }
   }
 
@@ -68,20 +107,42 @@ export async function buildContext(
     return file;
   });
 
-  return { ticket, pullRequest: { ...pullRequest, files }, docs, omitted };
-}
+  let set = buildSources({
+    ticket,
+    ticketProvenance: authority.ticketProvenance,
+    pullRequest,
+    authority: authority.authority,
+    approvedDocs,
+    protectedRevision: authority.protectedRevision,
+    headDocs,
+    trustLocalDocs: authority.trustLocalDocs,
+  });
+  // Approval commands are judged in code, from the code host's record of each comment.
+  const verified = verifyApprovals(authority.comments ?? [], set.docChanges, authority.authority, authority.commits ?? []);
+  set = applyApprovals({ ...set, docChanges: verified.docChanges }, headDocs);
 
-/** Every piece of text that may establish intended behaviour, for quote checks. */
-export function behaviourSources(context: RunContext): string {
-  return [
-    context.ticket.summary,
-    context.ticket.description,
-    ...context.ticket.comments.map((c) => c.body),
-    ...context.docs.map((d) => d.text),
-  ].join("\n");
+  return {
+    ticket,
+    pullRequest: { ...pullRequest, files },
+    docs: authority.trustLocalDocs ? headDocs : approvedDocs,
+    headDocs,
+    sources: set.sources,
+    docChanges: set.docChanges,
+    approvals: verified.decisions,
+    authorityNotices: set.notices,
+    protectedRevision: authority.protectedRevision,
+    omitted,
+  };
 }
 
 const section = (title: string, body: string) => `<<<${title}>>>\n${body.trim()}\n<<<END ${title}>>>`;
+
+/** The sources of one trust class, each under its id, for a model to quote from. */
+export function renderSources(context: RunContext, which: "authoritative" | "other"): string {
+  const chosen = context.sources.filter((s) => (s.trust === "authoritative") === (which === "authoritative"));
+  if (chosen.length === 0) return section(which === "authoritative" ? "APPROVED SOURCES" : "OTHER MATERIAL", "(none)");
+  return chosen.map((s) => section(`SOURCE ${s.id} | ${s.trust} | ${s.origin}`, s.text)).join("\n\n");
+}
 
 export function renderTicket(context: RunContext): string {
   const { ticket } = context;

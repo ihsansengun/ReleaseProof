@@ -1,35 +1,39 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { verifyQuotes } from "../src/analyse.ts";
+import { attribute } from "../src/analyse.ts";
 import { linkIsSafe } from "../src/discover.ts";
 import { requestAllowed } from "../src/execute/tools.ts";
 import { flattenAdf, normaliseIssue } from "../src/ingest/jira.ts";
-import { Manifest, type Analysis, type PlanDraft } from "../src/schema.ts";
+import { Manifest, type AnalysisDraft, type PlanDraft } from "../src/schema.ts";
+import type { SourceRecord } from "../src/sources.ts";
 import { SecretVault } from "../src/secrets.ts";
 import { validatePlan } from "../src/validate.ts";
 
-const analysis: Analysis = {
+const sources: SourceRecord[] = [
+  { id: "T2", kind: "ticket-description", trust: "authoritative", origin: "ticket X-1: description", basis: "test", text: "Rules:\n- A user can hold at most\n  five items.\n- Nothing else.", sha256: "" },
+  { id: "P1", kind: "pr-description", trust: "pr-controlled", origin: "pull request #1", basis: "test", text: "A user can hold at most six items.", sha256: "" },
+];
+const draft: AnalysisDraft = {
   featureSummary: "x",
   requirements: [
-    { id: "R1", text: "Limit is five", kind: "documented", sourceType: "ticket-description", quote: "A user can hold at most **five** items." },
-    { id: "R2", text: "Made up", kind: "documented", sourceType: "ticket-description", quote: "A user can hold at most six items." },
-    { id: "R3", text: "From code", kind: "documented", sourceType: "pull-request", quote: "A user can hold at most five items." },
-    { id: "R4", text: "Guess", kind: "inferred", sourceType: "none", quote: "" },
+    { id: "R1", text: "Limit is five", kind: "documented", sourceId: "T2", quote: "A user can hold at most **five** items.", relation: "none", relatedRequirementId: "" },
+    { id: "R2", text: "Made up", kind: "documented", sourceId: "T2", quote: "A user can hold at most six items.", relation: "none", relatedRequirementId: "" },
+    { id: "R3", text: "From the pull request", kind: "documented", sourceId: "P1", quote: "A user can hold at most six items.", relation: "contradicts", relatedRequirementId: "R1" },
+    { id: "R4", text: "Guess", kind: "inferred", sourceId: "", quote: "", relation: "none", relatedRequirementId: "" },
   ],
   ambiguities: [{ id: "Q1", question: "?", why: "", relatedRequirementIds: [] }],
   risks: [{ id: "K1", description: "", basis: "", relatedRequirementIds: [] }],
 };
 
-test("a requirement stays documented only if its quote is in the sources", () => {
-  const sources = "Rules:\n- A user can hold at most\n  five items.\n- Nothing else.";
-  const { analysis: checked, notes } = verifyQuotes(analysis, sources);
+test("a requirement is documented only if its quote is in the authoritative source it names", () => {
+  const { analysis: checked, notes } = attribute(draft, sources);
   assert.deepEqual(
     checked.requirements.map((r) => r.kind),
-    ["documented", "inferred", "inferred", "inferred"],
+    ["documented", "inferred", "claimed", "inferred"],
   );
-  assert.equal(notes.length, 2);
-  assert.match(notes[0]!, /R2 .* does not appear/);
-  assert.match(notes[1]!, /R3 .* not the ticket or documentation/);
+  assert.equal(checked.requirements[0]!.trust, "authoritative");
+  assert.match(notes.join("\n"), /R2 .* does not appear in source T2/);
+  assert.match(notes.join("\n"), /R3 is a claim/);
 });
 
 const manifest = Manifest.parse({
@@ -60,7 +64,7 @@ const assertion = (over: Partial<PlanDraft["scenarios"][number]["assertions"][nu
   requirementId: "R1",
   ...over,
 });
-const checkedAnalysis = verifyQuotes(analysis, "A user can hold at most five items.").analysis;
+const checkedAnalysis = attribute(draft, sources).analysis;
 const check = (draft: PlanDraft) => validatePlan(draft, checkedAnalysis, manifest, 10);
 
 test("a sound scenario passes validation unchanged", () => {

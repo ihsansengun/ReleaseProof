@@ -75,17 +75,25 @@ export function validatePlan(
         problems.push(`${where} repeats an id; it was removed.`);
         continue;
       }
+      // An expected value may rest only on a requirement that code attributed
+      // to an authoritative source. What the plan says about it is not read.
       const source = requirement.get(a.requirementId);
-      if (!source || source.kind !== "documented") {
-        problems.push(
-          `${where} cites ${source ? `inferred requirement ${a.requirementId}` : `unknown requirement "${a.requirementId}"`}; an expected value must come from a documented requirement. It was removed.`,
-        );
+      const authoritative =
+        source?.kind === "documented" && source.trust === "authoritative" && source.sourceId !== undefined && source.origin !== undefined;
+      if (!source || !authoritative) {
+        const what = !source
+          ? `unknown requirement "${a.requirementId}"`
+          : source.kind === "claimed"
+            ? `${a.requirementId}, which is a claim from ${source.trust ?? "unapproved"} material, not an approved requirement`
+            : `${source.kind} requirement ${a.requirementId}`;
+        problems.push(`${where} cites ${what}; an expected value must come from an approved requirement. It was removed.`);
         clarifications.push({
           scenarioId: d.id,
-          question: `What is the intended outcome for: ${a.description}? No ticket or documentation text states it.`,
+          question: `What is the intended outcome for: ${a.description}? No approved requirement source states it.`,
         });
         continue;
       }
+      const provenance = { sourceId: source.sourceId!, trust: "authoritative" as const, origin: source.origin!, quote: source.quote };
 
       let expected: Assertion["expected"];
       let fault: string | undefined;
@@ -112,12 +120,12 @@ export function validatePlan(
         continue;
       }
       assertionIds.add(a.id);
-      assertions.push({ id: a.id, description: a.description, kind: a.kind, expected, requirementId: a.requirementId });
+      assertions.push({ id: a.id, description: a.description, kind: a.kind, expected, requirementId: a.requirementId, provenance });
     }
 
     if (status === "runnable" && assertions.length === 0) {
       problems.push(`Scenario ${d.id} is marked runnable but has no usable assertion; it is blocked.`);
-      block("No expected outcome in this scenario could be traced to a documented requirement.");
+      block("No approved requirement states the expected outcome of this scenario.");
     }
     if (status === "blocked" && !blockedReason) blockedReason = "The plan gave no reason.";
 

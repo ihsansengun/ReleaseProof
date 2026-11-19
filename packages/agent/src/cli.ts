@@ -1,4 +1,8 @@
 #!/usr/bin/env -S npx tsx
+import { parse as parseYaml } from "yaml";
+import type { AuthorityInputs } from "./ingest/context.ts";
+import { AUTHORITY_FILE, readProtectedRef, sameAsRevision } from "./protected.ts";
+import { Authority, NO_AUTHORITY } from "./sources.ts";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -7,8 +11,8 @@ import { BridgeDriver } from "./drivers/bridge.ts";
 import { ApiDriver, type Driver } from "./drivers/driver.ts";
 import { loadManifest } from "./env.ts";
 import { runScenario } from "./execute/run.ts";
-import { loadPullRequest, loadPullRequestFile } from "./ingest/github.ts";
-import { loadTicket } from "./ingest/jira.ts";
+import { loadPullRequest, loadPullRequestComments, loadPullRequestCommits, loadPullRequestFile } from "./ingest/github.ts";
+import { loadTicketWithProvenance, type LoadedTicket } from "./ingest/jira.ts";
 import { retestRun, runPipeline } from "./pipeline.ts";
 import { Budget, DEFAULT_LIMITS, DEFAULT_PRICES } from "./budget.ts";
 import { RecordedDriver } from "./drivers/recorded.ts";
@@ -37,6 +41,12 @@ Options:
   --out <dir>           output directory (default runs/<timestamp>)
   --max-scenarios <n>   run: plan size limit (default 10)
   --concurrency <n>     scenarios executed at once (default 3)
+  --base-ref <ref>      run: git ref holding the approved documents, the owner list and
+                        the ticket file (default origin/HEAD). Requirements are trusted
+                        only as that revision has them
+  --trust-local-docs    run: development mode. Treat the local ticket file and documents as
+                        approved. The report says so; this never establishes trusted
+                        requirements and is not available in CI
   --steps <file>        replay: a step array, or a result.json containing steps
   --confirm             run-scenario: replay a failure once without the model
 
@@ -52,6 +62,69 @@ function printScenario(result: ScenarioResult, label = "") {
   }
   console.log(`  verdict: ${result.verdict.toUpperCase()} - ${result.reason}`);
   console.log(`  evidence: ${result.evidence.dir}`);
+}
+
+/**
+ * Works out, for a command-line run, where requirements may come from. With a
+ * resolvable base ref, only what that revision holds is approved. Without
+ * one, local files are unverified unless the development-mode flag is given.
+ */
+async function establishAuthority(
+  loaded: LoadedTicket,
+  manifestFile: string,
+  options: { baseRef?: string; trustLocalDocs: boolean; repo?: string; pr?: number },
+): Promise<{ inputs: AuthorityInputs; notices: string[] }> {
+  const notices: string[] = [];
+  const material =
+    (await readProtectedRef(manifestFile, options.baseRef ?? "origin/HEAD")) ??
+    (options.baseRef ? undefined : await readProtectedRef(manifestFile, "origin/main"));
+  if (options.baseRef && !material) notices.push(`The base ref "${options.baseRef}" could not be resolved.`);
+  if (material) notices.push(...material.notices);
+  else notices.push("No protected revision could be established: local documents are unverified.");
+
+  let ticketProvenance: AuthorityInputs["ticketProvenance"];
+  if (loaded.via === "jira-api") ticketProvenance = { via: "jira-api", site: loaded.site };
+  else if (material && (await sameAsRevision(loaded.path, material.revision))) {
+    ticketProvenance = { via: "protected-file", revision: material.revision, path: loaded.path };
+  } else ticketProvenance = { via: "local-file", path: loaded.path, trustedByFlag: options.trustLocalDocs };
+
+  // In development mode the local owner list is read too, so that fixture comments can be exercised.
+  let authority = material?.authority ?? NO_AUTHORITY;
+  if (options.trustLocalDocs && !material) {
+    const top = path.resolve(path.dirname(manifestFile));
+    for (let dir = top; ; dir = path.dirname(dir)) {
+      const text = await readFile(path.join(dir, AUTHORITY_FILE), "utf8").catch(() => null);
+      if (text !== null) {
+        const parsed = Authority.safeParse(parseYaml(text) ?? {});
+        if (parsed.success) authority = parsed.data;
+        break;
+      }
+      if (dir === path.dirname(dir)) break;
+    }
+  }
+
+  let comments: AuthorityInputs["comments"];
+  let commits: AuthorityInputs["commits"];
+  if (options.repo && options.pr) {
+    try {
+      comments = await loadPullRequestComments(options.repo, options.pr);
+      commits = await loadPullRequestCommits(options.repo, options.pr);
+    } catch {
+      notices.push("Comments on the pull request could not be read, so no approval command was considered.");
+    }
+  }
+  return {
+    inputs: {
+      ticketProvenance,
+      authority,
+      protectedRevision: material?.revision ?? "none established",
+      approvedDocs: material?.approvedDocs ?? [],
+      comments,
+      commits,
+      trustLocalDocs: options.trustLocalDocs,
+    },
+    notices,
+  };
 }
 
 async function main(): Promise<number> {
@@ -78,6 +151,8 @@ async function main(): Promise<number> {
       "max-minutes": { type: "string" },
       recording: { type: "string" },
       concurrency: { type: "string", default: "3" },
+      "base-ref": { type: "string" },
+      "trust-local-docs": { type: "boolean", default: false },
     },
   });
   const [command, scenarioFile] = positionals;
@@ -114,10 +189,18 @@ async function main(): Promise<number> {
       console.error("run needs --ticket, and either --repo with --pr or --pr-file");
       return 2;
     }
-    const ticket = await loadTicket(values.ticket);
+    const loaded = await loadTicketWithProvenance(values.ticket);
+    const ticket = loaded.ticket;
     const pullRequest = values["pr-file"]
       ? await loadPullRequestFile(values["pr-file"])
       : await loadPullRequest(values.repo!, Number(values.pr));
+    const authority = await establishAuthority(loaded, values.manifest, {
+      baseRef: values["base-ref"],
+      trustLocalDocs: values["trust-local-docs"],
+      repo: values["pr-file"] ? undefined : values.repo,
+      pr: values["pr-file"] ? undefined : Number(values.pr),
+    });
+    for (const notice of authority.notices) console.log(`requirements: ${notice}`);
     const driver = await makeDriver();
     try {
       const report = await runPipeline({
@@ -125,6 +208,8 @@ async function main(): Promise<number> {
         pullRequest,
         manifest,
         manifestFile: values.manifest,
+        authority: authority.inputs,
+        authorityNotices: authority.notices,
         driver,
         budget,
         outDir,

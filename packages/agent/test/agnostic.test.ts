@@ -11,8 +11,12 @@ const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src")
 // it may appear in the agent: what it knows about an application has to come
 // from the ticket, the manifest and the application itself. Extend this list
 // whenever a demonstration application is added.
+//
+// "approve" used to be on this list for the time-off application. It was
+// taken off when the agent gained its own, unrelated use of the word: the
+// approval of requirement changes by a requirement owner.
 const APPLICATION_TERMS =
-  /\b(loyalty|cart|checkout|customers?|products?|orders?|payments?|welcome|shop|points|employees?|managers?|approv\w*|time-?off)\b|(?<!\/rest)\/api\/|\/login|data-testid/i;
+  /\b(loyalty|cart|checkout|customers?|products?|orders?|payments?|welcome|shop|points|employees?|managers?|time-?off|leave requests?)\b|(?<!\/rest)\/api\/|\/login|data-testid/i;
 
 test("agent source contains no application-specific vocabulary, routes or selectors", async () => {
   const files = (await readdir(SRC, { recursive: true })).filter((f) => f.endsWith(".ts"));
