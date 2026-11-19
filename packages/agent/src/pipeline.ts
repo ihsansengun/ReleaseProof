@@ -8,11 +8,13 @@ import type { Budget } from "./budget.ts";
 import { discover } from "./discover.ts";
 import type { Driver } from "./drivers/driver.ts";
 import { runScenario, type AppAccess } from "./execute/run.ts";
+import { computeVerdict } from "./execute/verdict.ts";
+import { contradicted, restsOnSingleObservations, standings } from "./report/standing.ts";
 import { buildContext, type AuthorityInputs } from "./ingest/context.ts";
 import { fingerprint } from "./sources.ts";
 import { plan as makePlan } from "./plan.ts";
 import { renderRunReport } from "./report/run.ts";
-import type { Manifest, PullRequest, RunReport, Scenario, ScenarioResult, Ticket } from "./schema.ts";
+import type { Assertion, Manifest, PullRequest, RunReport, Scenario, ScenarioResult, Ticket } from "./schema.ts";
 
 export type PipelineOptions = {
   ticket: Ticket;
@@ -42,16 +44,59 @@ export type PipelineOptions = {
  *     obstacle after it had started working (blocked)
  *   - it failed, and the repeat without a model did not reproduce the failure
  *
- * A failure that reproduced is evidence, not uncertainty: it stays a failure.
- * A scenario that never started (the application did not come up, the commit
- * could not be established) is not a matter of model ability either.
+ *   - it failed and repeats, but every failed comparison is one reading from
+ *     the page through one locator. The repeat replays that same locator, so
+ *     it shows the reading is stable and nothing about whether the locator
+ *     was right. A second attempt has to find the value its own way.
+ *
+ * A failure that repeats and is backed by the application's own API response,
+ * or by a second comparison of the same requirement through another target,
+ * is evidence and stays a failure. A scenario that never started (the
+ * application did not come up, the commit could not be established) is not a
+ * matter of model ability either.
  */
-export function needsEscalation(result: ScenarioResult, confirmation: string | undefined): string | undefined {
-  if (result.verdict === "failed") return confirmation === "reproduced" ? undefined : `its failure was not reproduced by the repeat without a model (${confirmation ?? "no repeat"})`;
+export function needsEscalation(result: ScenarioResult, confirmation: string | undefined, assertions?: Assertion[]): string | undefined {
+  if (result.verdict === "failed") {
+    if (confirmation !== "reproduced") return `its failure was not reproduced by the repeat without a model (${confirmation ?? "no repeat"})`;
+    return assertions && restsOnSingleObservations(assertions, result)
+      ? "its failure repeats but rests on a single page observation that nothing else confirms"
+      : undefined;
+  }
   if (result.verdict === "passed" || result.steps.length === 0) return undefined;
   // Stopped for lack of budget: a stronger model would only spend more.
   if (/budget exhausted|limit (of|would)/i.test(result.reason)) return undefined;
   return result.verdict === "unverified" ? "it ended without completing its comparisons" : "the executor could not get through it";
+}
+
+/**
+ * What becomes of a failed first result when a second attempt settled nothing
+ * but disagreed with it: comparisons the two attempts located differently and
+ * read differently (one mismatch, one match) are taken out, and the verdict
+ * is computed again from the rest. Undefined if there is no such comparison.
+ */
+export function setAsideDisagreements(assertions: Assertion[], first: ScenarioResult, second: ScenarioResult): ScenarioResult | undefined {
+  const disagreed = first.verdict === "failed" ? contradicted(assertions, first, second) : [];
+  if (disagreed.length === 0) return undefined;
+  const ids = new Set(disagreed.map((d) => d.mine.assertionId));
+  const remaining = first.assertionResults.filter((r) => !ids.has(r.assertionId));
+  const recomputed = computeVerdict(assertions, remaining, {
+    kind: "stopped",
+    reason: `Two attempts located ${[...ids].join(", ")} differently and disagreed (one mismatch, one match), so the comparison${ids.size === 1 ? " was" : "s were"} set aside as a locator disagreement, not counted as a defect.`,
+  });
+  return {
+    ...first,
+    verdict: recomputed.verdict,
+    reason: recomputed.reason,
+    assertionResults: remaining,
+    setAside: disagreed.map((d) => ({
+      assertionId: d.mine.assertionId,
+      expected: d.mine.expected,
+      actual: d.mine.actual,
+      target: d.mine.target,
+      otherActual: d.theirs.actual,
+      otherTarget: d.theirs.target,
+    })),
+  };
 }
 
 /** Runs `worker` over `items`, at most `limit` at a time, keeping their positions. */
@@ -214,8 +259,9 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
   );
   report.environment.deployedSha = report.results.find((r) => r.environment.deployedSha)?.environment.deployedSha;
 
-  // Replaying a failure shows whether it repeats. It does not show that the
-  // comparison was the right one, so it is reported as "repeats", no more.
+  // Replaying a failure shows whether it repeats: the same steps, the same
+  // locators. It does not show that the locators were right, so it is reported
+  // as repeatability and never as confirmation of a defect.
   await timed("confirm", async () => {
     for (const result of report.results.filter((r) => r.verdict === "failed")) {
       const scenario = runnable.find((s) => s.id === result.scenarioId)!;
@@ -240,10 +286,10 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
     await timed("escalate", async () => {
       report.escalations = [];
       for (const first of [...report.results]) {
-        const why = needsEscalation(first, report.confirmations[first.scenarioId]);
+        const scenario = runnable.find((s) => s.id === first.scenarioId)!;
+        const why = needsEscalation(first, report.confirmations[first.scenarioId], scenario.assertions);
         if (!why) continue;
         if (budget.exceeded()) break;
-        const scenario = runnable.find((s) => s.id === first.scenarioId)!;
         let second = await runScenario({
           scenario,
           manifest,
@@ -276,13 +322,36 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
           kept: conclusive ? "escalated run" : "first run",
           other: conclusive ? first : second,
         });
-        if (!conclusive) continue;
+        if (!conclusive) {
+          // The first result stands. But where the second attempt pointed at a
+          // different element for the same fixed expectation and found it
+          // matching, two locators disagree and neither reading settles the
+          // comparison. It is set aside, on record, and the verdict is computed
+          // again from what is left: never a pass, and still a failure if any
+          // other comparison failed.
+          const settled = setAsideDisagreements(scenario.assertions, first, second);
+          if (settled) {
+            report.results[report.results.indexOf(first)] = settled;
+            if (settled.verdict !== "failed") delete report.confirmations[scenario.id];
+          }
+          continue;
+        }
         second = { ...second, reason: `${second.reason} (re-run on the escalation model: ${why})` };
         report.results[report.results.indexOf(first)] = second;
         if (confirmation) report.confirmations[scenario.id] = confirmation as RunReport["confirmations"][string];
         else delete report.confirmations[scenario.id];
       }
     });
+  }
+
+  // Each mismatch is labelled with what stands behind it: the application's
+  // own API response, a second comparison through another target, a second
+  // attempt that found its own way to the value, or one page reading alone.
+  for (const result of report.results.filter((r) => r.verdict === "failed")) {
+    const assertions = runnable.find((s) => s.id === result.scenarioId)?.assertions ?? [];
+    const other = report.escalations?.find((e) => e.scenarioId === result.scenarioId)?.other;
+    const standing = standings(assertions, result, other);
+    result.assertionResults = result.assertionResults.map((r) => (standing.has(r.assertionId) ? { ...r, standing: standing.get(r.assertionId) } : r));
   }
 
   const over = budget.exceeded();

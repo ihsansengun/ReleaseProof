@@ -14,6 +14,14 @@ export const Expected = z.union([
 ]);
 export type Expected = z.infer<typeof Expected>;
 
+/**
+ * What kind of thing a comparing assertion is about. Almost always a value
+ * the application shows. "heading" and "label" are for the rare assertion
+ * whose requirement is about the wording of a heading or a field's label.
+ */
+export const Subject = z.enum(["value", "heading", "label"]);
+export type Subject = z.infer<typeof Subject>;
+
 export const AssertionKind = z.enum([
   "number_equals",
   "number_at_least",
@@ -41,6 +49,8 @@ export const Assertion = z.object({
   kind: AssertionKind,
   /** For numeric kinds: the unit of the expected value. Absent in plans made before units were declared. */
   unit: Unit.optional(),
+  /** Set only when the assertion is about a heading or a label itself. Absent means a value. */
+  subject: Subject.optional(),
   /** Required for the comparing kinds; unused for present and absent. */
   expected: Expected.optional(),
   requirementId: z.string().optional(),
@@ -212,6 +222,8 @@ export const AssertionResult = z.object({
   target: z.unknown(),
   /** The number as it was read, when it was converted to the assertion's unit before comparing. */
   readAs: z.number().optional(),
+  /** For a mismatch: what stands behind it besides this one reading. Set by code after the run. */
+  standing: z.enum(["state", "corroborated", "re-resolved", "single"]).optional(),
   screenshot: z.string().optional(),
 });
 export type AssertionResult = z.infer<typeof AssertionResult>;
@@ -243,6 +255,11 @@ export type ScenarioResult = {
     commitEstablished?: string;
   };
   assertionResults: AssertionResult[];
+  /**
+   * Comparisons taken out of the verdict because two attempts, each locating
+   * the value its own way, disagreed about them. They stay on record here.
+   */
+  setAside?: { assertionId: string; expected: number | string; actual: number | string; target: unknown; otherActual: number | string; otherTarget: unknown }[];
   observations: Record<string, number>;
   steps: Step[];
   evidence: { trace?: string; dir: string };
@@ -475,6 +492,8 @@ export const PlanDraft = z.object({
           expectedFormula: z.string().nullable(),
           /** Unit of the expected value for numeric kinds; "plain" for anything that is not money. */
           unit: Unit,
+          /** "heading" or "label" only when the requirement is about that wording itself. Omit for a value. */
+          subject: Subject.optional(),
           requirementId: z.string(),
           /** Ids of other documented requirements this same comparison verifies. Empty if none. */
           alsoVerifies: z.array(z.string()),
@@ -551,8 +570,8 @@ export type RunReport = {
   stopped?: string;
   /**
    * Scenarios re-run on the escalation model because their first run gave no
-   * trustworthy verdict. A failure that the model-free repeat reproduced is
-   * never among them.
+   * trustworthy verdict. A failure that repeats and rests on more than one
+   * page observation is never among them.
    */
   escalations?: {
     scenarioId: string;

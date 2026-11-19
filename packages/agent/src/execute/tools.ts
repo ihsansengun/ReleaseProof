@@ -45,7 +45,18 @@ export function requestAllowed(writes: Session["writes"], method: string, pathna
 const ROLES = [
   "button", "link", "textbox", "spinbutton", "checkbox", "radio", "combobox",
   "heading", "cell", "row", "listitem", "alert", "status", "paragraph", "strong",
+  "region", "group", "table", "list", "form", "dialog", "article",
 ] as const;
+
+/** A row, section or other element that holds the one that is meant. */
+const Container = z.object({
+  by: z.enum(["role", "label", "text", "testid"]),
+  role: z.enum(ROLES).optional().describe("Required when by=role."),
+  value: z.string().describe("Accessible name (role/label), visible text, or test id of the container."),
+});
+const WITHIN = Container.optional().describe(
+  "Look only inside this element. Use it when the same text or name appears more than once on the page, for example to pick one row of a table or one section.",
+);
 
 const PageTarget = z.object({
   source: z.literal("page"),
@@ -54,8 +65,9 @@ const PageTarget = z.object({
   value: z
     .string()
     .describe(
-      "Accessible name (role/label), visible text, or test id. by=text selects the smallest element containing the text; by=role needs an element that has an accessible name, which plain text containers often lack.",
+      "Accessible name (role/label), visible text, or test id. by=text selects the smallest element containing the text as whole words (Total does not match Subtotal); by=role needs an element that has an accessible name, which plain text containers often lack.",
     ),
+  within: WITHIN,
   count: z
     .boolean()
     .default(false)
@@ -83,7 +95,9 @@ const ElementRef = z.object({
   by: z.enum(["role", "label", "text", "testid"]),
   role: z.enum(ROLES).optional().describe("Required when by=role."),
   value: z.string().describe("Accessible name (role/label), visible text, or test id."),
+  within: WITHIN,
 });
+type ElementRef = z.infer<typeof ElementRef>;
 
 const schemas = {
   navigate: z.object({ path: z.string().describe('Path on the application under test, e.g. "/settings".') }),
@@ -158,17 +172,36 @@ export async function describePage(session: Pick<Session, "page" | "vault">): Pr
   return `URL: ${url.pathname}${url.search}\n${body}`;
 }
 
-function buildLocator(page: Page, ref: z.infer<typeof ElementRef>): Locator {
-  if (ref.by === "role") {
-    if (!ref.role) throw new Error("role is required when by=role");
-    return page.getByRole(ref.role, { name: ref.value, exact: true });
-  }
-  if (ref.by === "label") return page.getByLabel(ref.value, { exact: true });
-  if (ref.by === "testid") return page.getByTestId(ref.value);
-  return page.getByText(ref.value);
+/**
+ * The text as a pattern that matches it only as whole words, in any case and
+ * with any spacing. Plain containment would let a label match every longer
+ * label that ends or begins with it: "Total" inside "Subtotal".
+ */
+export function wholeWords(text: string): RegExp {
+  const words = text.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const body = words.join("\\s+");
+  const edge = (char: string | undefined) => char !== undefined && /[\p{L}\p{N}]/u.test(char);
+  const trimmed = text.trim();
+  return new RegExp(`${edge(trimmed[0]) ? "(?<![\\p{L}\\p{N}])" : ""}${body}${edge(trimmed.at(-1)) ? "(?![\\p{L}\\p{N}])" : ""}`, "iu");
 }
 
-async function locate(page: Page, ref: z.infer<typeof ElementRef>): Promise<Locator> {
+function buildIn(root: Page | Locator, ref: Omit<ElementRef, "within">): Locator {
+  if (ref.by === "role") {
+    if (!ref.role) throw new Error("role is required when by=role");
+    return root.getByRole(ref.role, { name: ref.value, exact: true });
+  }
+  if (ref.by === "label") return root.getByLabel(ref.value, { exact: true });
+  if (ref.by === "testid") return root.getByTestId(ref.value);
+  if (ref.value.trim() === "") throw new Error("value must not be empty when by=text");
+  return root.getByText(wholeWords(ref.value));
+}
+
+/** The locator for a reference, inside its container if it names one. A container that is itself ambiguous makes every match ambiguous. */
+function buildLocator(page: Page, ref: ElementRef): Locator {
+  return buildIn(ref.within ? buildIn(page, ref.within) : page, ref);
+}
+
+async function locate(page: Page, ref: ElementRef): Promise<Locator> {
   const locator = buildLocator(page, ref);
 
   // Pages may still be rendering after an action, so give the element a
@@ -179,10 +212,54 @@ async function locate(page: Page, ref: z.infer<typeof ElementRef>): Promise<Loca
     await page.waitForTimeout(100);
     count = await locator.count();
   }
+  if (ref.within && count !== 1) {
+    const containers = await buildIn(page, ref.within).count();
+    if (containers !== 1) {
+      throw new Error(`Expected exactly one container for ${JSON.stringify(ref.within)}, found ${containers}. Nothing was read or done.`);
+    }
+  }
   if (count !== 1) {
-    throw new Error(`Expected exactly one element for ${JSON.stringify(ref)}, found ${count}.`);
+    throw new Error(
+      count === 0
+        ? `Expected exactly one element for ${JSON.stringify(ref)}, found 0.`
+        : `Ambiguous target: expected exactly one element for ${JSON.stringify(ref)}, found ${count}. Narrow it with "within", a role or a test id. Nothing was read or done.`,
+    );
   }
   return locator;
+}
+
+/**
+ * Whether an element names something or holds its value. A heading titles a
+ * section and a label names a field; neither is the value the section or the
+ * field shows.
+ */
+async function elementKind(locator: Locator): Promise<"heading" | "label" | "value"> {
+  return locator.evaluate((el) => {
+    if (el.matches("input, select, textarea, output, meter, progress")) return "value";
+    if (el.closest('h1, h2, h3, h4, h5, h6, [role="heading"]')) return "heading";
+    if (el.closest('label, legend, caption, th, dt, summary, [role="columnheader"], [role="rowheader"], [role="term"]')) return "label";
+    return "value";
+  });
+}
+
+/**
+ * Refuses a heading or a label as the place a value is read from, unless the
+ * plan says the comparison is about that heading or label, or a pattern picks
+ * the value out of it. The converse holds too: a comparison declared to be
+ * about a heading must be pointed at one.
+ */
+async function requireSubject(locator: Locator | undefined, target: Target, subject: "value" | "heading" | "label", what: string): Promise<void> {
+  if (!locator || target.source !== "page" || target.count) return;
+  const kind = await elementKind(locator);
+  if (subject !== "value") {
+    if (kind !== subject) throw new Error(`${what} is about a ${subject}, and the target is not one. No result was recorded.`);
+    return;
+  }
+  if (kind !== "value" && !target.pattern) {
+    throw new Error(
+      `${what} expects a value, and the target is a ${kind}: it names something and does not hold its value. Point at the element that shows the value, or give a pattern that picks the value out of this ${kind}. No result was recorded.`,
+    );
+  }
 }
 
 /**
@@ -358,7 +435,8 @@ const handlers: Handlers = {
         `Observation "${name}" is already recorded as ${s.observations[name]}${mine ? `, for this moment: ${mine.when}` : ""}. It cannot be recorded again, and no assertion whose formula uses it can be checked from here on.`,
       );
     }
-    const { text, raw } = await readTarget(s, target);
+    const { text, raw, locator } = await readTarget(s, target);
+    await requireSubject(locator, target, "value", `Observation "${name}"`);
     const read = parseNumber(text);
     const value = reconcile(mine?.unit, raw, read);
     if (!value.comparable) throw new Error(`Observation "${name}" was not recorded: ${value.why}.`);
@@ -397,6 +475,19 @@ const handlers: Handlers = {
           count = await found.count();
         }
         if (count === 1) locator = found;
+        // A role or a label says what kind of element to look for. If nothing
+        // of that kind is there while the same words are plainly on the page,
+        // the kind was a wrong guess, and "absent" would be an answer about
+        // the guess and not about the application.
+        if (count === 0 && (target.by === "role" || target.by === "label") && target.value.trim() !== "") {
+          const scope = target.within ? buildIn(s.page, target.within) : s.page;
+          const shown = await scope.getByText(wholeWords(target.value)).filter({ visible: true }).count();
+          if (shown > 0) {
+            throw new Error(
+              `Assertion ${assertionId} was not compared: nothing matches ${JSON.stringify({ by: target.by, role: target.role, value: target.value })}, but the same text is shown on the page in ${shown} other element${shown === 1 ? "" : "s"}. Whether it is present cannot be decided from this target; point at the element that shows it. No result was recorded.`,
+            );
+          }
+        }
       }
       expected = assertion.kind;
       actual = count === 0 ? "absent" : "present";
@@ -408,6 +499,7 @@ const handlers: Handlers = {
       if (!assertion.expected) throw new Error(`Assertion ${assertionId} has no expected value in the plan.`);
       const read = await readTarget(s, target);
       locator = read.locator;
+      await requireSubject(locator, target, assertion.subject ?? "value", `Assertion ${assertionId}`);
       if ("formula" in assertion.expected) {
         const stale = formulaVariables(assertion.expected.formula).filter((v) => s.contested?.has(v));
         if (stale.length > 0) {

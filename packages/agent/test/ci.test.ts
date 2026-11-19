@@ -172,7 +172,7 @@ test("the comment shows usage by stage and what the model-free repeat of a failu
   };
   const out = render(input(run), RUN_URL);
   assert.match(out.body, /By stage: analyse 115 tokens \(\$0\.40\), execute 115 tokens \(\$1\.10\)/);
-  assert.match(out.body, /Repeated without a model on a fresh session: reproduced/);
+  assert.match(out.body, /Repeatability \(the same steps and locators replayed without a model\): repeats\. This shows whether the result is stable, not whether the locators were right\./);
 });
 
 test("blocked or unverified scenarios make the result neutral, never a pass", async () => {

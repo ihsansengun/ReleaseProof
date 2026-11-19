@@ -1,3 +1,4 @@
+import { STANDING_TEXT } from "./standing.ts";
 import type { RunReport } from "../schema.ts";
 import { authorityLines } from "./authority.ts";
 import { assess, headline, READINESS_LABEL } from "./readiness.ts";
@@ -77,11 +78,12 @@ export function renderRunReport(run: RunReport): string {
       const source = run.analysis.requirements.find((r) => r.id === assertion.requirementId);
       lines.push(
         `- **${assertion.description}**: expected ${outcome.expected}, actual ${outcome.actual}`,
+        ...(outcome.standing ? [`  - Standing: ${STANDING_TEXT[outcome.standing]}`] : []),
         `  - Requirement ${source?.id}: "${source?.quote}"`,
         `  - Evidence: [screenshot](scenarios/${failure.scenarioId}/${outcome.screenshot}), [steps](scenarios/${failure.scenarioId}/report.md)`,
       );
     }
-    lines.push(`- Repeats when replayed without a model: ${run.confirmations[failure.scenarioId] ?? "not attempted"}`, "");
+    lines.push(`- Repeatability (the same steps and locators replayed without a model; says nothing about whether the locators were right): ${run.confirmations[failure.scenarioId] ?? "not attempted"}`, "");
   }
 
   const inconclusive = run.results.filter((r) => r.verdict === "blocked" || r.verdict === "unverified");

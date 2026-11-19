@@ -65,6 +65,7 @@ export type Diagnostics = {
       requirementId?: string;
       sourceId?: string;
       pattern?: string;
+      standing?: string;
       /** How the executor located the value. */
       target?: string;
       /** File in the evidence artifact. */
@@ -110,6 +111,7 @@ export function buildDiagnostics(run: RunReport): Diagnostics {
         requirementId: assertion.requirementId,
         sourceId: assertion.provenance?.sourceId,
         pattern: patternOf.get(`${result.scenarioId}/${assertion.id}`),
+        ...(outcome?.standing ? { standing: outcome.standing } : {}),
         target: outcome?.target === undefined ? undefined : brief(outcome.target, 200),
         screenshot: outcome?.screenshot ? path.basename(outcome.screenshot) : undefined,
       };
@@ -150,7 +152,7 @@ export function renderDiagnostics(d: Diagnostics): string {
   if (d.scenarios.length === 0) lines.push("No scenario was executed.");
   for (const s of d.scenarios) {
     lines.push(`## ${s.id} — ${s.verdict}: ${s.title}`, "", ...(s.attempt ? [`- This is the ${s.attempt}.`] : []), `- Why: ${s.reason}`);
-    if (s.repeat) lines.push(`- Repeated without a model on a fresh session: ${s.repeat}`);
+    if (s.repeat) lines.push(`- Repeatability (same steps and locators, no model; not a confirmation of a defect): ${s.repeat}`);
     lines.push(`- Steps recorded: ${s.stepsRecorded}; evidence: \`${s.evidence || "none"}\``, "");
     if (s.comparisons.length > 0) {
       lines.push("| Assertion | Outcome | Expected | Observed | Rests on | Pattern | Located by | Screenshot |", "|---|---|---|---|---|---|---|---|");
@@ -179,9 +181,9 @@ export function diagnosticLines(d: Diagnostics, maxLines = 700): string[] {
   // What did not pass comes first, so that a cut-off loses passes, not failures.
   const ordered = [...d.scenarios.filter((s) => s.verdict !== "passed"), ...d.scenarios.filter((s) => s.verdict === "passed")];
   for (const s of ordered) {
-    out.push(`${s.id} ${s.verdict}${s.attempt ? ` [${s.attempt}]` : ""}: ${s.title}`, `  why: ${s.reason}${s.repeat ? ` | repeat without a model: ${s.repeat}` : ""}`);
+    out.push(`${s.id} ${s.verdict}${s.attempt ? ` [${s.attempt}]` : ""}: ${s.title}`, `  why: ${s.reason}${s.repeat ? ` | repeatability (same locators, no model): ${s.repeat}` : ""}`);
     for (const c of s.comparisons) {
-      out.push(`  ${c.assertionId} ${c.outcome}${c.pattern ? ` [${c.pattern}]` : ""}: expected ${c.expected}${c.observed === "" ? "" : `, observed ${c.observed}`} | ${c.description}${c.requirementId ? ` | rests on ${c.requirementId}` : ""}`);
+      out.push(`  ${c.assertionId} ${c.outcome}${c.pattern ? ` [${c.pattern}]` : ""}: expected ${c.expected}${c.observed === "" ? "" : `, observed ${c.observed}`} | ${c.description}${c.requirementId ? ` | rests on ${c.requirementId}` : ""}${c.standing ? ` | standing: ${c.standing}` : ""}`);
       if (c.outcome !== "not compared" && c.target) out.push(`     located by ${c.target}${c.screenshot ? ` | screenshot ${c.screenshot}` : ""}`);
     }
     for (const step of s.lastSteps) out.push(`  step ${step.n} ${step.tool} ${step.input} -> ${step.ok ? "ok" : "FAILED"}: ${step.result}`);

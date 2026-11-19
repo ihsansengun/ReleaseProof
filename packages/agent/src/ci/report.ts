@@ -4,6 +4,7 @@ import { failurePatterns } from "../report/patterns.ts";
 import { redact } from "../report/diagnostics.ts";
 import { assess, headline, READINESS_LABEL } from "../report/readiness.ts";
 import { MODES } from "../report/run.ts";
+import { STANDING_TEXT } from "../report/standing.ts";
 import type { CiResult } from "./run.ts";
 
 const MARKER = "<!-- releaseproof-report -->";
@@ -130,8 +131,9 @@ export const ReportInput = z.object({
           verdict: Verdict,
           reason: z.string(),
           assertionResults: z.array(
-            z.object({ assertionId: z.string(), expected: Scalar, actual: Scalar, pass: z.boolean() }),
+            z.object({ assertionId: z.string(), expected: Scalar, actual: Scalar, pass: z.boolean(), standing: z.enum(["state", "corroborated", "re-resolved", "single"]).optional() }),
           ),
+          setAside: z.array(z.object({ assertionId: z.string(), expected: Scalar, actual: Scalar, otherActual: Scalar })).optional(),
         }),
       ),
       confirmations: z.record(z.string(), z.string()).optional(),
@@ -176,6 +178,13 @@ function redactDeep(value: unknown, key?: string): unknown {
 export function publicResult(raw: unknown): ReportInput {
   return redactDeep(ReportInput.parse(raw)) as ReportInput;
 }
+
+/** How the model-free repeat is worded: as repeatability, never as confirmation. */
+export const REPEATABILITY: Record<string, string> = {
+  reproduced: "repeats",
+  "not reproduced": "does not repeat",
+  "replay diverged": "could not be repeated (the replay diverged)",
+};
 
 export type Rendered = { conclusion: "success" | "failure" | "neutral"; title: string; body: string };
 
@@ -295,13 +304,14 @@ export function render(input: ReportInput, runUrl: string): Rendered {
       const planned = run.plan.scenarios.find((s) => s.scenario.id === result.scenarioId);
       lines.push(`**${safe(result.scenarioId, 20)} ${safe(result.title, 160)}**`);
       const confirmation = run.confirmations?.[result.scenarioId];
-      if (confirmation) lines.push(`- Repeated without a model on a fresh session: ${safe(confirmation, 40)}`);
+      if (confirmation) lines.push(`- Repeatability (the same steps and locators replayed without a model): ${safe(REPEATABILITY[confirmation] ?? confirmation, 60)}. This shows whether the result is stable, not whether the locators were right.`);
       for (const outcome of result.assertionResults.filter((a) => !a.pass)) {
         const assertion = planned?.scenario.assertions.find((a) => a.id === outcome.assertionId);
         const requirement = run.analysis.requirements.find((r) => r.id === assertion?.requirementId);
         lines.push(
           `- ${safe(assertion?.description ?? outcome.assertionId, 240)}: expected \`${safe(outcome.expected, 80)}\`, actual \`${safe(outcome.actual, 80)}\``,
         );
+        if (outcome.standing) lines.push(`  - Standing: ${STANDING_TEXT[outcome.standing]}.`);
         if (requirement) {
           lines.push(`  - Requirement ${safe(requirement.id, 10)}: "${safe(requirement.quote, 240)}"${requirement.origin ? ` (source: ${safe(requirement.origin, 200)})` : ""}`);
         }
@@ -314,6 +324,20 @@ export function render(input: ReportInput, runUrl: string): Rendered {
     lines.push("### Not verified", "", "These produced no pass or fail and are not counted as either.", "");
     for (const r of run.results.filter((x) => x.verdict === "blocked" || x.verdict === "unverified")) {
       lines.push(`- **${safe(r.scenarioId, 20)}** (${r.verdict}) ${safe(r.title, 140)}: ${safe(r.reason, 260)}`);
+    }
+    lines.push("");
+  }
+
+  const setAside = run.results.flatMap((r) => (r.setAside ?? []).map((s) => ({ scenarioId: r.scenarioId, ...s })));
+  if (setAside.length > 0) {
+    lines.push(
+      "### Comparisons set aside",
+      "",
+      "Two attempts pointed at different elements for the same fixed expectation and disagreed. That is a disagreement between locators, not evidence of a defect, and not a pass either. These comparisons count as not checked.",
+      "",
+    );
+    for (const s of setAside.slice(0, 20)) {
+      lines.push(`- **${safe(s.scenarioId, 20)}/${safe(s.assertionId, 12)}**: expected \`${safe(s.expected, 80)}\`; one attempt read \`${safe(s.actual, 80)}\`, the other \`${safe(s.otherActual, 80)}\``);
     }
     lines.push("");
   }

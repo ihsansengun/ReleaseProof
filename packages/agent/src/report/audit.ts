@@ -196,7 +196,7 @@ export function renderAuditTrail(trail: AuditTrail): string {
     if (a.evidence.compared) {
       const e = a.evidence;
       lines.push(
-        `| ${cell(a.scenarioId)}/${cell(a.assertionId)} ${cell(a.description, 160)} | ${basis} | \`${cell(e.expected, 80)}\` (planned: ${cell(a.expectedAsPlanned, 80)}) | \`${cell(e.observed, 80)}\` | ${e.outcome === "match" ? "match" : "**MISMATCH**"}; scenario ${cell(e.scenarioVerdict)}${e.modelFreeRepeat ? `; repeat without a model: ${cell(e.modelFreeRepeat)}` : ""} | ${e.stepsRecorded} steps, \`${cell(e.evidenceDirectory, 160)}\`${e.screenshot ? `, screenshot \`${cell(e.screenshot, 160)}\`` : ""} |`,
+        `| ${cell(a.scenarioId)}/${cell(a.assertionId)} ${cell(a.description, 160)} | ${basis} | \`${cell(e.expected, 80)}\` (planned: ${cell(a.expectedAsPlanned, 80)}) | \`${cell(e.observed, 80)}\` | ${e.outcome === "match" ? "match" : "**MISMATCH**"}; scenario ${cell(e.scenarioVerdict)}${e.modelFreeRepeat ? `; repeatability (same locators, no model): ${cell(e.modelFreeRepeat)}` : ""} | ${e.stepsRecorded} steps, \`${cell(e.evidenceDirectory, 160)}\`${e.screenshot ? `, screenshot \`${cell(e.screenshot, 160)}\`` : ""} |`,
       );
     } else {
       lines.push(`| ${cell(a.scenarioId)}/${cell(a.assertionId)} ${cell(a.description, 160)} | ${basis} | ${cell(a.expectedAsPlanned, 80)} | not compared | ${cell(a.evidence.why, 200)} | none |`);

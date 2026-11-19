@@ -34,3 +34,31 @@ Limits of these fixes:
 - Converting assumes a currency with hundredths.
 - Whether a passing scenario tested the rule in its title is now checkable by a reader. Code does not judge it.
 
+
+## Fixed after routing benchmark C (19 November 2026)
+
+Every wrong verdict but one in that benchmark came from how a value was
+located on the page, not from the requirements or the plan.
+
+| Problem seen | What changed |
+|---|---|
+| The section heading "Promo code" was read where the applied code was expected, and reported as a defect | A heading or a label is refused as the place a value is read from: no result is recorded. It is accepted when the plan declares the assertion's `subject` to be a heading or a label, which must then be pointed at one, or when a pattern picks a value out of it |
+| A text target for "Total:" also matched "Subtotal:" | Text is matched on whole words. A target that still matches more than one element is reported as ambiguous and nothing is read. A target can name a container (`within`) to pick one row or section |
+| A message looked up under a role it does not have was recorded as absent | When a role or label target matches nothing while the same words are shown on the page, presence and absence are both left undecided and no result is recorded |
+| A repeat of the same wrong locator was reported as "reproduced" and settled the failure | The model-free repeat is reported as repeatability only. Each mismatch carries what stands behind it: the application's API response, a second comparison of the same requirement through another target, a second attempt that located the value its own way, or one page reading alone |
+| A failure resting on one page reading was final once it repeated | Such a failure gets one independent attempt on the escalation model. If that attempt reaches the value another way and it matches, the comparison is set aside as a locator disagreement: the scenario is unverified, never passed. If any other comparison failed, the scenario stays failed |
+
+Limits of these fixes:
+
+- A wrong element that is neither a heading nor a label, such as the wrong
+  one of two amounts, is not detected when it is read. It is caught only if a
+  second attempt disagrees or another comparison contradicts it.
+- "Corroborated" means a second comparison of the same requirement failed
+  through a different target. Both could still be wrong.
+- A single-observation failure costs one extra attempt on the escalation
+  model, within the escalation limit.
+- A passing comparison located by the expected value itself is still accepted.
+- A value whose only presentation is inside a heading or a label needs a
+  pattern; without one it stays unverified.
+- Whole-word matching can make an older recording diverge where it relied on
+  matching part of a word.
