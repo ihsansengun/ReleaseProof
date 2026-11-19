@@ -1,0 +1,13 @@
+# Test image for ReleaseProof. Configuration only: the application's files are
+# copied in unchanged. PHP's built-in web server is used so that the
+# application can run as one unprivileged process.
+FROM alpine:3.24
+RUN apk --no-cache add \
+    php85 php85-ctype php85-dom php85-gd php85-iconv php85-mbstring php85-openssl \
+    php85-pdo php85-pdo_sqlite php85-session php85-simplexml php85-xml php85-xmlwriter \
+    php85-zlib php85-posix php85-curl php85-bcmath php85-zip \
+    && ln -sf /usr/bin/php85 /usr/bin/php
+WORKDIR /app
+COPY . .
+USER 10001:10001
+CMD ["php", "-S", "0.0.0.0:8080", "-t", "/app"]

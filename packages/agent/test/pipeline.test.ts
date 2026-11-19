@@ -23,6 +23,8 @@ const draft: AnalysisDraft = {
   ],
   ambiguities: [{ id: "Q1", question: "?", why: "", relatedRequirementIds: [] }],
   risks: [{ id: "K1", description: "", basis: "", relatedRequirementIds: [] }],
+  supersessions: [],
+  contradictions: [],
 };
 
 test("a requirement is documented only if its quote is in the authoritative source it names", () => {
@@ -47,6 +49,7 @@ const scenario = (over: Partial<PlanDraft["scenarios"][number]>): PlanDraft["sce
   requirementIds: ["R1"],
   riskIds: [],
   intent: "do it",
+  setup: "",
   fixtures: [{ alias: "user", type: "account" }],
   status: "runnable",
   blockedReason: "",

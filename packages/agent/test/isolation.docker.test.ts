@@ -22,6 +22,11 @@ const haveDocker = (() => {
     return false;
   }
 })();
+// Locally these tests run as root; a hosted runner is an ordinary user with
+// password-less sudo. The engine makes the same choice for its own calls.
+const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+const asRoot = (command: string, ...args: string[]) =>
+  execFileSync(isRoot ? command : "sudo", isRoot ? args : ["-n", command, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 const start = { run: "node apps/timeoff/server.mjs", port: 3100, env: { PORT: "3100", TEST_MODE: "1" }, commitEnv: "GIT_SHA" };
 
 /** Every process on this machine whose environment contains the text, by command line. */
@@ -29,7 +34,7 @@ function processesHolding(text: string): string[] {
   const found: string[] = [];
   for (const pid of readdirSync("/proc").filter((d) => /^\d+$/.test(d))) {
     try {
-      if (readFileSync(`/proc/${pid}/environ`, "utf8").includes(text)) {
+      if (asRoot("cat", `/proc/${pid}/environ`).includes(text)) {
         found.push(readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ").slice(0, 80));
       }
     } catch {
@@ -84,7 +89,7 @@ test("a secret in the engine's environment does not reach the application contai
     assert.doesNotMatch(docker("inspect", "releaseproof-app"), new RegExp(SECRET));
     const pids = docker("top", "releaseproof-app", "-eo", "pid").split("\n").slice(1).map((p) => p.trim());
     assert.ok(pids.length > 0);
-    for (const pid of pids) assert.doesNotMatch(readFileSync(`/proc/${pid}/environ`, "utf8"), new RegExp(SECRET), `pid ${pid}`);
+    for (const pid of pids) assert.doesNotMatch(asRoot("cat", `/proc/${pid}/environ`), new RegExp(SECRET), `pid ${pid}`);
     assert.deepEqual(processesHolding(SECRET).filter((c) => /server\.mjs|docker/.test(c)), []);
   } finally {
     await stopSandbox();
@@ -151,7 +156,7 @@ test("the allow-list passes nothing that looks like a credential", () => {
 
 test("a container that can reach this machine is caught, and the firewall rule closes that path", { skip: !haveDocker }, async () => {
   const rule = ["INPUT", "-i", "rpsandbox0", "-m", "conntrack", "--ctstate", "NEW,INVALID", "-j", "DROP"];
-  const iptables = (...args: string[]) => execFileSync("iptables", args, { stdio: ["ignore", "pipe", "pipe"] });
+  const iptables = (...args: string[]) => asRoot("iptables", ...args);
   await stopSandbox();
   try {
     // The sandbox's container, but on an ordinary bridge with the same names and no firewall rule:
@@ -181,17 +186,17 @@ test("a container that can reach this machine is caught, and the firewall rule c
   } finally {
     await stopSandbox();
   }
-  assert.doesNotMatch(execFileSync("iptables", ["-S", "INPUT"], { encoding: "utf8" }), /rpsandbox0/, "the rule is removed with the sandbox");
+  assert.doesNotMatch(asRoot("iptables", "-S", "INPUT"), /rpsandbox0/, "the rule is removed with the sandbox");
 });
 
 test("the sandbox installs the rule on start and leaves nothing behind", { skip: !haveDocker }, async () => {
   try {
     await startSandbox({ start, sha: "a".repeat(40) });
-    assert.match(execFileSync("iptables", ["-S", "INPUT"], { encoding: "utf8" }), /-i rpsandbox0 .*NEW.*-j DROP/);
+    assert.match(asRoot("iptables", "-S", "INPUT"), /-i rpsandbox0 .*NEW.*-j DROP/);
     const isolation = await probeIsolation(start);
     assert.equal(isolation.ok, true, JSON.stringify(isolation));
   } finally {
     await stopSandbox();
   }
-  assert.doesNotMatch(execFileSync("iptables", ["-S", "INPUT"], { encoding: "utf8" }), /rpsandbox0/);
+  assert.doesNotMatch(asRoot("iptables", "-S", "INPUT"), /rpsandbox0/);
 });

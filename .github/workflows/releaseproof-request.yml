@@ -1,21 +1,20 @@
-# Stage 1 of 3: build the application from a pull request.
+# Stage 1 of 4: ask for a pull request to be tested.
 #
-# TRUST: this is the only workflow that touches pull-request code, and it has
-# no secrets and a read-only token. The code is built inside `docker build`;
-# nothing from the pull request is executed on the runner itself. Its outputs
-# (an image, the app's manifest and listed documents, a small description)
-# are artifacts that the QA workflow treats as untrusted data.
+# TRUST: this workflow does nothing but write a small request (a pull request
+# number and optional limits) and hand it on. It has no secrets, a read-only
+# token, checks out nothing and builds nothing. The QA workflow treats the
+# request as untrusted data: it asks GitHub itself which commit the pull
+# request is at, and builds that.
 #
-# Do not add secrets, write permissions or `pull_request_target` here.
-name: ReleaseProof build
+# Do not add secrets, write permissions, a checkout or `pull_request_target`.
+name: ReleaseProof request
 # Quoted: an unquoted " #" would start a YAML comment and drop the number.
-run-name: "ReleaseProof build for PR #${{ inputs.pr || github.event.pull_request.number }}"
+run-name: "ReleaseProof request for PR #${{ inputs.pr || github.event.pull_request.number }}"
 
 on:
   # Automatic trigger. With this event GitHub takes THIS FILE from the pull
   # request, so a pull request can change what this workflow does. That is
-  # acceptable only because it has nothing to protect: no secrets, a read-only
-  # token, and outputs the QA workflow re-checks. Keep it that way.
+  # acceptable only because nothing it produces is trusted. Keep it that way.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
@@ -24,6 +23,10 @@ on:
         description: Pull request number to test
         required: true
         type: string
+      verify_only:
+        description: Only build, start and check isolation. No ticket is read and no model is called
+        type: boolean
+        default: false
       full:
         description: Plan from scratch even if an earlier run of this pull request can be re-run
         type: boolean
@@ -49,71 +52,43 @@ permissions:
   contents: read
 
 concurrency:
-  # A newer commit on the same pull request cancels the build in progress.
-  group: releaseproof-build-${{ inputs.pr || github.event.pull_request.number }}
+  # A newer commit on the same pull request replaces the request in progress.
+  group: releaseproof-request-${{ inputs.pr || github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  build:
+  request:
     # Draft pull requests wait until they are marked ready for review.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
-      - name: Check the pull request number
+      - name: Write the request
         env:
           PR: ${{ inputs.pr || github.event.pull_request.number }}
-        run: |
-          case "$PR" in (''|*[!0-9]*) echo "Not a pull request number"; exit 1;; esac
-
-      - name: Check out ReleaseProof (default branch)
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          path: releaseproof
-          persist-credentials: false
-
-      - name: Check out the pull request (untrusted)
-        uses: actions/checkout@v4
-        with:
-          ref: refs/pull/${{ inputs.pr || github.event.pull_request.number }}/head
-          path: pr
-          persist-credentials: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install ReleaseProof
-        working-directory: releaseproof
-        run: npm ci --ignore-scripts
-
-      - name: Build the application image
-        working-directory: releaseproof
-        env:
-          PR: ${{ inputs.pr || github.event.pull_request.number }}
+          VERIFY_ONLY: ${{ inputs.verify_only || false }}
           FULL: ${{ inputs.full || false }}
           MAX_USD: ${{ inputs.max_usd }}
           MAX_SCENARIOS: ${{ inputs.max_scenarios }}
           MAX_MINUTES: ${{ inputs.max_minutes }}
           DISABLE_FALLBACKS: ${{ inputs.disable_fallbacks || false }}
           EXECUTOR_MODEL: ${{ inputs.executor_model }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          npx tsx packages/agent/src/ci/cli.ts build \
-            --pr-dir "$GITHUB_WORKSPACE/pr" --repo "$GITHUB_REPOSITORY" --pr "$PR" \
-            --out "$GITHUB_WORKSPACE/handoff"
-          echo "$FULL" > "$GITHUB_WORKSPACE/handoff/full"
+          case "$PR" in (''|*[!0-9]*) echo "Not a pull request number"; exit 1;; esac
+          mkdir request
+          jq -n --argjson pr "$PR" '{pr: $pr}' > request/meta.json
+          echo "$FULL" > request/full
+          echo "$VERIFY_ONLY" > request/verify-only
           # Requests to tighten this run's limits. The QA workflow validates
           # them and will only ever lower its own limits, never raise them.
           jq -n --arg usd "$MAX_USD" --arg scenarios "$MAX_SCENARIOS" --arg minutes "$MAX_MINUTES" --arg nofallback "$DISABLE_FALLBACKS" --arg executor "$EXECUTOR_MODEL" \
             '{maxUsd: $usd, maxScenarios: $scenarios, maxMinutes: $minutes, disableFallbacks: $nofallback, executorModel: $executor}
-             | with_entries(select(.value != ""))' > "$GITHUB_WORKSPACE/handoff/limits.json"
+             | with_entries(select(.value != ""))' > request/limits.json
 
       - name: Hand over to the QA workflow
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: releaseproof-handoff
-          path: handoff
+          name: releaseproof-request
+          path: request
           retention-days: 1
           if-no-files-found: error

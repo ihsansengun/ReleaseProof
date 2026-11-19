@@ -14,6 +14,7 @@ export function planToDraft(plan: RunReport["plan"]): PlanDraft {
       requirementIds: p.scenario.requirementIds,
       riskIds: p.riskIds,
       intent: p.scenario.intent,
+      setup: p.scenario.setup ?? "",
       fixtures: Object.entries(p.scenario.fixtures).map(([alias, type]) => ({ alias, type })),
       status: p.status,
       blockedReason: p.blockedReason,
@@ -59,6 +60,9 @@ export class RecordedDriver implements Driver {
           relation: r.relation ?? "none",
           relatedRequirementId: r.relatedRequirementId ?? "",
         })),
+        // Only what the model proposed is replayed; owners' own lines are found again by code.
+        supersessions: (a.supersessions ?? []).filter((s) => s.how === "inferred"),
+        contradictions: a.contradictions ?? [],
       });
     }
     if (job.name === "plan" || job.name === "plan-repair") return job.schema.parse(planToDraft(this.recording.plan));

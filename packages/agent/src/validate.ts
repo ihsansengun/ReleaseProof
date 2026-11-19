@@ -57,7 +57,7 @@ export function validatePlan(
 
     const fixtures: Record<string, string> = {};
     for (const f of d.fixtures) {
-      if (!manifest.fixtures[f.type]) {
+      if (!manifest.fixtures[f.type] && !manifest.accounts[f.type]) {
         problems.push(`Scenario ${d.id} needs a "${f.type}" fixture, which this environment does not declare.`);
         block(`Needs test data of type "${f.type}", which the environment cannot prepare.`);
       } else if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(f.alias) || fixtures[f.alias]) {
@@ -69,6 +69,7 @@ export function validatePlan(
 
     const assertions: Assertion[] = [];
     const assertionIds = new Set<string>();
+    let contested = false;
     for (const a of d.assertions) {
       const where = `Assertion ${d.id}/${a.id}`;
       if (assertionIds.has(a.id)) {
@@ -80,6 +81,15 @@ export function validatePlan(
       const source = requirement.get(a.requirementId);
       const authoritative =
         source?.kind === "documented" && source.trust === "authoritative" && source.sourceId !== undefined && source.origin !== undefined;
+      if (source && authoritative && source.contested) {
+        problems.push(`${where} cites ${a.requirementId}, which contradicts another approved requirement and has not been settled; it cannot set an expected value. It was removed.`);
+        clarifications.push({
+          scenarioId: d.id,
+          question: `Which approved rule holds for: ${a.description}? ${a.requirementId} ("${source.quote}") is contradicted by another approved requirement.`,
+        });
+        contested = true;
+        continue;
+      }
       if (!source || !authoritative) {
         const what = !source
           ? `unknown requirement "${a.requirementId}"`
@@ -125,7 +135,11 @@ export function validatePlan(
 
     if (status === "runnable" && assertions.length === 0) {
       problems.push(`Scenario ${d.id} is marked runnable but has no usable assertion; it is blocked.`);
-      block("No approved requirement states the expected outcome of this scenario.");
+      block(
+        contested
+          ? "The approved requirements this scenario rests on contradict each other; a requirement owner must say which holds."
+          : "No approved requirement states the expected outcome of this scenario.",
+      );
     }
     if (status === "blocked" && !blockedReason) blockedReason = "The plan gave no reason.";
 
@@ -136,6 +150,7 @@ export function validatePlan(
         basis: d.basis,
         requirementIds: known(d.requirementIds, requirement, "requirement"),
         intent: d.intent,
+        setup: d.setup?.trim() || undefined,
         fixtures,
         assertions: status === "runnable" ? assertions : [],
       },

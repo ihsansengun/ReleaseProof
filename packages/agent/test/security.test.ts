@@ -199,3 +199,26 @@ test("the engine removes the model key from its own environment before doing any
   });
   assert.equal(process.env.ANTHROPIC_API_KEY, undefined);
 });
+
+test("an image file is loaded only if it is the one the build job produced", async () => {
+  const { imageFileProblem } = await import("../src/ci/run.ts");
+  const { createHash } = await import("node:crypto");
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const pathModule = await import("node:path");
+  const file = pathModule.join(mkdtempSync(pathModule.join(tmpdir(), "rp-img-")), "image.tar");
+  writeFileSync(file, "image bytes");
+  const digest = createHash("sha256").update("image bytes").digest("hex");
+
+  assert.equal(await imageFileProblem(file, digest), undefined);
+  // Replaced after the build job measured it.
+  writeFileSync(file, "other bytes");
+  assert.match((await imageFileProblem(file, digest))!, /not the file the build job produced/);
+  // A digest that is missing, empty or malformed never lets a file through once one is expected.
+  for (const bad of ["", "sha256:" + digest, digest.slice(0, 40), digest.toUpperCase(), "*"]) {
+    assert.match((await imageFileProblem(file, bad))!, /not the file the build job produced/, bad);
+  }
+  assert.match((await imageFileProblem(pathModule.join(tmpdir(), "does-not-exist.tar"), digest))!, /not the file/);
+  // Only a caller that passes no digest at all (the local command line) skips the comparison.
+  assert.equal(await imageFileProblem(file, undefined), undefined);
+});

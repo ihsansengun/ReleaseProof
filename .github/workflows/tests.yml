@@ -1,0 +1,50 @@
+# Runs the engine's own tests. No secrets, read-only token: on a pull request
+# this executes the pull request's code, so it must never be given either.
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Install
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+
+      - name: Type-check
+        working-directory: packages/agent
+        run: npx tsc --noEmit -p .
+
+      # The container tests need an application image under this name; without
+      # it they are skipped.
+      - name: Build the image the container tests use
+        run: |
+          docker build --quiet --file ci/sandbox/Dockerfile.node \
+            --build-arg RP_RUN="node apps/timeoff/server.mjs" \
+            --label releaseproof.sha=0000000000000000000000000000000000000000 \
+            --tag releaseproof-app .
+
+      - name: Test
+        working-directory: packages/agent
+        run: npm test

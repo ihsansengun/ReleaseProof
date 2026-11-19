@@ -1,235 +1,33 @@
-# Stages 2 and 3 of 3: test the built application, then report.
+# Stages 2 to 4 of 4 for applications in this repository: build, test, report.
 #
 # TRUST: `workflow_run` always uses this file and the code from the default
-# branch, so a pull request cannot change what runs here.
-#
-#   qa      Trusted code only. Holds the model API key, in one step. Its token
-#           is read-only. The pull request is never checked out; its image is
-#           loaded and run in a container with no network route out, a
-#           read-only filesystem and no credentials in its environment.
-#   report  Holds the permission to write a Check run and a comment, and
-#           nothing else. It reads one JSON file, validates it and displays it.
-#
-# Everything downloaded from the build workflow is data. Do not `run:` it,
-# source it, or interpolate it into a script.
+# branch, so a pull request cannot change what runs here. The work is done by
+# the reusable workflow next to this file; see its header for the boundaries.
 name: ReleaseProof QA
 run-name: ReleaseProof QA after "${{ github.event.workflow_run.display_title }}"
 
 on:
   workflow_run:
-    workflows: ["ReleaseProof build"]
+    workflows: ["ReleaseProof request"]
     types: [completed]
 
 permissions: {}
 
 jobs:
-  # Works out which pull request this build is for, so that the QA job can be
-  # put in a concurrency group of its own pull request. There is deliberately
-  # no workflow-level concurrency: a group there is joined by every build that
-  # completes, including ones that are then skipped, and would let any pull
-  # request event cancel another pull request's run. Holds no secret.
-  identify:
-    # A manually started build is always tested. A build started by a
-    # pull-request event is tested only when the repository variable
-    # RELEASEPROOF_AUTO_TRIGGER is "on". That variable is the switch for
-    # automatic runs: a pull request can add a pull_request trigger to its own
-    # copy of the build workflow, but it cannot set a repository variable.
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.event == 'workflow_dispatch' || vars.RELEASEPROOF_AUTO_TRIGGER == 'on')
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  releaseproof:
+    uses: ./.github/workflows/releaseproof-qa-reusable.yml
+    # The most any job inside may hold. Each job there asks for less.
     permissions:
       contents: read
       actions: read
-    outputs:
-      key: ${{ steps.key.outputs.key }}
-    steps:
-      - name: Check out ReleaseProof (default branch)
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          sparse-checkout: ci
-
-      - name: Download what the build produced (untrusted data)
-        uses: actions/download-artifact@v4
-        with:
-          name: releaseproof-handoff
-          path: incoming
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-
-      - name: Choose the concurrency key
-        id: key
-        env:
-          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
-          EVENT_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          key=$(node ci/qa-concurrency.mjs incoming/meta.json)
-          case "$key" in (pr-[0-9]*|run-[0-9]*) ;; (*) echo "unexpected key"; exit 1;; esac
-          echo "key=$key" >> "$GITHUB_OUTPUT"
-          echo "QA concurrency key: $key"
-
-  qa:
-    needs: identify
-    # One QA run per pull request; a newer build of the same pull request
-    # replaces an older run. Runs for different pull requests never share a
-    # group. Only runs that passed the gate above ever join one.
-    concurrency:
-      group: releaseproof-qa-${{ needs.identify.outputs.key }}
-      cancel-in-progress: true
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
-    outputs:
-      produced: ${{ steps.run.outputs.produced }}
-    steps:
-      - name: Check out ReleaseProof (default branch)
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install ReleaseProof and its browser
-        run: |
-          npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
-
-      - name: Download what the build produced (untrusted data)
-        uses: actions/download-artifact@v4
-        with:
-          name: releaseproof-handoff
-          path: incoming
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-
-      - name: Read the pull request number
-        id: meta
-        run: |
-          pr=$(jq -r '.pr | tostring' incoming/meta.json)
-          case "$pr" in (''|*[!0-9]*) echo "meta.json has no numeric pull request"; exit 1;; esac
-          echo "pr=$pr" >> "$GITHUB_OUTPUT"
-          if [ "$(cat incoming/full 2>/dev/null)" = "true" ]; then echo "full=--full" >> "$GITHUB_OUTPUT"; fi
-
-      - name: Restore the previous run of this pull request
-        uses: actions/cache/restore@v4
-        with:
-          path: previous
-          key: releaseproof-pr-${{ steps.meta.outputs.pr }}-${{ github.run_id }}
-          restore-keys: releaseproof-pr-${{ steps.meta.outputs.pr }}-
-
-      - name: Test the application
-        id: run
-        env:
-          # The only step that sees the model key. The application container
-          # is started by this step with an explicit, separate environment.
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GITHUB_TOKEN: ${{ github.token }}
-          # Optional: live Jira as the ticket source. Without all three, only
-          # ticket files on the default branch are used. The token and the
-          # account email are read once by the engine and removed from its
-          # environment, like the model key; they are never passed to a child
-          # process or a container. The email is taken from a secret, or from
-          # a variable of the same name where one was set instead.
-          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
-          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL || vars.JIRA_EMAIL }}
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-          RELEASEPROOF_MODEL: ${{ vars.RELEASEPROOF_MODEL }}
-          RELEASEPROOF_EFFORT: ${{ vars.RELEASEPROOF_EFFORT }}
-          RELEASEPROOF_FALLBACKS: ${{ vars.RELEASEPROOF_FALLBACKS }}
-          MAX_USD: ${{ vars.RELEASEPROOF_MAX_USD }}
-          MAX_TOKENS: ${{ vars.RELEASEPROOF_MAX_TOKENS }}
-          MAX_MINUTES: ${{ vars.RELEASEPROOF_MAX_MINUTES }}
-          MAX_SCENARIOS: ${{ vars.RELEASEPROOF_MAX_SCENARIOS }}
-          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
-          TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          FULL: ${{ steps.meta.outputs.full }}
-        run: |
-          npx tsx packages/agent/src/ci/cli.ts run \
-            --incoming incoming --out out --repo "$GITHUB_REPOSITORY" \
-            --event "$TRIGGER_EVENT" --head-branch "$TRIGGER_BRANCH" --head-sha "$TRIGGER_SHA" \
-            --default-branch "$DEFAULT_BRANCH" --previous previous/run.json $FULL \
-            --max-usd "$MAX_USD" --max-tokens "$MAX_TOKENS" --max-minutes "$MAX_MINUTES" \
-            --max-scenarios "$MAX_SCENARIOS"
-          echo "produced=true" >> "$GITHUB_OUTPUT"
-
-      - name: Remove the application container
-        if: always()
-        run: |
-          docker rm --force releaseproof-app || true
-          docker network rm releaseproof-net || true
-
-      - name: Keep this run for the next commit
-        if: steps.run.outputs.produced == 'true' && hashFiles('out/run/run.json') != ''
-        run: mkdir -p previous && cp out/run/run.json previous/run.json
-
-      - uses: actions/cache/save@v4
-        if: steps.run.outputs.produced == 'true' && hashFiles('previous/run.json') != ''
-        with:
-          path: previous
-          key: releaseproof-pr-${{ steps.meta.outputs.pr }}-${{ github.run_id }}
-
-      - name: Store evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: releaseproof-evidence
-          # Browser traces are left out: they record typed values.
-          path: |
-            out
-            !out/**/trace.zip
-          retention-days: 14
-          if-no-files-found: warn
-
-      - name: Hand the result to the report job
-        if: steps.run.outputs.produced == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: releaseproof-result
-          path: out/ci-result.json
-          retention-days: 14
-          if-no-files-found: error
-
-  report:
-    needs: qa
-    if: needs.qa.outputs.produced == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      checks: write
       pull-requests: write
-    steps:
-      - name: Check out ReleaseProof (default branch)
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - run: npm ci --ignore-scripts
-
-      - name: Download the result (data only)
-        uses: actions/download-artifact@v4
-        with:
-          name: releaseproof-result
-          path: result
-
-      - name: Publish the Check run and the comment
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          npx tsx packages/agent/src/ci/cli.ts report --result result/ci-result.json --run-url "$RUN_URL"
-          cat result/comment.md >> "$GITHUB_STEP_SUMMARY"
+      checks: write
+    with:
+      # Here the engine and the applications share a repository, so the engine
+      # is this very commit of the default branch.
+      releaseproof_repository: ${{ github.repository }}
+      releaseproof_ref: ${{ github.sha }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}

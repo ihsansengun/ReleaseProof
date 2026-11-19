@@ -19,6 +19,8 @@ const docker = (args: string[], timeout = 120_000) =>
 
 export const IMAGE = "releaseproof-app";
 const CONTAINER = "releaseproof-app";
+// Every container this module starts carries this label, so all of them can be found and removed.
+const SANDBOX_LABEL = "releaseproof.sandbox=1";
 const NETWORK = "releaseproof-net";
 // The network's bridge gets a fixed name so a firewall rule can refer to it.
 const BRIDGE = "rpsandbox0";
@@ -28,22 +30,34 @@ const BRIDGE = "rpsandbox0";
 const HOST_RULE = ["INPUT", "-i", BRIDGE, "-m", "conntrack", "--ctstate", "NEW,INVALID", "-j", "DROP"];
 const USER = "10001";
 
-type Start = NonNullable<Manifest["start"]>;
+/** The manifest's start section; the fields that have defaults may be left out by callers. */
+type Start = Omit<NonNullable<Manifest["start"]>, "writable" | "instances"> & { writable?: string[]; instances?: "shared" | "per-scenario" };
 
-/** Builds the application image. Install and build commands run inside the build, never on the host. */
+/**
+ * Builds the application image. Everything the application's files say to
+ * do (install and build commands, or its own Dockerfile) runs inside the
+ * build, never on the host. The commit label is set here, last, so a LABEL
+ * instruction in an application's Dockerfile cannot choose it.
+ */
 export async function buildImage(options: {
   contextDir: string;
+  /** The generic Dockerfile, or the application's own. */
   dockerfile: string;
   start: Start;
   sha: string;
 }): Promise<void> {
+  const own = options.start.dockerfile !== undefined;
   await docker(
     [
       "build",
       "--file", options.dockerfile,
-      "--build-arg", `RP_INSTALL=${options.start.install ?? ""}`,
-      "--build-arg", `RP_BUILD=${options.start.build ?? ""}`,
-      "--build-arg", `RP_RUN=${options.start.run}`,
+      ...(own
+        ? []
+        : [
+            "--build-arg", `RP_INSTALL=${options.start.install ?? ""}`,
+            "--build-arg", `RP_BUILD=${options.start.build ?? ""}`,
+            "--build-arg", `RP_RUN=${options.start.run ?? ""}`,
+          ]),
       "--label", `releaseproof.sha=${options.sha}`,
       "--tag", IMAGE,
       options.contextDir,
@@ -74,7 +88,12 @@ const BASE_ENV = ["PATH", "HOSTNAME", "HOME", "NODE_VERSION", "YARN_VERSION", "N
  * count. Its environment holds only what the manifest lists plus the commit.
  */
 export async function startSandbox(options: { start: Start; sha: string }): Promise<{ baseUrl: string }> {
-  const { start, sha } = options;
+  await prepareSandbox();
+  return startInstance(options);
+}
+
+/** Removes anything left from an earlier run, then creates the isolated network and closes it off from this machine. */
+export async function prepareSandbox(): Promise<void> {
   await stopSandbox();
   // An internal network has no gateway to the outside world. Depending on the
   // container engine's version it can still reach this machine's own address
@@ -82,11 +101,30 @@ export async function startSandbox(options: { start: Start; sha: string }): Prom
   await docker(["network", "create", "--internal", "--opt", `com.docker.network.bridge.name=${BRIDGE}`, NETWORK]);
   const rule = await trusted("iptables", ["-I", HOST_RULE[0]!, "1", ...HOST_RULE.slice(1)]);
   if (!rule.ok) throw new Error(`The sandbox network could not be closed off from this machine: ${rule.out.split("\n")[0]!.slice(0, 160)}`);
+}
+
+/** The arguments that make a directory writable: an in-memory directory of bounded size, owned by the sandbox user. */
+export const writableMounts = (paths: string[]) =>
+  paths.flatMap((p) => ["--tmpfs", `${p}:rw,size=128m,uid=${USER},gid=${USER},mode=0700,noexec,nosuid,nodev`]);
+
+/** Container name for an instance: the default one, or one of its own for a scenario. */
+export const instanceName = (label?: string) => (label ? `${CONTAINER}-${label.toLowerCase().replace(/[^a-z0-9_.-]/g, "-").slice(0, 80)}` : CONTAINER);
+
+/**
+ * Starts one application container on the prepared network. Every instance
+ * gets the same restrictions; nothing in the image or the manifest can
+ * loosen them.
+ */
+export async function startInstance(options: { start: Start; sha: string; label?: string }): Promise<{ baseUrl: string; container: string }> {
+  const { start, sha } = options;
+  const container = instanceName(options.label);
+  await docker(["rm", "--force", container]).catch(() => {});
   const env = { ...start.env, ...(start.commitEnv ? { [start.commitEnv]: sha } : {}) };
   await docker([
-    "run", "--detach", "--name", CONTAINER,
+    "run", "--detach", "--name", container, "--label", SANDBOX_LABEL,
     "--network", NETWORK,
     "--read-only", "--tmpfs", "/tmp:rw,size=256m",
+    ...writableMounts(start.writable ?? []),
     "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
     "--pids-limit", "256", "--memory", "1g", "--memory-swap", "1g", "--cpus", "1.5",
     "--user", `${USER}:${USER}`,
@@ -94,7 +132,7 @@ export async function startSandbox(options: { start: Start; sha: string }): Prom
     IMAGE,
   ]);
   const { stdout } = await docker([
-    "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", CONTAINER,
+    "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", container,
   ]);
   const address = stdout.trim();
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(address)) throw new Error("The sandbox container has no address.");
@@ -106,9 +144,9 @@ export async function startSandbox(options: { start: Start; sha: string }): Prom
       () => true,
       () => false,
     );
-    if (up) return { baseUrl };
+    if (up) return { baseUrl, container };
     if (Date.now() > deadline) {
-      const logs = await docker(["logs", "--tail", "30", CONTAINER]).then(
+      const logs = await docker(["logs", "--tail", "30", container]).then(
         (r) => r.stdout + r.stderr,
         () => "",
       );
@@ -167,9 +205,9 @@ Promise.all(tries.map((u) => fetch(u, { signal: AbortSignal.timeout(4000), redir
  *
  * Any check that cannot be carried out counts as a failure.
  */
-export async function probeIsolation(start: Start): Promise<Isolation> {
-  const configuration = await inspectConfiguration(start);
-  const inspected = await docker(["inspect", CONTAINER]).then(
+export async function probeIsolation(start: Start, container = CONTAINER): Promise<Isolation> {
+  const configuration = await inspectConfiguration(start, container);
+  const inspected = await docker(["inspect", container]).then(
     (r) => JSON.parse(r.stdout)[0] as { State?: { Pid?: number; Running?: boolean }; Config?: { Env?: string[] } },
     () => ({}) as { State?: { Pid?: number; Running?: boolean }; Config?: { Env?: string[] } },
   );
@@ -177,7 +215,8 @@ export async function probeIsolation(start: Start): Promise<Isolation> {
   if (!pid) configuration.push("the container's main process could not be identified");
 
   const environment = (inspected.Config?.Env ?? []).map((entry) => entry.split("=")[0]!).sort();
-  const allowed = new Set([...BASE_ENV, ...Object.keys(start.env), ...(start.commitEnv ? [start.commitEnv] : [])]);
+  // Variables baked into the image were put there by the build, which never sees a secret.
+  const allowed = new Set([...BASE_ENV, ...(await imageEnvironment()), ...Object.keys(start.env), ...(start.commitEnv ? [start.commitEnv] : [])]);
   const unexpectedEnvironment = environment.filter((name) => !allowed.has(name));
 
   // The kernel's view of the process, read on the host.
@@ -214,7 +253,7 @@ export async function probeIsolation(start: Start): Promise<Isolation> {
   // Root filesystem: ask the engine to put a file there. A read-only root refuses.
   const marker = path.join(tmpdir(), `releaseproof-probe-${process.pid}`);
   await writeFile(marker, "probe");
-  const copy = await docker(["cp", marker, `${CONTAINER}:/releaseproof-probe`], 30_000).then(
+  const copy = await docker(["cp", marker, `${container}:/releaseproof-probe`], 30_000).then(
     () => "WRITABLE" as const,
     (e: { stderr?: string }) => (/read-only/i.test(e.stderr ?? "") ? ("read-only" as const) : ("WRITABLE" as const)),
   );
@@ -292,9 +331,24 @@ export function configurationProblems(
   return problems;
 }
 
-async function inspectConfiguration(start: Start): Promise<string[]> {
+/** Names of the environment variables the image itself defines. */
+async function imageEnvironment(): Promise<string[]> {
+  return docker(["image", "inspect", IMAGE]).then(
+    (r) => ((JSON.parse(r.stdout)[0]?.Config?.Env ?? []) as string[]).map((e) => e.split("=")[0]!),
+    () => [],
+  );
+}
+
+/**
+ * The settings check alone, for an instance started after the full check has
+ * passed once: every instance comes from the same image and the same
+ * arguments, and this confirms the container engine applied them again.
+ */
+export const checkInstance = (start: Start, container: string) => inspectConfiguration(start, container);
+
+async function inspectConfiguration(start: Start, name: string): Promise<string[]> {
   try {
-    const container = JSON.parse((await docker(["inspect", CONTAINER])).stdout)[0];
+    const container = JSON.parse((await docker(["inspect", name])).stdout)[0];
     const network = await docker(["network", "inspect", NETWORK]).then(
       (r) => JSON.parse(r.stdout)[0] as { Internal?: boolean },
       () => ({}) as { Internal?: boolean },
@@ -310,15 +364,24 @@ async function inspectConfiguration(start: Start): Promise<string[]> {
   }
 }
 
-export async function sandboxLogs(lines = 200): Promise<string> {
-  return docker(["logs", "--tail", String(lines), CONTAINER]).then(
+export async function sandboxLogs(lines = 200, container = CONTAINER): Promise<string> {
+  return docker(["logs", "--tail", String(lines), container]).then(
     (r) => r.stdout + r.stderr,
     () => "",
   );
 }
 
+export async function stopInstance(container: string): Promise<void> {
+  await docker(["rm", "--force", container]).catch(() => {});
+}
+
 export async function stopSandbox(): Promise<void> {
   await docker(["rm", "--force", CONTAINER]).catch(() => {});
+  const others = await docker(["ps", "--all", "--quiet", "--filter", `label=${SANDBOX_LABEL}`]).then(
+    (r) => r.stdout.split(/\s+/).filter(Boolean),
+    () => [] as string[],
+  );
+  if (others.length > 0) await docker(["rm", "--force", ...others]).catch(() => {});
   await docker(["network", "rm", NETWORK]).catch(() => {});
   // Remove every copy of the firewall rule; "-D" fails once none is left.
   for (let i = 0; i < 5 && (await trusted("iptables", ["-D", ...HOST_RULE])).ok; i++);

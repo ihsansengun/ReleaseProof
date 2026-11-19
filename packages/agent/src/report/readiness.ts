@@ -18,6 +18,7 @@ export type ReadinessInput = {
     requirements: { id: string; text: string; kind: string; quote: string; origin?: string }[];
     /** Disagreements between pull-request material and the approved requirements. */
     conflicts?: { id: string; kind: string; description: string }[];
+    supersessions?: { how: string }[];
   };
   plan: {
     /** Runnable scenarios the planner wrote that were dropped to respect the limit. */
@@ -126,7 +127,12 @@ export function assess(run: ReadinessInput): Assessment {
   if (requirements.length === 0) reasons.push("no approved requirement was identified");
   const conflicts = run.analysis.conflicts?.length ?? 0;
   if (conflicts > 0) {
-    reasons.push(`${conflicts} conflict${conflicts === 1 ? "" : "s"} between this pull request's own statements and the approved requirements ${conflicts === 1 ? "is" : "are"} unresolved`);
+    reasons.push(`${conflicts} conflict${conflicts === 1 ? "" : "s"} about the approved requirements ${conflicts === 1 ? "is" : "are"} unresolved`);
+  }
+  // A rule replaced on the analyst's reading alone is applied, but an owner has not said so.
+  const inferred = (run.analysis.supersessions ?? []).filter((s) => s.how !== "owner-line").length;
+  if (inferred > 0) {
+    reasons.push(`${inferred} earlier rule${inferred === 1 ? " was" : "s were"} taken as replaced by a later comment without the requirement owner stating it`);
   }
 
   const readiness: Readiness = execution.failed > 0 || counts.failed > 0 ? "not ready" : reasons.length > 0 ? "incomplete" : "ready";

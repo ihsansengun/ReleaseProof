@@ -9,6 +9,7 @@ const SECRET_FIELD = /pass(word|phrase)?|secret|token|api[-_]?key|credential/i;
 
 export class SecretVault {
   private byName = new Map<string, string>();
+  private public = new Map<string, string>();
 
   private register(name: string, value: string): string {
     this.byName.set(name, value);
@@ -38,10 +39,22 @@ export class SecretVault {
     return masked;
   }
 
+  /**
+   * Registers a value that is declared in the manifest, such as the password
+   * of an account the application ships with. The model still works with a
+   * placeholder. The value is not scrubbed from output: it is in a file
+   * anyone can read, and such values are often ordinary words ("admin")
+   * whose removal would garble every page that contains them.
+   */
+  declared(name: string, value: string): string {
+    this.public.set(name, value);
+    return `{{secret:${name}}}`;
+  }
+
   /** Replaces placeholders with real values, anywhere inside a JSON-like value. */
   resolve<T>(value: T): T {
     if (typeof value === "string") {
-      return value.replace(/\{\{secret:([^}]+)\}\}/g, (whole, name) => this.byName.get(name) ?? whole) as T;
+      return value.replace(/\{\{secret:([^}]+)\}\}/g, (whole, name) => this.byName.get(name) ?? this.public.get(name) ?? whole) as T;
     }
     if (Array.isArray(value)) return value.map((v) => this.resolve(v)) as T;
     if (value !== null && typeof value === "object") {

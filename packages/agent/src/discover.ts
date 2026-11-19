@@ -145,7 +145,8 @@ async function discoverView(
 export async function discover(manifest: Manifest, driver: Driver, outDir: string): Promise<AppMap> {
   const accounts = Object.entries(manifest.fixtures)
     .filter(([, fixture]) => fixture.account)
-    .map(([type]) => ({ alias: type, type }));
+    .map(([type]) => ({ alias: type, type }))
+    .concat(Object.keys(manifest.accounts).map((type) => ({ alias: type, type })));
   const views = await Promise.all([
     discoverView(manifest, driver, outDir),
     ...accounts.map((account) => discoverView(manifest, driver, outDir, account)),

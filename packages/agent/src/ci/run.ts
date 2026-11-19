@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { createReadStream, existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -24,7 +25,8 @@ import { retestRun, runPipeline } from "../pipeline.ts";
 import { readProtectedCheckout } from "../protected.ts";
 import { fingerprint } from "../sources.ts";
 import type { RunReport } from "../schema.ts";
-import { IMAGE, probeIsolation, sandboxLogs, startSandbox, stopSandbox, type Isolation } from "./sandbox.ts";
+import { checkInstance, IMAGE, probeIsolation, sandboxLogs, startInstance, startSandbox, stopInstance, stopSandbox, type Isolation } from "./sandbox.ts";
+import type { AppAccess } from "../execute/run.ts";
 
 const run = promisify(execFile);
 
@@ -129,7 +131,32 @@ export type CiRunOptions = {
   limits: Limits;
   maxScenarios: number;
   concurrency: number;
+  /**
+   * SHA-256 of the image file as the build job computed it, passed outside
+   * the artifact. When given, an image file that does not match is refused.
+   */
+  imageSha256?: string;
+  /** Build, start and check isolation only. No ticket is read and no model is involved. */
+  verifyOnly?: boolean;
 };
+
+/**
+ * Says why an image file may not be loaded, if the build job's digest was
+ * given and the file does not match it. An empty or malformed digest counts
+ * as a mismatch: once a digest is expected, nothing loads without one.
+ */
+export async function imageFileProblem(file: string, expected: string | undefined): Promise<string | undefined> {
+  if (expected === undefined) return undefined;
+  const digest = await fileSha256(file).catch(() => "");
+  return /^[0-9a-f]{64}$/.test(expected) && digest === expected ? undefined : "The application image is not the file the build job produced; it was not loaded.";
+}
+
+/** SHA-256 of a file, read as a stream. */
+async function fileSha256(file: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
 
 /** The first symbolic link (or other non-regular entry) under a directory, if any. */
 export async function firstSymlink(dir: string): Promise<string | undefined> {
@@ -163,6 +190,7 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
   // Credentials are taken out of this process's environment as soon as they
   // are read. Everything started later (container client, browser, probes)
   // also gets an allow-listed environment, so this is the second of two locks.
+  const instanceLogs: string[] = [];
   const apiKey = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
   const jira = takeJiraCredentials(process.env);
@@ -199,8 +227,43 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
       return finish("skipped", "Pull requests from forks need a maintainer's go-ahead, which is not implemented yet.");
     }
     if (meta.skip) return finish("skipped", meta.skip);
-    if (!meta.appDir || !pullRequest.files.some((f) => f.path.startsWith(`${meta.appDir}/`))) {
+    // An application at the top of its repository has "." as its directory, and every file belongs to it.
+    if (!meta.appDir || !pullRequest.files.some((f) => meta.appDir === "." || f.path.startsWith(`${meta.appDir}/`))) {
       return finish("error", "The build names an application directory the pull request does not change.");
+    }
+
+    // The image must be the file the build job produced, and must carry the
+    // commit the code host reports. It is loaded and run; never unpacked or
+    // executed on this machine.
+    const loadImage = async (): Promise<string | undefined> => {
+      const imageFile = path.join(options.incoming, "image.tar");
+      const tampered = await imageFileProblem(imageFile, options.imageSha256);
+      if (tampered) return tampered;
+      await run("docker", ["load", "--input", imageFile], { timeout: 10 * 60_000, env: hostEnv(process.env) });
+      const label = (
+        await run("docker", ["inspect", "--format", '{{index .Config.Labels "releaseproof.sha"}}', IMAGE], { env: hostEnv(process.env) })
+      ).stdout.trim();
+      return label === meta.headSha ? undefined : "The application image is not labelled with the pull request's commit.";
+    };
+
+    if (options.verifyOnly) {
+      delete process.env.GITHUB_TOKEN;
+      const refused = await loadImage();
+      if (refused) return finish("error", refused);
+      const declared = await loadManifest(path.join(options.incoming, "context", "releaseproof.yml")).catch(() => null);
+      if (!declared?.start) return finish("error", "The application's manifest is not valid or has no start section.");
+      await startSandbox({ start: declared.start, sha: meta.headSha });
+      result.isolation = await probeIsolation(declared.start);
+      if (!result.isolation.ok) return finish("error", "The sandbox isolation check failed.");
+      let second = "";
+      if (declared.start.instances === "per-scenario") {
+        const extra = await startInstance({ start: declared.start, sha: meta.headSha, label: "verify-2" });
+        const problems = await checkInstance(declared.start, extra.container);
+        await stopInstance(extra.container);
+        if (problems.length > 0) return finish("error", `A second application container was not isolated as required: ${problems.slice(0, 3).join("; ")}`);
+        second = " A second, separate container started with the same settings.";
+      }
+      return finish("skipped", `Verification only: the application was built from commit ${meta.headSha.slice(0, 12)}, started, and passed the isolation check.${second} No ticket was read and no model was called.`);
     }
 
     const key = TICKET_KEY.exec(pullRequest.title)?.[0];
@@ -240,12 +303,8 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     delete process.env.GITHUB_TOKEN;
     console.log(`requirements: protected revision ${protectedMaterial.revision.slice(0, 12)}, ${protectedMaterial.approvedDocs.length} approved document(s), ${protectedMaterial.authority.requirementOwners.github.length} GitHub and ${protectedMaterial.authority.requirementOwners.jira.length} Jira requirement owner(s)`);
 
-    // The image is loaded and run; it is never unpacked or executed on the host.
-    await run("docker", ["load", "--input", path.join(options.incoming, "image.tar")], { timeout: 10 * 60_000, env: hostEnv(process.env) });
-    const label = (
-      await run("docker", ["inspect", "--format", '{{index .Config.Labels "releaseproof.sha"}}', IMAGE], { env: hostEnv(process.env) })
-    ).stdout.trim();
-    if (label !== meta.headSha) return finish("error", "The application image is not labelled with the pull request's commit.");
+    const refused = await loadImage();
+    if (refused) return finish("error", refused);
 
     const manifestFile = path.join(options.incoming, "context", "releaseproof.yml");
     const declared = await loadManifest(manifestFile).catch(() => null);
@@ -257,6 +316,41 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
 
     result.isolation = await probeIsolation(declared.start);
     if (!result.isolation.ok) return finish("error", "The sandbox isolation check failed; nothing was tested.");
+
+    // What this stage itself knows about the application it started, for
+    // applications that cannot report their commit, and a way to start one
+    // application per scenario where the manifest asks for that.
+    const start = declared.start;
+    let started = 0;
+    let unsafe: string | undefined;
+    const app: AppAccess = {
+      commitEstablished: options.imageSha256
+        ? `the build job fetched commit ${meta.headSha} from the code host and built the image from it; this stage checked the image file against that job's digest and started it`
+        : `this stage started the image labelled with commit ${meta.headSha}, which is the commit the code host reports for the pull request`,
+      instance:
+        start.instances !== "per-scenario"
+          ? undefined
+          : async (label) => {
+              if (unsafe) throw new Error(unsafe);
+              const { baseUrl: address, container } = await startInstance({ start, sha: meta.headSha, label: `${++started}-${label}` });
+              // The full isolation check passed on the first application. Each
+              // further one must have been started with the same settings.
+              const problems = await checkInstance(start, container);
+              if (problems.length > 0) {
+                unsafe = `an application container was not isolated as required (${problems.slice(0, 3).join("; ")}); no further scenario is started`;
+                await stopInstance(container);
+                throw new Error(unsafe);
+              }
+              return {
+                baseUrl: address,
+                release: async () => {
+                  instanceLogs.push(`--- ${container}\n${await sandboxLogs(60, container)}`);
+                  await stopInstance(container);
+                },
+              };
+            },
+    };
+    console.log(`application: ${start.instances === "per-scenario" ? "a new container for every scenario" : "one container for the run"}; commit established by ${declared.version ? "the application's version endpoint" : "this stage's own start of the labelled image"}`);
 
     const requestedFile = path.join(options.incoming, "limits.json");
     const effective = tighten(
@@ -298,7 +392,7 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     console.log(retestable ? "mode: re-running the previous run's scenarios" : "mode: planning afresh");
 
     const runDir = path.join(options.outDir, "run");
-    const common = { pullRequest, manifest, driver, budget, outDir: runDir, concurrency: options.concurrency };
+    const common = { pullRequest, manifest, driver, budget, outDir: runDir, concurrency: options.concurrency, app };
     result.run = retestable
       ? await retestRun({ ...common, previous: previous! })
       : await runPipeline({
@@ -315,7 +409,7 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     return finish("error", `ReleaseProof could not complete: ${(error as Error).message.split("\n")[0]!.slice(0, 300)}`);
   } finally {
     await mkdir(options.outDir, { recursive: true });
-    const log = await sandboxLogs();
+    const log = [await sandboxLogs(), ...instanceLogs].join("\n");
     await writeFile(path.join(options.outDir, "application.log"), log);
     console.log("application log (last lines, as text):");
     for (const line of logTail(log)) console.log(line);

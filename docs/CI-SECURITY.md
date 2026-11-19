@@ -15,35 +15,62 @@ describes the design and its limits.
 None of these can be made safe by inspection, so the design gives them
 nothing worth stealing and no way to act.
 
-## Three stages
+## Four stages
 
-| | 1. Build | 2. QA | 3. Report |
-|---|---|---|---|
-| Workflow | `releaseproof-build.yml` | `releaseproof-qa.yml`, job `qa` | `releaseproof-qa.yml`, job `report` |
-| Trigger | `workflow_dispatch` (pull request number) | `workflow_run`, when a build completes | follows `qa` |
-| Code it runs | ReleaseProof at the workflow's commit; pull-request code inside `docker build` only | ReleaseProof from the default branch | ReleaseProof from the default branch |
-| Token | `contents: read` | `contents`, `actions`, `pull-requests`: read | `checks: write`, `pull-requests: write`, `contents: read` |
-| Secrets | none | `ANTHROPIC_API_KEY`, in one step | none |
-| Sees pull-request code | yes, inside the image build | only as a container image it runs | no |
+| | 1. Request | 2. Build | 3. QA | 4. Report |
+|---|---|---|---|---|
+| Workflow | `releaseproof-request.yml` | `releaseproof-qa-reusable.yml`, job `build` | same file, job `qa` | same file, job `report` |
+| Trigger | `workflow_dispatch` (pull request number) | `workflow_run`, when a request completes | follows `build` | follows `qa` |
+| Code it runs | none: it writes a small request | ReleaseProof from the default branch; pull-request code inside `docker build` only | ReleaseProof from the default branch | ReleaseProof from the default branch |
+| Token | `contents: read` | `contents`, `actions`, `pull-requests`: read | the same | `checks: write`, `pull-requests: write`, `contents: read` |
+| Secrets | none | none | `ANTHROPIC_API_KEY` and the Jira credentials, in one step | none |
+| Sees pull-request code | no | yes, as the context of the image build | only as a container image it runs | no |
 
-There is no `pull_request_target` anywhere, and stage 1 never receives a
-secret or a write permission.
+`releaseproof-qa.yml` is the `workflow_run` entry point; it calls the
+reusable workflow, which an application in another repository can call too
+([ONBOARDING.md](ONBOARDING.md)). There is no `pull_request_target`
+anywhere, and no stage that touches pull-request files holds a secret or a
+write permission.
 
-### Stage 1: build
+Until 19 November 2026 the image was built in stage 1. With the
+pull-request event GitHub takes stage 1's workflow file from the pull
+request, so the commit label on that image was only as good as the pull
+request's own workflow. The build now happens in stage 2, in code a pull
+request cannot change.
 
-Checks out the pull request without credentials, works out which application
-it changes (the nearest directory with a `releaseproof.yml`), and builds
-`ci/sandbox/Dockerfile.node` with the manifest's install, build and run
-commands as build arguments. Those commands run inside the image build, not
-on the runner. It uploads the image, the manifest, the documents the manifest
-lists, and `meta.json`.
+### Stage 1: request
 
-### Stage 2: QA
+Writes the pull request number and any requested limits to an artifact.
+Nothing is checked out and nothing is built. Everything it produces is
+treated as untrusted by the later stages.
+
+### Stage 2: build
+
+Trusted code, no secret. It establishes the provenance of what is tested:
+
+1. It asks GitHub which commit the pull request is at. For a request started
+   by a pull-request event, that commit must also be the commit of the event.
+2. It fetches exactly that commit, without credentials, into a directory
+   from which nothing is executed on the runner.
+3. The build code checks again that the fetched files are at that commit,
+   works out which application the pull request changes (the nearest
+   directory with a `releaseproof.yml`), and runs `docker build`: with
+   `ci/sandbox/Dockerfile.node` and the manifest's install, build and run
+   commands as build arguments, or with the application's own Dockerfile.
+   The image's commit label is set by this code, after anything a Dockerfile
+   says.
+4. It measures the image file (SHA-256) and passes the digest to the QA job
+   as a job output, outside the artifact that carries the image.
+
+It uploads the image, the manifest, the documents the manifest lists, and
+`meta.json`.
+
+### Stage 3: QA
 
 `workflow_run` workflows always run the default branch's file and code. A
 pull request cannot alter this stage, the agent, or the report renderer.
 
-Before doing anything with stage 1's output it checks:
+Before doing anything with the build job's output it checks:
 
 - `meta.json` matches a strict schema (numeric pull request, 40-hex commit, an
   application path with no `..`, no leading `/`, no shell characters).
@@ -51,6 +78,8 @@ Before doing anything with stage 1's output it checks:
   the default branch; a pull-request build must be for the commit it names.
 - GitHub's API agrees that the pull request's head is that commit and that
   the head branch is in this repository.
+- The image file's SHA-256 equals the digest the build job reported as a job
+  output. A missing or malformed digest counts as a mismatch.
 - The image carries a label with that commit.
 - The application path is one the pull request changes.
 
@@ -133,7 +162,7 @@ with its verified quote, the assertion with its expected value, and the
 evidence (observed value, verdict, model-free repeat, step record and
 screenshot). They are built by code from the run's records.
 
-### Stage 3: report
+### Stage 4: report
 
 Downloads one file, `ci-result.json`, validates it against a schema, and
 renders the Check run and the comment itself. Every string that originated
@@ -146,9 +175,9 @@ result for a commit that is no longer the head does not replace the comment.
 
 | Risk | What stops it |
 |---|---|
-| Pull-request code reads the model key or a write token | It only ever runs in stage 1 (no secrets exist) or in the stage-2 container (a separate, explicit environment, probed each run) |
-| Pull request replaces the agent, the workflow or the report code | Stages 2 and 3 run from the default branch through `workflow_run` |
-| A malicious build poisons stage 2 through its artifacts | Artifacts are parsed as data against schemas and cross-checked with GitHub's API; the image is run, never unpacked or executed on the host |
+| Pull-request code reads the model key or a write token | It only ever runs inside the image build of stage 2 (a job with no secrets) or in the stage-3 container (a separate, explicit environment, probed each run) |
+| Pull request replaces the agent, the workflow or the report code | Stages 2 to 4 run from the default branch through `workflow_run` |
+| A malicious build poisons the QA job through its artifacts | Artifacts are parsed as data against schemas and cross-checked with GitHub's API; the image is run, never unpacked or executed on the host |
 | The application attacks the runner or calls out | No network route out, read-only filesystem, no capabilities, non-root, resource limits |
 | Ticket or page text instructs the model | The model's only tools drive one browser against one origin and record comparisons; verdicts are computed in code from expectations fixed beforehand |
 | Hostile text reaches the comment | The report stage renders from validated fields and escapes everything |
@@ -229,13 +258,13 @@ without downloading the artifact and cannot issue commands to the runner.
   workflows. They could add a workflow of their own; that is GitHub's model
   and is not something this design changes.
 - The default branch is protected by whatever review the repository uses.
-  Stages 2 and 3 are exactly as trustworthy as that branch.
+  Stages 2 to 4 are exactly as trustworthy as that branch.
 - GitHub-hosted runners are single-use.
 
 ## Known limits
 
 - Same-repository pull requests only. A pull request from a fork stops after
-  stage 1 with a note.
+  the build with a note.
 - The container can reach the Docker bridge address of the runner. No
   service listens there in these workflows, but it is not blocked.
 - The first run for a pull request has nothing to replay, and a retest does
@@ -245,11 +274,12 @@ without downloading the artifact and cannot issue commands to the runner.
 - With the `pull_request` event GitHub takes stage 1's workflow file from
   the pull request. Two consequences:
   - Stage 1 can be changed by the pull request. That is why it has nothing
-    to protect and stage 2 re-checks everything it hands over.
+    to protect, builds nothing, and the later stages take from it only a
+    pull request number and limits that can only tighten.
   - Leaving the trigger out of `main` does not keep automatic runs off: a
     pull request can add the trigger to its own copy and start stage 1, and
-    stage 2 on `main` then runs for it. This happened when the pull request
-    that adds the trigger was opened. The switch is therefore in stage 2:
-    builds started by a pull-request event are tested only when the
+    the later stages on `main` then run for it. This happened when the pull request
+    that adds the trigger was opened. The switch is therefore in the trusted workflow:
+    requests started by a pull-request event are handled only when the
     repository variable `RELEASEPROOF_AUTO_TRIGGER` is `on`. A pull request
     cannot set a repository variable.

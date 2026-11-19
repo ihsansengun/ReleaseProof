@@ -35,6 +35,14 @@ export type SourceRecord = {
   changeHash?: string;
   /** For documents: the path, as the manifest lists it. */
   path?: string;
+  /**
+   * Position in the ticket's thread: 0 for the summary and description, then
+   * comments in the sequence the ticket system returned them. Absent for
+   * sources outside the ticket, which have no sequence relative to it.
+   */
+  thread?: number;
+  /** When the text was last written, as the ticket system reports it. */
+  writtenAt?: string;
 };
 
 export const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -174,8 +182,8 @@ export function buildSources(input: SourceInputs): SourceSet {
         : `The ticket was read from a local file (${prov.path}) whose revision could not be established, so it is unverified and cannot set an expected value.`,
     );
   }
-  add({ id: "T1", kind: "ticket-summary", trust: ticketTrust, origin: `${where}: summary`, basis: ticketBasis, text: ticket.summary });
-  add({ id: "T2", kind: "ticket-description", trust: ticketTrust, origin: `${where}: description`, basis: ticketBasis, text: ticket.description });
+  add({ id: "T1", kind: "ticket-summary", trust: ticketTrust, origin: `${where}: summary`, basis: ticketBasis, text: ticket.summary, thread: 0 });
+  add({ id: "T2", kind: "ticket-description", trust: ticketTrust, origin: `${where}: description`, basis: ticketBasis, text: ticket.description, thread: 0 });
 
   const jiraOwners = new Set(authority.requirementOwners.jira.map((o) => o.accountId));
   const fixtureAuthors = new Set(authority.requirementOwners.fixtureAuthors);
@@ -201,6 +209,8 @@ export function buildSources(input: SourceInputs): SourceSet {
       origin: `${where}: comment ${comment.id ?? index + 1} by ${comment.author}${comment.authorId ? ` (${comment.authorId})` : ""}${comment.created ? ` at ${comment.created}` : ""}`,
       basis,
       text: comment.body,
+      thread: index + 1,
+      writtenAt: comment.updated ?? comment.created,
     });
   });
 
@@ -335,10 +345,134 @@ export const normalise = (text: string) =>
 
 const MIN_QUOTE = 8;
 
+// ---- precedence between authoritative sources --------------------------------
+
+/**
+ * One rule that a later authoritative source replaces.
+ *
+ *   owner-line  a requirement owner wrote `Supersedes: "<text>"`; found and
+ *               retired by code alone
+ *   inferred    the analyst model read a later source as replacing the text;
+ *               code checked everything about it except that reading
+ */
+export type Supersession = {
+  retiredText: string;
+  retiredSourceId: string;
+  bySourceId: string;
+  how: "owner-line" | "inferred";
+};
+
+const SUPERSEDES_LINE = /^[ \t>*-]*Supersedes:[ \t]*["“](.+)["”][ \t]*$/gim;
+
+/** The `Supersedes:` lines of a text, each with the text it names. */
+export function supersedesLines(text: string): string[] {
+  return [...text.matchAll(SUPERSEDES_LINE)].map((m) => m[1]!.trim());
+}
+
+/**
+ * What may be quoted from a source: its text without `Supersedes:` lines.
+ * Such a line repeats the old rule word for word, and must not make that
+ * rule quotable from the very comment that retires it.
+ */
+export const quotable = (text: string) => text.replace(SUPERSEDES_LINE, "");
+
+/**
+ * Whether `older` was written before `newer`, as far as code can establish.
+ * Only sources of the ticket have a sequence: the summary and description
+ * come first, then comments by the time the ticket system reports, or by
+ * their position when it reports none. Anything else is not ordered.
+ */
+export function precedes(older: SourceRecord, newer: SourceRecord): boolean {
+  if (older.thread === undefined || newer.thread === undefined || older.id === newer.id) return false;
+  if (older.thread === 0) return newer.thread > 0;
+  if (newer.thread === 0) return false;
+  const a = older.writtenAt ? Date.parse(older.writtenAt) : NaN;
+  const b = newer.writtenAt ? Date.parse(newer.writtenAt) : NaN;
+  if (!Number.isNaN(a) && !Number.isNaN(b) && a !== b) return a < b;
+  return older.thread < newer.thread;
+}
+
+export type SupersessionProblem = { bySourceId: string; text: string; problem: string };
+
+/**
+ * Checks one proposed supersession. Everything here is a fact about the
+ * records: both sources exist and are authoritative, the retiring one is
+ * later, and the retired text is really in the earlier one.
+ */
+export function checkSupersession(
+  proposal: { retiredText: string; retiredSourceId: string; bySourceId: string },
+  sources: SourceRecord[],
+): string | undefined {
+  const by = sources.find((s) => s.id === proposal.bySourceId);
+  const retired = sources.find((s) => s.id === proposal.retiredSourceId);
+  if (!by || !retired) return "it names a source that does not exist";
+  if (by.trust !== "authoritative") return `${by.id} is not an approved source, so it cannot replace a rule`;
+  if (retired.trust !== "authoritative") return `${retired.id} is not an approved source`;
+  if (!precedes(retired, by)) return `${by.id} is not established to be later than ${retired.id}`;
+  const needle = normalise(proposal.retiredText);
+  if (needle.length < MIN_QUOTE) return "the text it names is too short to identify a rule";
+  if (!normalise(quotable(retired.text)).includes(needle)) return `the text it names is not in ${retired.id}`;
+  return undefined;
+}
+
+/**
+ * Supersessions that requirement owners stated themselves. Reads no model
+ * output. A line that cannot be honoured is returned as a problem, never
+ * silently dropped.
+ */
+export function ownerSupersessions(sources: SourceRecord[]): { supersessions: Supersession[]; problems: SupersessionProblem[] } {
+  const supersessions: Supersession[] = [];
+  const problems: SupersessionProblem[] = [];
+  for (const by of sources) {
+    if (by.thread === undefined || by.thread === 0) continue;
+    for (const text of supersedesLines(by.text)) {
+      if (by.trust !== "authoritative") {
+        problems.push({ bySourceId: by.id, text, problem: `${by.id} is not from a listed requirement owner, so its "Supersedes:" line retires nothing` });
+        continue;
+      }
+      const needle = normalise(text);
+      const targets = sources.filter(
+        (s) => s.trust === "authoritative" && precedes(s, by) && needle.length >= MIN_QUOTE && normalise(quotable(s.text)).includes(needle),
+      );
+      if (targets.length === 0) {
+        problems.push({ bySourceId: by.id, text, problem: `the text named by the "Supersedes:" line in ${by.id} was not found in any earlier approved source of the ticket` });
+        continue;
+      }
+      for (const target of targets) supersessions.push({ retiredText: text, retiredSourceId: target.id, bySourceId: by.id, how: "owner-line" });
+    }
+  }
+  return { supersessions, problems };
+}
+
+/** Start positions of every occurrence of `needle` in `hay`. */
+const occurrences = (hay: string, needle: string) => {
+  const found: number[] = [];
+  for (let at = hay.indexOf(needle); at !== -1; at = hay.indexOf(needle, at + 1)) found.push(at);
+  return found;
+};
+
+/** True if the quote can only be found, in this source, inside or across retired text. */
+function restsOnRetired(source: SourceRecord, needle: string, retired: Supersession[]): Supersession | undefined {
+  const mine = retired.filter((r) => r.retiredSourceId === source.id);
+  if (mine.length === 0) return undefined;
+  const hay = normalise(quotable(source.text));
+  const spans = mine.flatMap((r) => {
+    const text = normalise(r.retiredText);
+    return occurrences(hay, text).map((start) => ({ start, end: start + text.length, r }));
+  });
+  let hit: Supersession | undefined;
+  for (const start of occurrences(hay, needle)) {
+    const overlap = spans.find((span) => start < span.end && span.start < start + needle.length);
+    if (!overlap) return undefined;
+    hit = overlap.r;
+  }
+  return hit;
+}
+
 export type Attribution =
   | { kind: "documented"; source: SourceRecord }
   | { kind: "claimed"; source: SourceRecord }
-  | { kind: "inferred"; problem: string };
+  | { kind: "inferred"; problem: string; superseded?: Supersession };
 
 /**
  * Decides what a quoted statement is worth. The quote is checked against the
@@ -348,10 +482,10 @@ export type Attribution =
  * is in the authoritative source named. Text found only in pull-request
  * material can never be documented, whichever id the model cites.
  */
-export function attributeQuote(sourceId: string, quote: string, sources: SourceRecord[]): Attribution {
+export function attributeQuote(sourceId: string, quote: string, sources: SourceRecord[], retired: Supersession[] = []): Attribution {
   const needle = normalise(quote);
   if (needle.length < MIN_QUOTE) return { kind: "inferred", problem: "it has no usable quote" };
-  const contains = (s: SourceRecord) => normalise(s.text).includes(needle);
+  const contains = (s: SourceRecord) => normalise(quotable(s.text)).includes(needle) && !restsOnRetired(s, needle, retired);
 
   let source = sources.find((s) => s.id === sourceId);
   if (sourceId === "") {
@@ -361,6 +495,8 @@ export function attributeQuote(sourceId: string, quote: string, sources: SourceR
   } else if (!source) {
     return { kind: "inferred", problem: `it cites a source that does not exist ("${sourceId.slice(0, 20)}")` };
   } else if (!contains(source)) {
+    const gone = restsOnRetired(source, needle, retired);
+    if (gone) return { kind: "inferred", superseded: gone, problem: `its quote is a rule in ${source.id} that ${gone.bySourceId} replaced` };
     return { kind: "inferred", problem: `its quote does not appear in source ${source.id}` };
   }
   return source.trust === "authoritative" ? { kind: "documented", source } : { kind: "claimed", source };

@@ -83,7 +83,7 @@ const req = (over: Partial<AnalysisDraft["requirements"][number]> & { id: string
   relatedRequirementId: "",
   ...over,
 });
-const draftOf = (requirements: AnalysisDraft["requirements"]): AnalysisDraft => ({ featureSummary: "x", requirements, ambiguities: [], risks: [] });
+const draftOf = (requirements: AnalysisDraft["requirements"]): AnalysisDraft => ({ featureSummary: "x", requirements, ambiguities: [], risks: [], supersessions: [], contradictions: [] });
 
 async function hostileContext(extra: Partial<AuthorityInputs> = {}, body?: string) {
   const { manifestFile, manifest: m } = workingCopy({ "README.md": HOSTILE_README }, ["README.md"]);
@@ -207,7 +207,7 @@ test("an expected value cannot be invented: assertions need an approved requirem
   );
   const assertion = (id: string, requirementId: string, expectedNumber: number) => ({ id, description: "items held", kind: "number_equals" as const, expectedNumber, expectedText: null, expectedFormula: null, requirementId });
   const scenario = (id: string, assertions: ReturnType<typeof assertion>[]): PlanDraft["scenarios"][number] => ({
-    id, title: id, basis: "requirement", requirementIds: ["R1"], riskIds: [], intent: "hold items", fixtures: [{ alias: "user", type: "account" }], status: "runnable", blockedReason: "", ambiguityIds: [], assertions,
+    id, title: id, basis: "requirement", requirementIds: ["R1"], riskIds: [], intent: "hold items", setup: "", fixtures: [{ alias: "user", type: "account" }], status: "runnable", blockedReason: "", ambiguityIds: [], assertions,
   });
   const { plan } = validatePlan(
     {
@@ -278,7 +278,7 @@ test("changes to approved documents are always surfaced, and conflicts keep a ru
   });
   assert.equal(assess(passedRun(false)).readiness, "ready");
   assert.equal(assess(passedRun(true)).readiness, "incomplete");
-  assert.match(assess(passedRun(true)).reasons.join("; "), /conflicts? between this pull request's own statements and the approved requirements/);
+  assert.match(assess(passedRun(true)).reasons.join("; "), /conflicts? about the approved requirements/);
   assert.equal(assess(passedRun(true, false)).readiness, "not ready");
 });
 

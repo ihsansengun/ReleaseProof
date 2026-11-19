@@ -362,61 +362,81 @@ Known gaps in the implementation:
 - The analyst's output schema and prompt changed. No live model has run
   against them yet.
 
-## Proposed: deterministic precedence between authoritative sources
+## Deterministic precedence between authoritative sources
 
-Status: proposed, not implemented.
+Status: implemented (`packages/agent/src/sources.ts`, `src/analyse.ts`,
+`src/validate.ts`; tests in `packages/agent/test/precedence.test.ts`).
 
-**The limitation.** A ticket's description and a requirement owner's later
+**The problem.** A ticket's description and a requirement owner's later
 comment are both authoritative. When the comment changes a rule, the
-description usually still states the old one. Today the analyst is
-instructed to follow the later statement. Nothing in code stops it from
-quoting the outdated sentence, which is a real, authoritative quote, and
-testing against it. The plan validator would accept the assertion.
+description usually still states the old one. Before this, only the analyst's
+instructions stopped it quoting the outdated sentence, which is a real,
+authoritative quote, and the plan validator would have accepted an assertion
+resting on it.
 
 Code cannot decide by itself that two sentences are about the same rule.
-What it can do is make supersession an explicit, checked fact, and refuse to
-let a run look verified while that fact is missing.
+What it does is make supersession an explicit, checked fact, and keep a run
+from looking verified while that fact is missing or disputed.
 
-**Mechanism, in three parts.**
+**Sequence.** Only sources of the ticket have one. The summary and
+description come first; comments follow by the time Jira reports (the edit
+time if a comment was edited), or by position when no time is given.
+Documents and pull-request material have no sequence relative to the ticket,
+so they can neither retire a ticket rule in this way nor be retired by one.
+Approved document amendments are handled separately: the amended document
+replaces the approved one (section 4).
 
-1. *Supersession is recorded as data and verified.* For every authoritative
-   source that is newer than another (an owner comment after the
-   description; an approved amendment after a document), the analysis must
-   state what it retires: a list of pairs (verbatim text in the older
-   source, the newer source's id). Code checks that each retired text is
-   really in an older authoritative source and that the newer source is
-   really newer, by Jira's timestamps, and authoritative.
-2. *Retired text cannot back a requirement.* Code then removes every retired
-   span from what counts as quotable. A requirement whose quote overlaps a
-   retired span is downgraded, exactly as a fabricated quote is today, and
-   an assertion resting on it is removed. From that point the model cannot
-   use the outdated rule, whatever it writes.
-3. *Silence is visible and blocks "Ready".* The report lists, for each newer
-   authoritative source, what it was taken to retire, or states that it was
-   taken to retire nothing. If two authoritative requirements are flagged
-   as contradicting each other and no supersession covers them, that is a
-   conflict of kind `authoritative-contradiction`: the later source's
-   requirement is the one tested, the earlier one is marked superseded by
-   date, and the result cannot be "Ready" until an owner confirms.
-
-**An explicit owner route, which needs no model at all.** A requirement
-owner can state the supersession in the comment itself, on a line of its
-own:
+**The owner's route, which needs no model.** A requirement owner states the
+supersession in the comment, on a line of its own:
 
     Supersedes: "TAKE15 takes $15.00 off a subtotal of at least $50.00"
 
-Code finds that exact text in the older source and retires it. Where owners
-use this, precedence is fully deterministic. Where they do not, parts 1 to 3
-make the model's reading of the comment explicit, checked and reported, and
-never silently wrong.
+Code finds that text in an earlier approved source of the ticket and retires
+it. The comparison ignores formatting and letter case, as quote checks do.
+A line that cannot be honoured (written by someone who is not a listed owner,
+or naming text not found in an earlier approved source) retires nothing and
+raises a conflict of kind `supersession-invalid`.
 
-**What it would not solve.** A comment that changes a rule without the model
-noticing, and without an explicit `Supersedes:` line, still leaves the old
-sentence quotable. The report would say the comment "retires nothing", which
-an owner can see and correct; code cannot detect it.
+**The model's route, checked.** Where the owner wrote no such line, the
+analyst may propose that a later source replaces a rule: the exact old text,
+the source it is in, the source that replaces it. Code accepts a proposal
+only if both sources exist and are authoritative, the replacing one is later,
+and the text is really in the earlier one. Rejected proposals are recorded
+in the run's notes and change nothing. Accepted ones are marked `inferred`.
 
-**Tests it would need.** The older rule is refused once retired; a
-supersession naming text that is not in an older source is rejected; a
-comment by a non-owner retires nothing; an older source cannot retire a
-newer one; the explicit line works with no model; two contradicting
-authoritative requirements without a supersession keep the run from "Ready".
+**What retiring does.**
+
+- Retired text is not quotable. A requirement whose quote lies in, or
+  overlaps, retired text is removed from the analysis, with a note. The text
+  inside a `Supersedes:` line is not quotable from the comment either.
+- An assertion citing a removed requirement has nothing to rest on and is
+  removed by the plan validator, as for a fabricated quote.
+- The planner is given the rules in force and, separately, each superseded
+  rule with what replaced it and how that was established.
+- The report and the audit trail list every replaced rule, and name every
+  later approved comment that was taken to replace nothing.
+
+**Readiness.** A supersession the owner stated does not affect readiness. An
+inferred one is applied, and keeps the result at "Incomplete" until the owner
+confirms it with the line. A failure still gives "Not ready".
+
+**Contradictions are not settled by date.** If the analyst reports two
+approved requirements as contradicting and no verified supersession covers
+them, code raises a conflict of kind `authoritative-contradiction` and marks
+both requirements as contested. A contested requirement cannot set an
+expected value: assertions citing it are removed, the scenario is blocked
+with a question for the owner, and the run cannot be "Ready".
+
+**What this does not solve.**
+
+- A comment that changes a rule without a `Supersedes:` line, and without the
+  model noticing, leaves the old sentence quotable. The report then says the
+  comment "was taken to replace nothing", which an owner can see and correct;
+  code cannot detect it.
+- Recognising a contradiction between two approved requirements is the
+  model's judgement. Code enforces the consequences once it is reported.
+- A wrongly inferred supersession removes a valid rule from testing. It is
+  always shown and always keeps the result from "Ready".
+- Jira does not report when a description was edited, short of reading the
+  issue's change history, so a description edited after a comment still
+  counts as earlier than the comment.
