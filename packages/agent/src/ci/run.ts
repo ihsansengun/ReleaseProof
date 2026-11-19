@@ -180,7 +180,8 @@ export async function ciRun(options: CiRunOptions): Promise<CiResult> {
     if (label !== meta.headSha) return finish("error", "The application image is not labelled with the pull request's commit.");
 
     const manifestFile = path.join(options.incoming, "context", "releaseproof.yml");
-    const declared = await loadManifest(manifestFile);
+    const declared = await loadManifest(manifestFile).catch(() => null);
+    if (!declared) return finish("error", "The application's manifest is not valid.");
     if (!declared.start) return finish("skipped", "The application's manifest has no start section.");
     const { baseUrl } = await startSandbox({ start: declared.start, sha: meta.headSha });
     // The manifest's own address is ignored: the application is wherever the sandbox put it.

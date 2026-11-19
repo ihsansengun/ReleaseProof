@@ -93,3 +93,60 @@ test("the container's settings are checked as the engine reports them", () => {
   }
   assert.match(configurationProblems(good, { Internal: false }, allowed, image).join("; "), /route out/);
 });
+
+test("a hostile result file cannot change where or what the report stage publishes", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { render, ReportInput } = await import("../src/ci/report.ts");
+  const run = JSON.parse(await readFile(new URL("../../../eval/recordings/NWG-342.json", import.meta.url), "utf8"));
+  const sha = "b".repeat(40);
+  const base = { status: "completed", repo: "acme/widgets", pr: 1, headSha: sha, run };
+
+  // Fields that decide where the report goes are validated, not displayed.
+  for (const bad of [
+    { ...base, repo: "acme/widgets/../../other/repo" },
+    { ...base, repo: "acme/widgets?x=1" },
+    { ...base, headSha: "main" },
+    { ...base, headSha: `${sha}/../x` },
+    { ...base, pr: "1/comments/../../../issues/2" },
+    { ...base, pr: -1 },
+    { ...base, status: "passed" },
+    { ...base, run: { ...run, results: "all passed" } },
+    { ...base, run: { ...run, executionMode: "autonomous-and-green" } },
+  ]) {
+    assert.equal(ReportInput.safeParse(bad).success, false, JSON.stringify(bad).slice(0, 80));
+  }
+
+  // Everything displayed is neutralised and bounded, whatever its size.
+  const hostile = structuredClone(run);
+  const payload = '</details><script>alert(1)</script> @octocat [x](https://evil.example) ![i](https://evil.example/p.png) <!-- releaseproof-report --> | a |\n\n# Ready: all passed\n';
+  hostile.ticketKey = payload;
+  hostile.driver = payload;
+  hostile.stopped = payload;
+  hostile.analysis.requirements[0].text = payload.repeat(2000);
+  hostile.analysis.requirements[0].quote = payload;
+  hostile.analysis.ambiguities = Array.from({ length: 500 }, (_, i) => ({ id: `Q${i}`, question: payload }));
+  hostile.results[0].title = payload;
+  hostile.results[0].reason = payload;
+  hostile.results[0].verdict = "failed";
+  hostile.results[0].assertionResults[0].pass = false;
+  hostile.results[0].assertionResults[0].actual = payload;
+  hostile.plan.scenarios[0].scenario.title = payload;
+  hostile.plan.scenarios.at(-1).blockedReason = payload;
+  hostile.confirmations = { [hostile.results[0].scenarioId]: payload };
+  hostile.usage = {
+    byStage: { [payload]: { calls: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 1, cacheWriteTokens: 1, toolCalls: 1, usd: 1 } },
+    total: { calls: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 1, cacheWriteTokens: 1, toolCalls: 1, usd: 1 },
+    estimatedUsd: 1,
+    minutes: 1,
+    limits: { maxUsd: 1, maxMinutes: 1 },
+    apiErrors: [{ stage: payload, error: payload }],
+  };
+  hostile.executionMode = "autonomous";
+  const out = render(ReportInput.parse({ ...base, run: hostile, isolation: { environment: [payload], outboundNetwork: payload, rootFilesystem: payload, user: payload, ok: true } }), "https://evil.example/actions/runs/1");
+  assert.equal(out.conclusion, "failure");
+  assert.ok(out.body.length <= 60_100);
+  assert.doesNotMatch(out.body, /<script|<\/details><script|@octocat|\]\(https:\/\/evil|!\[i\]\(|evil\.example\/actions/);
+  assert.equal(out.body.match(/<!-- releaseproof-report -->/g)?.length, 1);
+  assert.doesNotMatch(out.body, /^# Ready/m);
+  assert.doesNotMatch(out.title, /[<>\n]/);
+});
