@@ -79,7 +79,7 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   let fixtures: Record<string, unknown> = {};
   try {
     sha = await deployedSha(context.request, manifest);
-    const header = (await context.request.get(manifest.baseUrl)).headers()["date"];
+    const header = (await context.request.get(manifest.baseUrl, { maxRedirects: 0 })).headers()["date"];
     if (header && !Number.isNaN(Date.parse(header))) serverDate = new Date(header).toISOString().slice(0, 10);
     if (options.expectedSha && sha !== options.expectedSha) {
       session.outcome = {

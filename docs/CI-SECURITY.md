@@ -117,9 +117,46 @@ result for a commit that is no longer the head does not replace the comment.
   ("recorded") always gets a neutral Check, whatever its scenarios did, and
   is never the basis for a later re-run.
 - When a limit is reached, scenarios not yet started are recorded as
-  unverified, and the report says the run ended early. Blocked and
-  unverified scenarios make the Check neutral. Only failures make it fail,
-  and only a run with every scenario passed makes it succeed.
+  unverified, and the report says the run ended early.
+- A manual run can also ask for a different model for scenario execution.
+  The request is honoured only if the model is on the allow-list in
+  `ci/run.ts`; analysis and planning always use the configured model.
+
+### Result semantics
+
+Every report makes two separate statements.
+
+**Execution results** are facts about what ran: scenarios passed, failed,
+blocked and unverified, and for each documented requirement exactly one of
+verified, failed, blocked (only reachable through a scenario waiting on a
+question), unverified (planned, but the comparison was never made) or not
+planned.
+
+**Release readiness** is the judgement the Check carries:
+
+| Readiness | Meaning | Check |
+|---|---|---|
+| Not ready | At least one comparison failed | failure |
+| Incomplete | Nothing failed, but something material is untested: a documented requirement not compared, a scenario blocked, unverified or dropped by the scenario limit, or a run that ended early | neutral |
+| Ready | Nothing failed, every documented requirement was compared and matched, nothing was left open | success |
+
+"Everything that ran passed" is therefore never enough for a green Check.
+The comment lists each requirement that was not verified, with the reason.
+A recorded run is neutral whatever its readiness.
+
+### Requests the trusted stage makes to the application
+
+The engine's own HTTP requests (fixture creation, the version check, the
+executor's `api_request` tool, the start-up health check) go only to the
+application's address. Paths from the manifest are refused if they resolve
+to another origin, and redirects are reported instead of followed, so
+neither a hostile manifest nor a hostile application can point those
+requests at another host. The browser was already restricted to the
+application's origin.
+
+The last lines of the application's log are printed in the QA job with an
+`app| ` prefix and control characters removed, so the log can be read
+without downloading the artifact and cannot issue commands to the runner.
 - On a later commit to the same pull request, the previous run's scenarios
   are replayed without a model, and only those whose recording no longer
   fits are re-run with it. A changed ticket, or the `full` input, plans

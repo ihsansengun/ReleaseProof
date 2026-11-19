@@ -284,6 +284,8 @@ export type Plan = {
   notes: string[];
   /** Questions raised because the plan needed an expectation no source states. */
   clarifications: { scenarioId: string; question: string }[];
+  /** Runnable scenarios the planner wrote that were dropped to respect the limit. */
+  trimmedRunnable?: number;
 };
 
 // ---- the whole run ----------------------------------------------------------

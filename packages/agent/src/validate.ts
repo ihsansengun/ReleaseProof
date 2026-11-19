@@ -17,6 +17,7 @@ export function validatePlan(
 ): { plan: Plan; problems: string[] } {
   const problems: string[] = [];
   const trimmed: string[] = [];
+  let trimmedRunnable = 0;
   const clarifications: Plan["clarifications"] = [];
   const requirement = new Map(analysis.requirements.map((r) => [r.id, r]));
   const ambiguityIds = new Set(analysis.ambiguities.map((a) => a.id));
@@ -35,6 +36,7 @@ export function validatePlan(
     if (scenarios.filter((s) => s.status === d.status).length >= limit) {
       // Trimming to size is not a fault in the plan, so it is recorded but
       // does not send the plan back for repair.
+      if (d.status === "runnable") trimmedRunnable++;
       trimmed.push(`Scenario ${d.id} was dropped: the plan is limited to ${limit} ${d.status} scenarios.`);
       continue;
     }
@@ -135,5 +137,5 @@ export function validatePlan(
       riskIds: known(d.riskIds, riskIds, "risk"),
     });
   }
-  return { plan: { scenarios, notes: [...problems, ...trimmed], clarifications }, problems };
+  return { plan: { scenarios, notes: [...problems, ...trimmed], clarifications, trimmedRunnable }, problems };
 }

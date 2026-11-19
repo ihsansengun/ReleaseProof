@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { coverage, MODES } from "../report/run.ts";
-import type { RunReport } from "../schema.ts";
+import { assess, headline, READINESS_LABEL } from "../report/readiness.ts";
+import { MODES } from "../report/run.ts";
 import type { CiResult } from "./run.ts";
 
 const MARKER = "<!-- releaseproof-report -->";
@@ -26,6 +26,16 @@ export function safe(value: unknown, max = 300): string {
 
 const Verdict = z.enum(["passed", "failed", "blocked", "unverified"]);
 const Scalar = z.union([z.string(), z.number()]);
+
+const Stage = z.object({
+  calls: z.number(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadTokens: z.number(),
+  cacheWriteTokens: z.number(),
+  toolCalls: z.number(),
+  usd: z.number().optional(),
+});
 
 /** The parts of a result this stage reads. Anything else in the file is ignored. */
 export const ReportInput = z.object({
@@ -57,6 +67,7 @@ export const ReportInput = z.object({
         ambiguities: z.array(z.object({ id: z.string(), question: z.string() })),
       }),
       plan: z.object({
+        trimmedRunnable: z.number().int().nonnegative().optional(),
         scenarios: z.array(
           z.object({
             status: z.string(),
@@ -64,6 +75,7 @@ export const ReportInput = z.object({
             scenario: z.object({
               id: z.string(),
               title: z.string(),
+              requirementIds: z.array(z.string()).optional(),
               assertions: z.array(z.object({ id: z.string(), description: z.string(), requirementId: z.string().optional() })),
             }),
           }),
@@ -81,19 +93,14 @@ export const ReportInput = z.object({
           ),
         }),
       ),
+      confirmations: z.record(z.string(), z.string()).optional(),
       usage: z
         .object({
+          byStage: z.record(z.string(), Stage).optional(),
           apiErrors: z.array(z.object({ stage: z.string(), error: z.string() })).default([]),
           estimatedUsd: z.number(),
           minutes: z.number(),
-          total: z.object({
-            calls: z.number(),
-            inputTokens: z.number(),
-            outputTokens: z.number(),
-            cacheReadTokens: z.number(),
-            cacheWriteTokens: z.number(),
-            toolCalls: z.number(),
-          }),
+          total: Stage,
           limits: z.object({ maxUsd: z.number(), maxMinutes: z.number() }),
         })
         .optional(),
@@ -124,24 +131,16 @@ export function render(input: ReportInput, runUrl: string): Rendered {
   }
 
   const run = input.run;
-  const count = (v: string) => run.results.filter((r) => r.verdict === v).length;
-  const failed = count("failed");
-  const inconclusive = count("blocked") + count("unverified");
-  const notRun = run.plan.scenarios.filter((s) => s.status === "blocked");
-  const { documented, covered } = coverage(run as unknown as RunReport);
+  const a = assess(run);
+  const failed = a.execution.failed;
+  const inconclusive = a.execution.blocked + a.execution.unverified;
   const commitVerified = run.environment.deployedSha === run.pullRequest.headSha;
   const recorded = run.executionMode === "recorded";
-  const counts = `${failed} failed, ${count("passed")} passed, ${inconclusive} not verified`;
-  const title = recorded ? `Recorded replay, not an autonomous run: ${counts}` : `${counts} (${run.executionMode})`;
-  // A run in which no live model took part is never a pass or a fail of the
-  // pull request: it is reported, and the Check stays neutral.
-  const conclusion = recorded
-    ? "neutral"
-    : failed > 0
-      ? "failure"
-      : inconclusive > 0 || run.stopped || run.results.length === 0
-        ? "neutral"
-        : "success";
+  const title = recorded ? `Recorded replay, not an autonomous run. ${headline(a)}` : `${headline(a)} (${run.executionMode})`;
+  // The Check is green only when the feature is verified, not merely when
+  // nothing that ran failed. A run in which no live model took part is never
+  // a pass or a fail of the pull request.
+  const conclusion = recorded ? "neutral" : a.readiness === "not ready" ? "failure" : a.readiness === "ready" ? "success" : "neutral";
 
   lines.push(
     `## ReleaseProof QA: ${safe(run.ticketKey, 40)}`,
@@ -152,10 +151,24 @@ export function render(input: ReportInput, runUrl: string): Rendered {
           "",
         ]
       : []),
-    `**${counts}** on \`${run.pullRequest.headSha.slice(0, 10)}\` (${commitVerified ? "the application under test reported this commit" : "**commit not confirmed by the application**"})`,
+    `### Release readiness: ${READINESS_LABEL[a.readiness]}`,
     "",
-    `- Documented requirements compared against the application: ${covered} of ${documented.length}`,
-    `- Scenarios planned but not run, waiting on a decision: ${notRun.length}`,
+    ...(a.readiness === "ready"
+      ? ["Every documented requirement was compared against the application and matched; nothing was left blocked or unverified."]
+      : a.reasons.map((r) => `- ${r}`)),
+    "",
+    ...(a.readiness === "incomplete"
+      ? ["Nothing that ran failed, but that is not the same as verified: the items below were not tested.", ""]
+      : []),
+    "### Execution results",
+    "",
+    `On \`${run.pullRequest.headSha.slice(0, 10)}\` (${commitVerified ? "the application under test reported this commit" : "**commit not confirmed by the application**"})`,
+    "",
+    "| | Passed / verified | Failed | Blocked | Unverified | Not planned |",
+    "|---|---|---|---|---|---|",
+    `| Scenarios (${run.plan.scenarios.length} planned, ${run.results.length} executed) | ${a.execution.passed} | ${a.execution.failed} | ${a.notRun + a.execution.blocked} | ${a.execution.unverified} | ${run.plan.trimmedRunnable ? `${run.plan.trimmedRunnable} dropped by the limit` : "–"} |`,
+    `| Documented requirements (${a.requirements.length}) | ${a.counts.verified} | ${a.counts.failed} | ${a.counts.blocked} | ${a.counts.unverified} | ${a.counts["not planned"]} |`,
+    "",
     `- Questions for the ticket owner: ${run.analysis.ambiguities.length + run.plan.clarifications.length}`,
     `- Execution mode: ${MODES[run.executionMode]}`,
     `- Model: ${safe(run.driver, 120)}`,
@@ -170,6 +183,17 @@ export function render(input: ReportInput, runUrl: string): Rendered {
       `- Cost and time: about $${run.usage.estimatedUsd.toFixed(2)} of $${run.usage.limits.maxUsd}, ${tokens.toLocaleString("en-US")} tokens, ${t.calls} model calls, ${t.toolCalls} tool calls, ${run.usage.minutes} of ${run.usage.limits.maxMinutes} minutes`,
     );
   }
+  if (run.usage?.byStage) {
+    const stages = Object.entries(run.usage.byStage).slice(0, 12);
+    lines.push(
+      `- By stage: ${stages
+        .map(([name, u]) => {
+          const tokens = u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheWriteTokens;
+          return `${safe(name, 20)} ${tokens.toLocaleString("en-US")} tokens${u.usd === undefined ? "" : ` ($${u.usd.toFixed(2)})`}`;
+        })
+        .join(", ")}`,
+    );
+  }
   if (run.retestOf) lines.push(`- Re-ran the scenarios planned for \`${safe(run.retestOf.headSha.slice(0, 10), 12)}\`; no new plan was made`);
   if (run.stopped) lines.push(`- **Ended early:** ${safe(run.stopped, 400)}`);
   lines.push("");
@@ -179,6 +203,8 @@ export function render(input: ReportInput, runUrl: string): Rendered {
     for (const result of run.results.filter((r) => r.verdict === "failed")) {
       const planned = run.plan.scenarios.find((s) => s.scenario.id === result.scenarioId);
       lines.push(`**${safe(result.scenarioId, 20)} ${safe(result.title, 160)}**`);
+      const confirmation = run.confirmations?.[result.scenarioId];
+      if (confirmation) lines.push(`- Repeated without a model on a fresh session: ${safe(confirmation, 40)}`);
       for (const outcome of result.assertionResults.filter((a) => !a.pass)) {
         const assertion = planned?.scenario.assertions.find((a) => a.id === outcome.assertionId);
         const requirement = run.analysis.requirements.find((r) => r.id === assertion?.requirementId);
@@ -196,6 +222,16 @@ export function render(input: ReportInput, runUrl: string): Rendered {
     for (const r of run.results.filter((x) => x.verdict === "blocked" || x.verdict === "unverified")) {
       lines.push(`- **${safe(r.scenarioId, 20)}** (${r.verdict}) ${safe(r.title, 140)}: ${safe(r.reason, 260)}`);
     }
+    lines.push("");
+  }
+
+  const open = a.requirements.filter((r) => r.status !== "verified" && r.status !== "failed");
+  if (open.length > 0) {
+    lines.push("### Requirements not verified", "", "| Id | Status | Requirement | Why |", "|---|---|---|---|");
+    for (const r of open.slice(0, 40)) {
+      lines.push(`| ${safe(r.id, 10)} | ${r.status} | ${safe(r.text, 200)} | ${safe(r.detail, 260)} |`);
+    }
+    if (open.length > 40) lines.push(`| … | | ${open.length - 40} more in the full report | |`);
     lines.push("");
   }
 

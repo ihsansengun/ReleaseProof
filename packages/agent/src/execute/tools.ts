@@ -308,8 +308,12 @@ const handlers: Handlers = {
     if (!requestAllowed(s.writes, method, url.pathname)) {
       throw new Error(`${method} ${url.pathname} is not permitted in this session.`);
     }
+    if (url.origin !== new URL(s.baseUrl).origin) throw new Error("path must stay on the application.");
+    // Redirects are reported, not followed: the application must not be able
+    // to send this request anywhere else.
     const response = await s.context.request.fetch(url.toString(), {
       method,
+      maxRedirects: 0,
       data: body === undefined ? undefined : (body as object),
     });
     const text = await response.text();

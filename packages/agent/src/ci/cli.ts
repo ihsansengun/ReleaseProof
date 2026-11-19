@@ -4,6 +4,7 @@
  * engine's own CLI: the engine knows nothing about CI, and CI adds nothing
  * to how requirements are analysed or tests are run.
  */
+import { assess, headline } from "../report/readiness.ts";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -85,7 +86,17 @@ async function main(): Promise<number> {
     if (result.isolation) console.log(`isolation: ${JSON.stringify(result.isolation)}`);
     if (result.run?.usage) {
       console.log(`usage: ${JSON.stringify(result.run.usage.total)} about $${result.run.usage.estimatedUsd}`);
+      for (const [stage, u] of Object.entries(result.run.usage.byStage)) console.log(`usage in ${stage}: ${JSON.stringify(u)}`);
       for (const e of result.run.usage.apiErrors) console.log(`api error in ${e.stage}: ${e.error}`);
+    }
+    if (result.run) {
+      const a = assess(result.run);
+      console.log(headline(a));
+      for (const reason of a.reasons) console.log(`readiness: ${reason}`);
+      console.log(`requirements: ${JSON.stringify(a.counts)}`);
+      for (const r of a.requirements.filter((x) => x.status !== "verified")) console.log(`requirement ${r.id} ${r.status}`);
+      for (const r of result.run.results) console.log(`scenario ${r.scenarioId} ${r.verdict}`);
+      for (const [id, outcome] of Object.entries(result.run.confirmations ?? {})) console.log(`replay of ${id}: ${outcome}`);
     }
     if (result.run) console.log(`execution mode: ${result.run.executionMode}; timings: ${result.run.timings.map((t) => `${t.stage} ${t.seconds}s`).join(", ")}`);
     // The job succeeds whenever a result was produced; the verdict is the report's to give.

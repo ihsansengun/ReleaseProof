@@ -78,7 +78,7 @@ export async function startSandbox(options: { start: Start; sha: string }): Prom
 
   const deadline = Date.now() + 60_000;
   for (;;) {
-    const up = await fetch(baseUrl, { signal: AbortSignal.timeout(2_000) }).then(
+    const up = await fetch(baseUrl, { signal: AbortSignal.timeout(2_000), redirect: "manual" }).then(
       () => true,
       () => false,
     );

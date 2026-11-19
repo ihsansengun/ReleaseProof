@@ -70,7 +70,7 @@ export async function runAgentLoop(session: Session, job: SessionJob, options: L
       break;
     }
 
-    options.budget.record(response.usage);
+    options.budget.record(response.usage, response.model);
     usage.turns++;
     usage.inputTokens +=
       response.usage.input_tokens +
