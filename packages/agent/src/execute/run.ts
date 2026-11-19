@@ -1,3 +1,4 @@
+import { hostEnv } from "../hostenv.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
@@ -34,14 +35,8 @@ export type OpenSession = {
   startedAt: Date;
 };
 
-const BROWSER_ENV = /^(PATH|HOME|USER|LOGNAME|SHELL|LANG|LANGUAGE|TZ|TMPDIR|DISPLAY|LC_[A-Z]+|XDG_[A-Z_]+|FONTCONFIG_[A-Z_]+)$/;
-
-/** The variables a browser needs to start; everything else, credentials included, is left out. */
-export function browserEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(env).filter((entry): entry is [string, string] => BROWSER_ENV.test(entry[0]) && entry[1] !== undefined),
-  );
-}
+/** The browser's environment: the engine-wide allow-list, never the engine's own environment. */
+export const browserEnv = hostEnv;
 
 /**
  * Starts an isolated browser for one scenario, checks the environment and

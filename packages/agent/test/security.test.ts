@@ -150,3 +150,49 @@ test("a hostile result file cannot change where or what the report stage publish
   assert.doesNotMatch(out.body, /^# Ready/m);
   assert.doesNotMatch(out.title, /[<>\n]/);
 });
+
+test("a hand-off containing a symbolic link is refused before anything is read", async () => {
+  const { firstSymlink, ciRun } = await import("../src/ci/run.ts");
+  const dir = await mkdtemp(path.join(tmpdir(), "rp-handoff-"));
+  await mkdir(path.join(dir, "in", "context"), { recursive: true });
+  await writeFile(path.join(dir, "in", "meta.json"), JSON.stringify({ pr: 2, headSha: "a".repeat(40), appDir: "apps/x" }));
+  assert.equal(await firstSymlink(path.join(dir, "in")), undefined);
+  await writeFile(path.join(dir, "key.txt"), "RUNNER-SECRET");
+  await symlink(path.join(dir, "key.txt"), path.join(dir, "in", "context", "README.md"));
+  assert.match((await firstSymlink(path.join(dir, "in"))) ?? "", /README\.md$/);
+  const result = await ciRun({
+    incoming: path.join(dir, "in"),
+    outDir: path.join(dir, "out"),
+    repo: "acme/widgets",
+    trigger: { event: "workflow_dispatch", headBranch: "main", headSha: "a".repeat(40), defaultBranch: "main" },
+    ticketsDir: dir,
+    recordingsDir: dir,
+    full: true,
+    limits: { maxTokens: 1, maxUsd: 1, maxMinutes: 1 },
+    maxScenarios: 1,
+    concurrency: 1,
+  });
+  assert.equal(result.status, "error");
+  assert.match(result.reason ?? "", /symbolic link/);
+});
+
+test("the engine removes the model key from its own environment before doing anything else", async () => {
+  const { ciRun } = await import("../src/ci/run.ts");
+  const dir = await mkdtemp(path.join(tmpdir(), "rp-env-"));
+  await mkdir(path.join(dir, "in"), { recursive: true });
+  await writeFile(path.join(dir, "in", "meta.json"), "not json");
+  process.env.ANTHROPIC_API_KEY = "sk-ant-DUMMY-SECRET";
+  await ciRun({
+    incoming: path.join(dir, "in"),
+    outDir: path.join(dir, "out"),
+    repo: "acme/widgets",
+    trigger: { event: "workflow_dispatch", headBranch: "main", headSha: "a".repeat(40), defaultBranch: "main" },
+    ticketsDir: dir,
+    recordingsDir: dir,
+    full: true,
+    limits: { maxTokens: 1, maxUsd: 1, maxMinutes: 1 },
+    maxScenarios: 1,
+    concurrency: 1,
+  });
+  assert.equal(process.env.ANTHROPIC_API_KEY, undefined);
+});
