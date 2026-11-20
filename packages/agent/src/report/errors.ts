@@ -15,11 +15,27 @@ type Error = {
   locatedBy?: string;
   text: string;
 };
-type Input = { results: { scenarioId: string; title: string; verdict: string; applicationErrors?: Error[] }[] };
+type Signal = { step: number; actor?: { alias: string; step: number }; action: { step: number; tool: string; what: string }; page: string; text: string };
+type Input = { results: { scenarioId: string; title: string; verdict: string; applicationErrors?: Error[]; errorSignals?: Signal[] }[] };
 
 export function applicationErrorLines(run: Input, safe: (text: unknown, max?: number) => string, heading = "###"): string[] {
   const met = run.results.filter((r) => r.applicationErrors?.length);
-  if (met.length === 0) return [];
+  // Text that read like a failure and was not taken up: shown so that a person can look, and counted as nothing.
+  const leads = run.results.flatMap((r) =>
+    (r.errorSignals ?? []).filter((g) => !(r.applicationErrors ?? []).some((e) => e.text.includes(g.text) || g.text.includes(e.text))).map((g) => ({ r, g })),
+  );
+  const unconfirmed =
+    leads.length === 0
+      ? []
+      : [
+          `${heading} Possible application errors, not confirmed`,
+          "",
+          "After these steps the page newly showed text that reads like a failure of the application. It was noticed from the words alone and nothing was concluded from it: no verdict rests on it.",
+          "",
+          ...leads.slice(0, 20).map(({ r, g }) => `- **${safe(r.scenarioId, 20)}** step ${g.step}${g.actor ? `, signed in as ${safe(g.actor.alias, 40)}` : ""}, after ${safe(`${g.action.tool} ${g.action.what}`, 120)}, on ${safe(g.page, 120)}: ${safe(g.text, 300)}`),
+          "",
+        ];
+  if (met.length === 0) return unconfirmed;
   const lines = [
     `${heading} Application errors`,
     "",
@@ -36,6 +52,6 @@ export function applicationErrorLines(run: Input, safe: (text: unknown, max?: nu
       );
     }
   }
-  lines.push("");
+  lines.push("", ...unconfirmed);
   return lines;
 }

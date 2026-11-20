@@ -158,6 +158,7 @@ export async function closeSession(
     assertionResults: session.assertionResults,
     ...(session.appErrors?.length ? { applicationErrors: session.appErrors } : {}),
     ...(outcome.kind === "blocked" && outcome.cause ? { blockedCause: outcome.cause } : {}),
+    ...(session.errorSignals?.length ? { errorSignals: session.errorSignals } : {}),
     observations: session.observations,
     ...(session.texts && Object.keys(session.texts).length > 0 ? { textObservations: session.texts } : {}),
     steps: session.steps,

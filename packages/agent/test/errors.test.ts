@@ -244,3 +244,102 @@ test("the report says the application stopped the scenario, and the requirement 
   assert.match(log, /S7 errored: Project with categories/);
   assert.match(log, /application error at step 3, signed in as admin, after click role button "Save": POST \/tasks answered HTTP 500: Internal Error: SQL Error/);
 });
+
+// ---- an error written into a page that is answered with status 200 ----------
+
+test("text that newly reads like a failure after an action is told to the executor and kept as a lead, and decides nothing by itself", async () => {
+  const outputs: Record<string, string> = {};
+  // The executor is told, ignores it, and stops as if a control were missing.
+  const ignored = await attempt(board({ category: true, status: 200 }), async (run) => {
+    await run("fill", { element: label("Password"), text: "{{secret:admin.password}}" });
+    await run("fill", { element: label("Title"), text: "Cat with file" });
+    outputs.save = (await run("click", { element: button("Save") })).output;
+    // Looking at the page again does not report it a second time: it is no longer new.
+    outputs.again = (await run("fill", { element: label("Title"), text: "Cat with file" })).output;
+    await run("finish", { outcome: "blocked", reason: "The form came back.", cause: "cannot-operate" });
+  });
+  assert.match(outputs.save!, /^NOTE: after this step the page newly shows text that reads like an error of the application: "Internal Error: SQL Error\[HY000\]: SQLSTATE\[HY000\]: General error: 1 table tasks has no column named screenshot"\. Nothing is concluded from the words alone\./);
+  assert.doesNotMatch(outputs.again!, /^NOTE:/);
+  // The action and what was seen are on record.
+  assert.deepEqual(ignored.errorSignals, [
+    {
+      step: 3,
+      actor: { alias: "admin", step: 1 },
+      action: { step: 3, tool: "click", what: 'role button "Save"' },
+      page: "/tasks",
+      text: "Internal Error: SQL Error[HY000]: SQLSTATE[HY000]: General error: 1 table tasks has no column named screenshot",
+    },
+  ]);
+  // Words alone are not evidence: no application error is recorded and the verdict is what it would have been.
+  assert.equal(ignored.applicationErrors, undefined);
+  assert.equal(ignored.verdict, "blocked");
+  assert.equal(erroredVerdict(ignored, ignored), undefined);
+  assert.equal(needsEscalation(ignored, undefined, [created]), "the executor could not get through it");
+
+  // The lead is shown to a person as that, and counted as nothing.
+  const run = {
+    ticketKey: "T-1", driver: "test", executionMode: "autonomous", pullRequest: { number: 3, headSha: "a".repeat(40), title: "t" },
+    environment: { baseUrl: "http://localhost:1", deployedSha: "a".repeat(40) }, context: { sources: [] },
+    analysis: { requirements: [{ id: "R19", text: "A task keeps its category", kind: "documented", quote: "keeps the category", origin: "ticket" }], ambiguities: [], risks: [] },
+    analysisNotes: [], plan: { scenarios: [{ scenario, status: "runnable", riskIds: [], ambiguityIds: [], blockedReason: "" }], notes: [], clarifications: [] },
+    results: [ignored], confirmations: {}, timings: [], startedAt: "2026-11-20T00:00:00Z",
+  } as unknown as RunReport;
+  const a = assess(run);
+  assert.deepEqual([a.readiness, a.execution.errored, a.execution.blocked], ["incomplete", 0, 1]);
+  const body = render({ status: "completed", repo: "acme/tool", pr: 3, headSha: "a".repeat(40), run } as Parameters<typeof render>[0], "https://example.invalid/r");
+  assert.equal(body.conclusion, "neutral");
+  assert.match(body.body, /### Possible application errors, not confirmed\n\nAfter these steps the page newly showed text that reads like a failure of the application\. It was noticed from the words alone and nothing was concluded from it: no verdict rests on it\.\n\n- \*\*S7\*\* step 3, signed in as admin, after click role button "Save", on \/tasks: Internal Error: SQL Error/);
+  assert.doesNotMatch(body.body, /### Application errors/);
+  assert.match(diagnosticLines(buildDiagnostics(run)).join("\n"), /possible application error \(words only, nothing concluded\) at step 3, after click role button "Save": Internal Error: SQL Error/);
+
+  // Taken up by the executor, read by code and met again on replay, the same text is a finding. The note led there; it was not the evidence.
+  const taken = await attempt(board({ category: true, status: 200 }), async (run) => {
+    await run("fill", { element: label("Title"), text: "Cat with file" });
+    await run("click", { element: button("Save") });
+    await run("finish", { outcome: "blocked", reason: "Internal error after Save.", cause: "application-error", error: { source: "page", by: "text", value: "Internal Error", count: false, read: "text" } });
+  });
+  assert.equal(erroredVerdict(taken, await attempt(board({ category: true, status: 200 }), taken.steps))!.verdict, "errored");
+});
+
+test("words about errors that are not a new failure of the application raise nothing", async () => {
+  const body = (inner: string) => `<!doctype html><html><head><title>t</title></head><body>${inner}</body></html>`;
+  const history = '<h2>Import history</h2><ul><li>Internal Error: the import of 12 March stopped</li></ul>';
+  const notes: string[] = [];
+  const app: { handler: Handler } = {
+    handler: (request, response) => {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      const url = new URL(request.url ?? "/", "http://x");
+      if (url.pathname === "/help") {
+        // Documentation: errors named in running text, in a sample and in a quotation.
+        response.end(body(`<h1>Troubleshooting</h1>
+          <p>If the page shows Internal Error, or a Fatal error is reported, restart the worker. SQLSTATE codes are listed below.</p>
+          <pre>Traceback (most recent call last):\n  File "worker.py", line 3\nValueError: bad input</pre>
+          <p>The log may contain <code>Fatal error: out of memory</code>.</p>
+          <blockquote>Internal Server Error</blockquote>`));
+        return;
+      }
+      if (url.pathname === "/notes" && request.method === "POST") {
+        let data = "";
+        request.on("data", (c) => (data += c));
+        request.on("end", () => {
+          notes.push(decodeURIComponent(new URLSearchParams(data).get("note") ?? ""));
+          response.end(body(`<h1>Notes</h1><ul>${notes.map((n) => `<li>${n}</li>`).join("")}</ul>${history}`));
+        });
+        return;
+      }
+      response.end(body(`<h1>Notes</h1><form method="post" action="/notes"><label>Note <input name="note"></label><button>Add</button></form><a href="/help">Help</a>${history}`));
+    },
+  };
+  const outputs: Record<string, string> = {};
+  const result = await attempt(app, async (run) => {
+    // An old message that was on the page before the step is not this step's doing.
+    outputs.fill = (await run("fill", { element: label("Note"), text: "Internal Error: seen on the sign-in page" })).output;
+    // What the executor typed itself, shown back by the page, is its own words.
+    outputs.add = (await run("click", { element: button("Add") })).output;
+    outputs.help = (await run("navigate", { path: "/help" })).output;
+  });
+  for (const [step, output] of Object.entries(outputs)) assert.doesNotMatch(output, /^NOTE:/, step);
+  assert.match(outputs.add!, /Internal Error: seen on the sign-in page/);
+  assert.equal(result.errorSignals, undefined);
+  assert.equal(result.applicationErrors, undefined);
+});

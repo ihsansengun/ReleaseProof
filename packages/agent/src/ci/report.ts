@@ -154,6 +154,17 @@ export const ReportInput = z.object({
               }),
             )
             .optional(),
+          errorSignals: z
+            .array(
+              z.object({
+                step: z.number(),
+                actor: z.object({ alias: z.string(), step: z.number() }).optional(),
+                action: z.object({ step: z.number(), tool: z.string(), what: z.string() }),
+                page: z.string(),
+                text: z.string(),
+              }),
+            )
+            .optional(),
         }),
       ),
       confirmations: z.record(z.string(), z.string()).optional(),

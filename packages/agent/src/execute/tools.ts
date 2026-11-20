@@ -3,7 +3,7 @@ import type { BrowserContext, Locator, Page } from "playwright";
 import { z } from "zod";
 import { evaluateFormula, formulaVariables } from "../formula.ts";
 import { reconcile, scaleUnclear } from "../units.ts";
-import { BlockedCause, type ApplicationError, type AssertionResult, type Evidence, type Outcome, type Scenario, type Step } from "../schema.ts";
+import { BlockedCause, type ApplicationError, type ErrorSignal, type AssertionResult, type Evidence, type Outcome, type Scenario, type Step } from "../schema.ts";
 import type { SecretVault } from "../secrets.ts";
 
 /** Everything one scenario execution accumulates. */
@@ -37,6 +37,10 @@ export type Session = {
   };
   /** Errors the application answered with. Filled by the response listener and by finish. */
   appErrors?: ApplicationError[];
+  /** Text that newly read like an application failure after a user action. A lead only. */
+  errorSignals?: ErrorSignal[];
+  /** What the executor has typed into fields so far: its own words, which the page may show back. */
+  typed?: string[];
   /** The user action being carried out right now, if any: responses to it are the application's answer to a user. */
   acting?: string;
   /** Bodies of error responses still being read. */
@@ -1179,6 +1183,48 @@ const handlers: Handlers = {
   },
 };
 
+/**
+ * Words a failing application writes into a page it still answers with
+ * status 200. Each must start its line, or be a marker nobody writes in
+ * prose, so that a sentence which merely mentions an error is not one.
+ */
+const FAILURE_WORDS = [
+  /^internal (server )?error\b/i,
+  /^(\w+ )?(fatal|parse) error\b/i,
+  /^traceback \(most recent call last\)/i,
+  /^(unhandled|uncaught) (exception|error)\b/i,
+  /^[A-Za-z_][\w.\\]*(Exception|Error): \S/,
+  /\bSQLSTATE\[/,
+  /^(sql|database|query) error\b/i,
+];
+const readsLikeFailure = (line: string) => FAILURE_WORDS.some((p) => p.test(line));
+
+/**
+ * The lines the page shows that read like a failure of the application.
+ * Left out: quoted or sample text (pre, code, blockquote and the like),
+ * where documentation and logs show such words, and anything editable.
+ */
+async function failureLines(page: Page): Promise<string[]> {
+  const lines = await page
+    .evaluate(() => {
+      const skip = new Set<string>();
+      const quoted = document.querySelectorAll("pre, code, kbd, samp, blockquote, textarea, [contenteditable]");
+      for (let i = 0; i < quoted.length; i++) {
+        const inner = ((quoted[i] as HTMLElement).innerText ?? "").split("\n");
+        for (let j = 0; j < inner.length; j++) skip.add(inner[j]!.trim());
+      }
+      const all = (document.body?.innerText ?? "").split("\n");
+      const out: string[] = [];
+      for (let i = 0; i < all.length; i++) {
+        const line = all[i]!.trim();
+        if (line !== "" && line.length <= 500 && !skip.has(line)) out.push(line);
+      }
+      return out;
+    })
+    .catch(() => [] as string[]);
+  return [...new Set(lines.filter(readsLikeFailure))];
+}
+
 /** Tools that do what a user does. An error answer to one of them is the application's answer to a user. */
 const USER_ACTIONS = new Set<string>(["navigate", "click", "fill", "select", "press", "upload"]);
 
@@ -1239,6 +1285,8 @@ export async function runTool(
     const resolved = session.vault.resolve(parsed.data);
     const before = session.appErrors?.length ?? 0;
     session.acting = USER_ACTIONS.has(tool) ? tool : undefined;
+    // What already read like a failure before this step is not this step's doing.
+    const shownBefore = session.acting ? new Set(await failureLines(session.page)) : undefined;
     try {
       output = await (handlers[tool] as (s: Session, i: unknown) => Promise<string>)(session, resolved);
     } finally {
@@ -1257,6 +1305,22 @@ export async function runTool(
         e.action = { step: e.step, tool, what: session.vault.scrub(given.element ? describeRef(given.element) : clip(String(given.path ?? ""), 120)) };
       }
       output = `${met.map(errorNote).join("\n")}\n${output}`;
+    }
+    if (shownBefore) {
+      const given = resolved as { element?: { by: string; role?: string; value: string }; path?: string; text?: string };
+      if (tool === "fill" && typeof given.text === "string" && given.text.trim() !== "") (session.typed ??= []).push(given.text.trim());
+      // New on the page, and not the executor's own words shown back to it.
+      const own = (session.typed ?? []).filter(readsLikeFailure);
+      const fresh = (await failureLines(session.page)).filter((line) => !shownBefore.has(line) && !own.some((words) => line.includes(words)));
+      if (fresh.length > 0 && met.length === 0) {
+        const trail = trailOf(session);
+        const step = session.steps.length + 1;
+        const action = { step, tool, what: session.vault.scrub(given.element ? describeRef(given.element) : clip(String(given.path ?? ""), 120)) };
+        for (const line of fresh.slice(0, 3)) {
+          (session.errorSignals ??= []).push({ step, ...(trail.actor ? { actor: trail.actor } : {}), action, page: pagePath(session), text: session.vault.scrub(clip(line, 300)) });
+        }
+        output = `NOTE: after this step the page newly shows text that reads like an error of the application: "${clip(fresh[0]!, 300)}". Nothing is concluded from the words alone. If the application did fail and that keeps you from the checks, call finish with outcome "blocked", cause "application-error" and "error" pointing at the element that shows this text. If it is ordinary content, carry on.\n${output}`;
+      }
     }
   } catch (error) {
     ok = false;
