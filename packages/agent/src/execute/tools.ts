@@ -78,7 +78,7 @@ const PageTarget = z.object({
   by: z
     .enum(["role", "label", "text", "testid", "cell", "labelled"])
     .describe(
-      'How the element is identified. "cell": the cell of a table at one row and one column; give "row" and put the column header in "value". "labelled": the value that belongs to a label (the item after a term in a list, the cell after a row header, the control of a form label); put the label in "value". Use these two for values in tables and labelled lists.',
+      'How the element is identified. "cell": the cell of a table at one row and one column; give "row" and put the column header in "value". "labelled": the value that belongs to a label (a line such as "Subtotal: $60.00", the item after a term in a list, the cell after a row header, the control of a form label); put the label, without the value, in "value". Use these two for values in tables and labelled lists.',
     ),
   role: z.enum(ROLES).optional().describe("Required when by=role."),
   value: z
@@ -337,7 +337,7 @@ async function locateCell(page: Page, target: z.infer<typeof PageTarget>): Promi
  * cell after a row header, or the control a form label belongs to. One label
  * and one value, or nothing is read.
  */
-async function locateLabelled(page: Page, target: z.infer<typeof PageTarget>): Promise<Locator> {
+async function locateLabelled(page: Page, target: z.infer<typeof PageTarget>): Promise<{ locator: Locator; text?: string }> {
   const scope = target.within ? buildIn(page, target.within) : page;
   const words = target.value.trim().replace(/:$/, "").trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   if (words.join("") === "") throw new Error("value must name the label when by=labelled");
@@ -345,28 +345,40 @@ async function locateLabelled(page: Page, target: z.infer<typeof PageTarget>): P
   // Terms and row headers by their text; form labels through the control they name.
   const labels = scope.locator("dt, th").filter({ hasText: new RegExp(`^\\s*${words.join("\\s+")}\\s*:?\\s*$`, "i") });
   const controls = scope.getByLabel(name, { exact: true });
-  await settleCount(page, labels.or(controls));
-  const [labelCount, controlCount] = [await labels.count(), await controls.count()];
-  if (labelCount + controlCount !== 1) {
+  // A line that carries its own label: "Subtotal: $60.00", "Balance: 20 days".
+  // The line must BEGIN with the label and a colon, so "Total" is not found in
+  // "Subtotal: ...", and only what follows the colon is the value: a number
+  // inside the label itself ("Discount (CODE15): ...") is never read.
+  const inline = new RegExp(`^\\s*${words.join("\\s+")}\\s*:\\s*(\\S[\\s\\S]*)$`, "i");
+  const lines = scope.getByText(inline);
+  await settleCount(page, labels.or(controls).or(lines));
+  const [labelCount, controlCount, lineCount] = [await labels.count(), await controls.count(), await lines.count()];
+  const total = labelCount + controlCount + lineCount;
+  if (total !== 1) {
     throw new Error(
-      labelCount + controlCount === 0
+      total === 0
         ? `Expected exactly one label "${target.value}" with a value beside it, found 0. Nothing was read.`
-        : `Ambiguous target: ${labelCount + controlCount} labels read "${target.value}". Narrow it with "within". Nothing was read.`,
+        : `Ambiguous target: ${total} labels read "${target.value}". Narrow it with "within". Nothing was read.`,
     );
   }
-  if (controlCount === 1) return controls;
+  if (lineCount === 1) {
+    const value = inline.exec(squash(await lines.innerText()))?.[1];
+    if (!value) throw new Error(`The line labelled "${target.value}" has nothing after its colon. Nothing was read.`);
+    return { locator: lines, text: squash(value) };
+  }
+  if (controlCount === 1) return { locator: controls };
   const tag = await labels.evaluate((el) => el.tagName);
   const value = tag === "DT" ? labels.locator("xpath=following-sibling::*[1][self::dd]") : labels.locator("xpath=following-sibling::td");
   const values = await value.count();
   if (values !== 1) throw new Error(`The label "${target.value}" has ${values} values beside it, not one. Nothing was read.`);
-  return value;
+  return { locator: value };
 }
 
 /** The one element a page target identifies. */
-async function locateTarget(page: Page, target: z.infer<typeof PageTarget>): Promise<Locator> {
-  if (target.by === "cell") return locateCell(page, target);
+async function locateTarget(page: Page, target: z.infer<typeof PageTarget>): Promise<{ locator: Locator; text?: string }> {
+  if (target.by === "cell") return { locator: await locateCell(page, target) };
   if (target.by === "labelled") return locateLabelled(page, target);
-  return locate(page, asRef(target));
+  return { locator: await locate(page, asRef(target)) };
 }
 
 /**
@@ -391,6 +403,9 @@ async function elementKind(locator: Locator): Promise<"heading" | "label" | "val
  */
 async function requireSubject(locator: Locator | undefined, target: Target, subject: "value" | "heading" | "label", what: string): Promise<void> {
   if (!locator || target.source !== "page" || target.count) return;
+  // A labelled target has already separated the value from the label that
+  // names it, wherever the line sits, so what was read is the value.
+  if (target.by === "labelled" && subject === "value") return;
   const kind = await elementKind(locator);
   if (subject !== "value") {
     if (kind !== subject) throw new Error(`${what} is about a ${subject}, and the target is not one. No result was recorded.`);
@@ -475,9 +490,12 @@ async function readText(session: Session, target: Target): Promise<{ text: strin
   }
 
   if (target.count) return { text: String(await buildLocator(session.page, asRef(target)).count()) };
-  const locator = await locateTarget(session.page, target);
+  const { locator, text: valueOfLine } = await locateTarget(session.page, target);
   let text: string;
-  if (await locator.evaluate((el) => el.matches("input, select, textarea")).catch(() => false)) {
+  if (valueOfLine !== undefined) {
+    // The value of a "Label: value" line, already separated from its label.
+    text = valueOfLine;
+  } else if (await locator.evaluate((el) => el.matches("input, select, textarea")).catch(() => false)) {
     // A form control shows its value, not its inner text.
     text = squash(
       await locator.evaluate((el) =>

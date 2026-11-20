@@ -375,27 +375,46 @@ test("several failed assertions from one cause are one pattern, and only evidenc
     // The heading read in place of the code is on its own, and is not a defect on this evidence.
     ["F2", "unconfirmed", "S1/A4", "R9"],
     ["F3", "evidence-backed", "S1/A6 S1/A9", "R13"],
-    // Backed by the API, but the failure did not repeat when replayed.
-    ["F4", "unconfirmed", "S2/A1", "R5"],
+    // Backed by the application's own API response. The replay could not be completed; that does not bear on it.
+    ["F4", "evidence-backed", "S2/A1", "R5"],
     ["F5", "unconfirmed", "S3/A5", "R31"],
   ]);
   assert.equal(patterns[0]!.description, "comparisons resting on R18, R19: numbers off by 15, 1500; text, presence or status that differs");
-  assert.match(patterns[0]!.basis, /S4\/A6 is backed by a second comparison through another target, and the failure repeats/);
+  assert.match(patterns[0]!.basis, /S4\/A8 is backed by the application's own API response, and the failure repeats/);
   assert.equal(patterns[1]!.basis, "rests on single page observations; nothing else confirms it");
   // Two status codes are not a quantity with a difference.
   assert.equal(patterns[3]!.description, "comparisons resting on R5: text, presence or status that differs");
-  assert.match(patterns[3]!.basis, /backed by the application's own API response, but the failure did not repeat when replayed/);
+  assert.equal(patterns[3]!.basis, "S2/A1 is backed by the application's own API response; the model-free repeat could not be completed, which does not bear on this evidence");
 
   // Four numbers, four meanings.
-  assert.deepEqual(failureCounts(run), { assertions: 10, scenarios: 4, patterns: 5, candidates: 2 });
+  assert.deepEqual(failureCounts(run), { assertions: 10, scenarios: 4, patterns: 5, candidates: 3 });
   const body = render({ status: "completed", repo: "acme/tool", pr: 7, headSha: "a".repeat(40), run } as Parameters<typeof render>[0], "https://example.invalid/r").body;
-  assert.match(body, /- Failed assertions: \*\*10\*\*\n- Failed scenarios: \*\*4\*\*\n- Failure patterns: \*\*5\*\*\n- Evidence-backed defect candidates: \*\*2\*\*/);
+  assert.match(body, /- Failed assertions: \*\*10\*\*\n- Failed scenarios: \*\*4\*\*\n- Failure patterns: \*\*5\*\*\n- Evidence-backed defect candidates: \*\*3\*\*/);
   assert.match(body, /An unconfirmed pattern may be a defect, a wrong locator or a wrong expectation\./);
   assert.match(body, /\| F2 \| unconfirmed \| comparisons resting on R9: text, presence or status that differs \| S1\/A4 \| R9 \| rests on single page observations; nothing else confirms it \|/);
   assert.match(body, /\| F1 \| \*\*evidence-backed\*\* \|/);
   assert.match(body, /whether two candidates share one root cause, or one candidate hides two, is not established by this report\./);
   // Nothing in the report claims a confirmed defect or root cause.
   assert.doesNotMatch(body, /distinct pattern\*\*|off by 203|[Cc]onfirmed (distinct )?defect|confirmed root cause/);
+
+  // The gate's own case: both real defects had API evidence and both replays diverged, because the
+  // application assigns new identifiers on each run. They are evidence-backed candidates all the same.
+  const diverged = runOf(results, [s4, s1, s2, s3], { confirmations: { S4: "replay diverged", S1: "replay diverged", S2: "replay diverged", S3: "replay diverged" } });
+  assert.deepEqual(failurePatterns(diverged).map((p) => [p.id, p.evidence]), [["F1", "evidence-backed"], ["F2", "unconfirmed"], ["F3", "evidence-backed"], ["F4", "evidence-backed"], ["F5", "unconfirmed"]]);
+  // A second attempt by another route also stands without the replay.
+  const twice = runOf([failed("S3", [{ ...bad("A5", 416, 316, "single"), standing: "re-resolved" as const }])], [s3], { confirmations: { S3: "replay diverged" } });
+  assert.equal(failurePatterns(twice)[0]!.evidence, "evidence-backed");
+  // Two page readings in one attempt do not: they need the failure to repeat.
+  const pageOnly = (confirmation: "reproduced" | "replay diverged") => runOf([failed("S4", [bad("A6", "absent", "present", "corroborated"), bad("A7", 48, 33, "corroborated")])], [s4], { confirmations: { S4: confirmation } });
+  assert.equal(failurePatterns(pageOnly("replay diverged"))[0]!.evidence, "unconfirmed");
+  assert.match(failurePatterns(pageOnly("replay diverged"))[0]!.basis, /in the same attempt only, and the failure did not repeat when replayed/);
+  assert.equal(failurePatterns(pageOnly("reproduced"))[0]!.evidence, "evidence-backed");
+  // A repeat that reached the comparison and found it matching contradicts even API evidence.
+  const contradictedRun = runOf([failed("S2", [bad("A1", 403, 200, "state")])], [s2], { confirmations: { S2: "not reproduced" } });
+  assert.equal(failurePatterns(contradictedRun)[0]!.evidence, "unconfirmed");
+  assert.match(failurePatterns(contradictedRun)[0]!.basis, /the same steps repeated without a model found the comparison matching/);
+  // An evidence-backed candidate is still not called a confirmed defect or root cause.
+  assert.doesNotMatch(render({ status: "completed", repo: "acme/tool", pr: 7, headSha: "a".repeat(40), run: diverged } as Parameters<typeof render>[0], "https://example.invalid/r").body, /[Cc]onfirmed (distinct )?defect|confirmed root cause/);
 
   // Without a repeat or any standing on record, nothing is called a defect.
   const bare = runOf(results.map((r) => ({ ...r, assertionResults: r.assertionResults.map(({ standing: _s, ...rest }) => rest) })), [s4, s1, s2, s3]);
