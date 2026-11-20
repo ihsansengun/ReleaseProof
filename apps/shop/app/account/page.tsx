@@ -35,6 +35,7 @@ export default async function AccountPage({
           <thead>
             <tr>
               <th>Order</th>
+              <th>Discount</th>
               <th>Total</th>
               <th>Status</th>
             </tr>
@@ -43,6 +44,7 @@ export default async function AccountPage({
             {account.orders.map((o) => (
               <tr key={o.id}>
                 <td>#{o.id}</td>
+                <td>{o.promoCode ? `-${money(o.discountCents)} (${o.promoCode})` : "None"}</td>
                 <td>{money(o.totalCents)}</td>
                 <td>{o.status}</td>
               </tr>
