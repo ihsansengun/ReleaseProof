@@ -80,7 +80,7 @@ export function validatePlan(
         );
         continue;
       }
-      observations.push({ name: o.name, what: o.what, when: o.when, unit: o.unit });
+      observations.push({ name: o.name, what: o.what, when: o.when, unit: o.type === "text" ? "plain" : o.unit, ...(o.type === "text" ? { type: "text" as const } : {}) });
     }
     const observed = new Map(observations.map((o) => [o.name, o]));
     // Plans recorded before observations were declared carry none; their formulas are taken as they are.
@@ -142,7 +142,10 @@ export function validatePlan(
             // A formula may combine values of the assertion's own unit with plain
             // numbers. Anything else would add or compare amounts in different units.
             const mixed = variables.filter((v) => observed.has(v) && observed.get(v)!.unit !== "plain" && observed.get(v)!.unit !== unit);
-            if (undeclared.length > 0) {
+            const textual = variables.filter((v) => observed.get(v)?.type === "text");
+            if (textual.length > 0) {
+              fault = `uses ${textual.join(", ")} in its formula, which ${textual.length === 1 ? "holds" : "hold"} text and cannot be calculated with`;
+            } else if (undeclared.length > 0) {
               fault = `uses ${undeclared.join(", ")} in its formula without declaring ${undeclared.length === 1 ? "it as an observation" : "them as observations"} with the moment to record ${undeclared.length === 1 ? "it" : "them"}`;
             } else if (mixed.length > 0) {
               fault = `combines ${mixed.map((v) => `${v} (${observed.get(v)!.unit})`).join(", ")} with an expected value in ${unit}; values in different units cannot be compared`;
@@ -170,12 +173,34 @@ export function validatePlan(
         return usable;
       });
       const numeric = a.kind === "number_equals" || a.kind === "number_at_least" || a.kind === "number_at_most";
+      // An assertion about an earlier moment compares what was recorded then.
+      // The observation must exist in the plan and be of the kind compared.
+      const about = a.actualObservation ? observed.get(a.actualObservation) : undefined;
+      if (a.actualObservation) {
+        const unitOfExpected = a.unit ?? "plain";
+        const fault = !about
+          ? `is about observation "${a.actualObservation}", which the scenario does not declare`
+          : a.kind === "present" || a.kind === "absent"
+            ? "is a presence check, which cannot be about a recorded observation"
+            : numeric !== (about.type !== "text")
+              ? `compares ${numeric ? "a number" : "text"} with observation "${about.name}", which holds ${about.type === "text" ? "text" : "a number"}`
+              : numeric && about.unit !== unitOfExpected && about.unit !== "plain" && unitOfExpected !== "plain"
+                ? `expects a value in ${unitOfExpected} and is about observation "${about.name}", recorded in ${about.unit}`
+                : expected && "formula" in expected && expected.formula.trim() === about.name
+                  ? `compares observation "${about.name}" with itself`
+                  : undefined;
+        if (fault) {
+          problems.push(`${where} ${fault}; it was removed.`);
+          continue;
+        }
+      }
       assertions.push({
         id: a.id,
         description: a.description,
         kind: a.kind,
         ...(numeric && a.unit && a.unit !== "plain" ? { unit: a.unit } : {}),
-        ...(a.subject && a.subject !== "value" && a.kind !== "present" && a.kind !== "absent" ? { subject: a.subject } : {}),
+        ...(a.subject && a.subject !== "value" && a.kind !== "present" && a.kind !== "absent" && !about ? { subject: a.subject } : {}),
+        ...(about ? { actual: { observation: about.name } } : {}),
         expected,
         requirementId: a.requirementId,
         ...(alsoVerifies.length ? { alsoVerifies } : {}),

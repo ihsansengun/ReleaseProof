@@ -16,7 +16,7 @@ export function selectionLines(run: Input, safe: (text: unknown, max?: number) =
     "",
     `${selection.candidates} runnable scenarios were planned and the limit is ${selection.cap}. ${
       selection.policy === "coverage"
-        ? "Code chose them one at a time, each time taking the scenario that adds most to what the chosen ones already cover: a first comparison of an approved requirement counts 3, a new position at a threshold 2, a new access-control or ownership check 2, a new state change, side effect or risk 1. Ties go to the scenario the planner listed first."
+        ? "Scenarios that test a stated threshold just below it or exactly at it were taken first, up to half the limit. Then code chose one at a time, each time taking the scenario that adds most to what the chosen ones already cover: a first comparison of an approved requirement counts 3, a new position at a threshold 2, a new access-control or ownership check 2, a new state change, side effect or risk 1. Ties go to the scenario the planner listed first."
         : "The plan declares no focus, so they were taken as the planner listed them."
     }`,
     "",

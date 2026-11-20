@@ -41,6 +41,8 @@ export const Observation = z.object({
   /** The moment in the scenario at which it is read. One name is one moment. */
   when: z.string(),
   unit: Unit.default("plain"),
+  /** A number, usable in formulas, or a piece of text such as a status. Absent means a number. */
+  type: z.enum(["number", "text"]).optional(),
 });
 export type Observation = z.infer<typeof Observation>;
 
@@ -54,6 +56,12 @@ export const Assertion = z.object({
   subject: Subject.optional(),
   /** Required for the comparing kinds; unused for present and absent. */
   expected: Expected.optional(),
+  /**
+   * Set when the assertion is about a value at an earlier moment: the named
+   * observation, as it was recorded then, is what is compared. Such an
+   * assertion never reads the page as it is when the comparison is made.
+   */
+  actual: z.object({ observation: z.string() }).optional(),
   requirementId: z.string().optional(),
   /**
    * Other approved requirements this same comparison also verifies. The
@@ -299,6 +307,8 @@ export type ScenarioResult = {
    */
   setAside?: { assertionId: string; expected: number | string; actual: number | string; target: unknown; otherActual: number | string; otherTarget: unknown }[];
   observations: Record<string, number>;
+  /** Observations that hold text, such as a status read at one moment. */
+  textObservations?: Record<string, string>;
   steps: Step[];
   evidence: { trace?: string; dir: string };
   usage?: Usage;
@@ -514,6 +524,8 @@ export const PlanDraft = z.object({
           what: z.string(),
           when: z.string(),
           unit: Unit,
+          /** "text" for a value that is not a number, such as a status. Omit for a number. */
+          type: z.enum(["number", "text"]).optional(),
         }),
       ),
       /**
@@ -537,6 +549,8 @@ export const PlanDraft = z.object({
           unit: Unit,
           /** "heading" or "label" only when the requirement is about that wording itself. Omit for a value. */
           subject: Subject.optional(),
+          /** Name of a declared observation, when the assertion is about that recorded value and not about the page at the time of checking. */
+          actualObservation: z.string().nullable().optional(),
           requirementId: z.string(),
           /** Ids of other documented requirements this same comparison verifies. Empty if none. */
           alsoVerifies: z.array(z.string()),

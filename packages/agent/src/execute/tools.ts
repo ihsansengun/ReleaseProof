@@ -14,6 +14,8 @@ export type Session = {
   page: Page;
   outDir: string;
   observations: Record<string, number>;
+  /** Observations that hold text. Like the numeric ones, each is recorded once and never read again. */
+  texts?: Record<string, string>;
   /**
    * Observations the executor tried to record a second time. Their recorded
    * value belongs to an earlier moment, so no formula may use them any more.
@@ -30,6 +32,8 @@ export type Session = {
     action?: { step: number; tool: string; what: string };
     observed: Record<string, number>;
     requests: Record<string, { step: number; method: string; path: string }>;
+    /** Where and when each observation was read: the record behind a later comparison of it. */
+    readings?: Record<string, { step: number; from: "page" | "api"; locatedBy: string; raw: string; page?: string; responseId?: string; actor?: { alias: string; step: number } }>;
   };
   assertionResults: AssertionResult[];
   steps: Step[];
@@ -71,13 +75,20 @@ const WITHIN = Container.optional().describe(
 
 const PageTarget = z.object({
   source: z.literal("page"),
-  by: z.enum(["role", "label", "text", "testid"]),
+  by: z
+    .enum(["role", "label", "text", "testid", "cell", "labelled"])
+    .describe(
+      'How the element is identified. "cell": the cell of a table at one row and one column; give "row" and put the column header in "value". "labelled": the value that belongs to a label (the item after a term in a list, the cell after a row header, the control of a form label); put the label in "value". Use these two for values in tables and labelled lists.',
+    ),
   role: z.enum(ROLES).optional().describe("Required when by=role."),
   value: z
     .string()
     .describe(
-      "Accessible name (role/label), visible text, or test id. by=text selects the smallest element containing the text as whole words (Total does not match Subtotal); by=role needs an element that has an accessible name, which plain text containers often lack.",
+      "Accessible name (role/label), visible text, or test id. by=text selects the smallest element containing the text as whole words (Total does not match Subtotal); by=role needs an element that has an accessible name, which plain text containers often lack. by=cell: the column header, exactly. by=labelled: the label, exactly.",
     ),
+  row: Container.optional().describe(
+    "Required when by=cell: what identifies the row. by=text: text the row contains, as whole words, that is NOT the value you are reading (an id, a name, a date, a reason). by=role with role=row: the row's accessible name. by=testid: a test id on the row.",
+  ),
   within: WITHIN,
   count: z
     .boolean()
@@ -124,7 +135,10 @@ const schemas = {
     name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
     target: Target,
   }),
-  check: z.object({ assertionId: z.string(), target: Target }),
+  check: z.object({
+    assertionId: z.string(),
+    target: Target.optional().describe('Where the actual value is. Leave it out for an assertion that carries "actual": {"observation": ...}: the recorded observation is compared.'),
+  }),
   finish: z.object({
     outcome: z.enum(["completed", "blocked"]),
     reason: z.string(),
@@ -239,6 +253,122 @@ async function locate(page: Page, ref: ElementRef): Promise<Locator> {
   return locator;
 }
 
+/** A page target narrowed to the forms that name an element directly. */
+function asRef(target: z.infer<typeof PageTarget>): ElementRef {
+  if (target.by === "cell" || target.by === "labelled") {
+    throw new Error(`by=${target.by} identifies one value to read; it cannot be counted or tested for presence. Use by=text, role or testid for that.`);
+  }
+  return { by: target.by, role: target.role, value: target.value, within: target.within };
+}
+
+/** Waits briefly for a locator to match exactly one element, and says how many it matched. */
+async function settleCount(page: Page, locator: Locator): Promise<number> {
+  const deadline = Date.now() + LOCATE_TIMEOUT_MS;
+  let count = await locator.count();
+  while (count !== 1 && Date.now() < deadline) {
+    await page.waitForTimeout(100);
+    count = await locator.count();
+  }
+  return count;
+}
+
+const CELLS = ':scope > td, :scope > th, :scope > [role="cell"], :scope > [role="gridcell"], :scope > [role="rowheader"], :scope > [role="columnheader"]';
+
+/**
+ * The cell at one row and one column of a table. The row is identified by
+ * something it contains or is called; the column by its header. Neither is
+ * the value sought, so the cell is found whatever it happens to show. One row
+ * and one column, or nothing is read.
+ */
+async function locateCell(page: Page, target: z.infer<typeof PageTarget>): Promise<Locator> {
+  if (!target.row) throw new Error("row is required when by=cell: say what identifies the row.");
+  const scope = target.within ? buildIn(page, target.within) : page;
+  const rows =
+    target.row.by === "text"
+      ? // A row is known by a cell of its own. Matching the row's whole text would
+        // run its cells together and lose the word boundaries between them.
+        scope.getByRole("row").filter({ has: page.locator('td, th, [role="cell"], [role="gridcell"], [role="rowheader"]').filter({ hasText: wholeWords(target.row.value) }) })
+      : target.row.by === "role"
+        ? scope.getByRole(target.row.role ?? "row", { name: target.row.value, exact: true })
+        : buildIn(scope, target.row);
+  const count = await settleCount(page, rows);
+  if (count !== 1) {
+    throw new Error(
+      count === 0
+        ? `Expected exactly one row for ${JSON.stringify(target.row)}, found 0. Nothing was read.`
+        : `Ambiguous target: ${count} rows match ${JSON.stringify(target.row)}. Identify the row by something only it contains, or narrow it with "within". Nothing was read.`,
+    );
+  }
+  // The function below runs in the page. It is written without named helpers,
+  // which a transpiler may wrap in code the page does not have.
+  const found = await rows.evaluate(
+    (el, { column, cells }) => {
+      const row = el.closest('tr, [role="row"]');
+      const table = row ? row.closest('table, [role="table"], [role="grid"]') : null;
+      if (!row || !table) return { error: "the row is not part of a table" };
+      const wanted = column.replace(/\s+/g, " ").trim().toLowerCase();
+      let header: Element | undefined;
+      for (const candidate of table.querySelectorAll('tr, [role="row"]')) {
+        if (candidate.closest('table, [role="table"], [role="grid"]') !== table) continue;
+        if (candidate.querySelector(':scope > th, :scope > [role="columnheader"]') && !candidate.querySelector(":scope > td")) {
+          header = candidate;
+          break;
+        }
+      }
+      if (!header) return { error: "the table has no header row to name its columns" };
+      for (const c of [...header.querySelectorAll(cells), ...row.querySelectorAll(cells)]) {
+        if (Number(c.getAttribute("colspan") ?? 1) > 1) return { error: "the table has merged cells, so a column cannot be matched to a cell" };
+      }
+      const names = [...header.querySelectorAll(cells)].map((c) => (c.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase());
+      const matches = names.map((n, i) => (n === wanted ? i : -1)).filter((i) => i >= 0);
+      if (matches.length !== 1) return { error: `${matches.length} columns are headed "${column}"; the headers are: ${names.join(" | ")}` };
+      if (row === header) return { error: "the row matched is the header row" };
+      if (row.querySelectorAll(cells).length !== names.length) return { error: "the row does not have one cell per column" };
+      return { index: matches[0]! };
+    },
+    { column: target.value, cells: CELLS },
+  );
+  if ("error" in found) throw new Error(`No cell was read: ${found.error}.`);
+  return rows.locator(CELLS).nth(found.index);
+}
+
+/**
+ * The value that belongs to a label: the item after a term in a list, the
+ * cell after a row header, or the control a form label belongs to. One label
+ * and one value, or nothing is read.
+ */
+async function locateLabelled(page: Page, target: z.infer<typeof PageTarget>): Promise<Locator> {
+  const scope = target.within ? buildIn(page, target.within) : page;
+  const words = target.value.trim().replace(/:$/, "").trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (words.join("") === "") throw new Error("value must name the label when by=labelled");
+  const name = target.value.trim().replace(/:$/, "").trim();
+  // Terms and row headers by their text; form labels through the control they name.
+  const labels = scope.locator("dt, th").filter({ hasText: new RegExp(`^\\s*${words.join("\\s+")}\\s*:?\\s*$`, "i") });
+  const controls = scope.getByLabel(name, { exact: true });
+  await settleCount(page, labels.or(controls));
+  const [labelCount, controlCount] = [await labels.count(), await controls.count()];
+  if (labelCount + controlCount !== 1) {
+    throw new Error(
+      labelCount + controlCount === 0
+        ? `Expected exactly one label "${target.value}" with a value beside it, found 0. Nothing was read.`
+        : `Ambiguous target: ${labelCount + controlCount} labels read "${target.value}". Narrow it with "within". Nothing was read.`,
+    );
+  }
+  if (controlCount === 1) return controls;
+  const tag = await labels.evaluate((el) => el.tagName);
+  const value = tag === "DT" ? labels.locator("xpath=following-sibling::*[1][self::dd]") : labels.locator("xpath=following-sibling::td");
+  const values = await value.count();
+  if (values !== 1) throw new Error(`The label "${target.value}" has ${values} values beside it, not one. Nothing was read.`);
+  return value;
+}
+
+/** The one element a page target identifies. */
+async function locateTarget(page: Page, target: z.infer<typeof PageTarget>): Promise<Locator> {
+  if (target.by === "cell") return locateCell(page, target);
+  if (target.by === "labelled") return locateLabelled(page, target);
+  return locate(page, asRef(target));
+}
+
 /**
  * Whether an element names something or holds its value. A heading titles a
  * section and a label names a field; neither is the value the section or the
@@ -344,10 +474,17 @@ async function readText(session: Session, target: Target): Promise<{ text: strin
     return { text: String(value) };
   }
 
-  if (target.count) return { text: String(await buildLocator(session.page, target).count()) };
-  const locator = await locate(session.page, target);
+  if (target.count) return { text: String(await buildLocator(session.page, asRef(target)).count()) };
+  const locator = await locateTarget(session.page, target);
   let text: string;
-  if (target.read === "name") {
+  if (await locator.evaluate((el) => el.matches("input, select, textarea")).catch(() => false)) {
+    // A form control shows its value, not its inner text.
+    text = squash(
+      await locator.evaluate((el) =>
+        el instanceof HTMLSelectElement ? (el.selectedOptions[0]?.textContent ?? "") : (el as HTMLInputElement | HTMLTextAreaElement).value,
+      ),
+    );
+  } else if (target.read === "name") {
     // The accessible name is what the page tree shows in quotes after the role.
     const name = /^-\s+\S+\s+"((?:[^"\\]|\\.)*)"/.exec(await locator.ariaSnapshot());
     if (!name) throw new Error("The selected element has no accessible name.");
@@ -379,8 +516,92 @@ async function screenshot(session: Session, name: string, locator?: Locator): Pr
 // ---- evidence -------------------------------------------------------------
 
 const trailOf = (s: Session) => (s.trail ??= { observed: {}, requests: {} });
+const pagePath = (s: Session) => {
+  const url = new URL(s.page.url());
+  return `${url.pathname}${url.search}`;
+};
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
 const describeRef = (ref: { by: string; role?: string; value: string }) => `${ref.by}${ref.role ? ` ${ref.role}` : ""} "${clip(ref.value, 80)}"`;
+
+/** How a target identifies what it reads, in words. */
+function describeTarget(target: Target): string {
+  if (target.source === "api") return `response ${target.responseId} ${target.field}${target.jsonPath ? ` at ${target.jsonPath}` : ""}${target.count ? " (count)" : ""}`;
+  const element = target.by === "cell" ? `cell in row ${target.row ? describeRef(target.row) : "?"}, column "${clip(target.value, 80)}"` : describeRef(target);
+  return `${element}${target.within ? ` within ${describeRef(target.within)}` : ""}${target.pattern ? ` pattern ${clip(target.pattern, 80)}` : ""}${target.count ? " (count)" : ""}`;
+}
+
+/**
+ * Compares an assertion with an observation as it was recorded at its own
+ * moment. The page as it is now plays no part: nothing is located and nothing
+ * is read, so the comparison cannot pick up a later state by accident.
+ */
+async function checkObservation(s: Session, assertion: Scenario["assertions"][number], name: string, target: Target | undefined): Promise<string> {
+  const id = assertion.id;
+  if (target) {
+    throw new Error(
+      `Assertion ${id} is about the observation "${name}" as it was recorded at its moment, not about the page as it is now. Call check for it without a target. No result was recorded.`,
+    );
+  }
+  const numeric = assertion.kind === "number_equals" || assertion.kind === "number_at_least" || assertion.kind === "number_at_most";
+  const recorded: number | string | undefined = numeric ? s.observations[name] : s.texts?.[name];
+  if (recorded === undefined) {
+    const when = s.scenario.observations?.find((o) => o.name === name)?.when;
+    throw new Error(`Assertion ${id} cannot be checked yet: observation "${name}" has not been recorded${when ? ` (its moment: ${when})` : ""}. No result was recorded.`);
+  }
+  if (!assertion.expected) throw new Error(`Assertion ${id} has no expected value in the plan.`);
+  const variables = "formula" in assertion.expected ? formulaVariables(assertion.expected.formula) : [];
+  const stale = [name, ...variables].filter((v) => s.contested?.has(v));
+  if (stale.length > 0) {
+    throw new Error(`Assertion ${id} cannot be checked: ${stale.join(", ")} was needed at more than one moment while the plan gives it one. No result was recorded.`);
+  }
+  const expected = "literal" in assertion.expected ? assertion.expected.literal : evaluateFormula(assertion.expected.formula, s.observations);
+  let pass: boolean;
+  if (typeof recorded === "number") {
+    const difference = recorded - Number(expected);
+    pass = assertion.kind === "number_equals" ? Math.abs(difference) < 1e-9 : assertion.kind === "number_at_least" ? difference > -1e-9 : difference < 1e-9;
+  } else {
+    pass = assertion.kind === "text_equals" ? recorded === squash(String(expected)) : recorded.includes(squash(String(expected)));
+  }
+
+  const trail = trailOf(s);
+  const reading = trail.readings?.[name];
+  const request = reading?.responseId ? trail.requests[reading.responseId] : undefined;
+  const response = reading?.responseId ? s.apiResponses.get(reading.responseId) : undefined;
+  const declared = s.scenario.observations?.find((o) => o.name === name);
+  const evidence: Evidence = {
+    step: s.steps.length + 1,
+    ...(assertion.requirementId
+      ? { requirement: { id: assertion.requirementId, ...(assertion.provenance ? { sourceId: assertion.provenance.sourceId, quote: clip(assertion.provenance.quote, 240) } : {}) } }
+      : {}),
+    expected: {
+      kind: assertion.kind,
+      ...("literal" in assertion.expected ? { literal: assertion.expected.literal } : { formula: assertion.expected.formula }),
+      ...(assertion.unit ? { unit: assertion.unit } : {}),
+    },
+    // Who was signed in when the value was read, not who is signed in now.
+    ...(reading?.actor ? { actor: reading.actor } : {}),
+    resource: {
+      ...(reading?.page ? { page: reading.page } : {}),
+      ...(request && response ? { request: { ...request, status: response.status } } : {}),
+    },
+    before: [name, ...variables]
+      .filter((v, i, all) => all.indexOf(v) === i && (Object.hasOwn(s.observations, v) || Object.hasOwn(s.texts ?? {}, v)))
+      .filter((v) => typeof (s.observations[v] ?? undefined) === "number")
+      .map((v) => ({ name: v, when: s.scenario.observations?.find((o) => o.name === v)?.when, value: s.observations[v]!, step: trail.observed[v] })),
+    ...(trail.action ? { action: trail.action } : {}),
+    target: { locatedBy: `observation "${name}" recorded at step ${reading?.step ?? "?"}${declared ? ` (${clip(declared.when, 120)})` : ""} from ${reading?.locatedBy ?? "an unknown target"}` },
+    ...(reading ? { raw: reading.raw } : {}),
+  };
+  s.assertionResults.push({
+    assertionId: id,
+    expected,
+    actual: recorded,
+    pass,
+    target: { source: "observation", name, from: reading?.from ?? "page", recordedAtStep: reading?.step },
+    evidence: JSON.parse(s.vault.scrub(JSON.stringify(evidence))) as Evidence,
+  });
+  return `Recorded ${id}: expected ${expected}, actual ${recorded} (observation "${name}", recorded at step ${reading?.step ?? "?"}) -> ${pass ? "match" : "MISMATCH"}. This result is final.`;
+}
 
 /**
  * Notes, after a step that worked, what later evidence needs from it. `input`
@@ -445,7 +666,7 @@ async function gatherEvidence(
     const url = new URL(s.page.url());
     evidence.resource.page = `${url.pathname}${url.search}`;
     evidence.target = {
-      locatedBy: `${describeRef(target)}${target.pattern ? ` pattern ${clip(target.pattern, 80)}` : ""}${target.count ? " (count)" : ""}`,
+      locatedBy: `${target.by === "cell" ? `cell in row ${target.row ? describeRef(target.row) : "?"}, column "${clip(target.value, 80)}"` : describeRef(target)}${target.pattern ? ` pattern ${clip(target.pattern, 80)}` : ""}${target.count ? " (count)" : ""}`,
       ...(target.within ? { within: describeRef(target.within) } : {}),
       matched: found.matched ?? (found.locator ? 1 : undefined),
     };
@@ -478,12 +699,14 @@ export function circular(target: Target, expected: number | string, assertion: {
   // A declared heading or label is identified by being one, which is checked separately; its wording is what is read.
   if (assertion.subject && assertion.subject !== "value") return undefined;
   // A pattern escapes its punctuation ("22\\.50"); the escapes are dropped so the value in it is seen.
-  const texts = [target.value, (target.pattern ?? "").replace(/\\/g, "")];
+  // A row may not be identified by the value sought either.
+  const texts = [target.value, (target.pattern ?? "").replace(/\\/g, ""), target.row?.value ?? ""];
   const advice = "Finding it there shows only that the value appears somewhere. Identify the element by its label, role, container or test id.";
   if (typeof expected === "number") {
     const wanted = [expected, ...(assertion.unit === "currency-hundredths" ? [expected / 100] : []), ...(assertion.unit === "currency-units" ? [expected * 100] : [])];
     for (const text of texts) {
-      for (const match of text.match(/\d[\d,]*(?:\.\d+)?/g) ?? []) {
+      // A number inside a word is part of a name ("TAKE15"), not a number.
+      for (const match of text.match(/(?<![\p{L}\p{N}_])\d[\d,]*(?:\.\d+)?(?![\p{L}_])/gu) ?? []) {
         const n = Number(match.replace(/,/g, ""));
         if (wanted.some((w) => Math.abs(n - w) < 1e-9)) return `the target is located by the expected value itself ("${clip(text, 60)}" contains ${match}). ${advice}`;
       }
@@ -562,22 +785,39 @@ const handlers: Handlers = {
     if (declared && !mine) {
       throw new Error(`The plan declares no observation "${name}". Declared: ${declared.map((o) => `${o.name} (${o.when})`).join("; ") || "none"}.`);
     }
-    if (Object.hasOwn(s.observations, name)) {
+    if (Object.hasOwn(s.observations, name) || Object.hasOwn(s.texts ?? {}, name)) {
       // One name is one moment. A second reading would silently change what
       // every formula means, so it is refused, and the name is marked: a
       // formula that uses it can no longer be trusted to mean this moment.
       (s.contested ??= new Set()).add(name);
       throw new Error(
-        `Observation "${name}" is already recorded as ${s.observations[name]}${mine ? `, for this moment: ${mine.when}` : ""}. It cannot be recorded again, and no assertion whose formula uses it can be checked from here on.`,
+        `Observation "${name}" is already recorded as ${s.observations[name] ?? JSON.stringify(s.texts?.[name])}${mine ? `, for this moment: ${mine.when}` : ""}. It cannot be recorded again, and no assertion whose formula uses it can be checked from here on.`,
       );
     }
     const { text, raw, locator } = await readTarget(s, target);
     await requireSubject(locator, target, "value", `Observation "${name}"`);
+    const trail = trailOf(s);
+    const reading = () => {
+      trail.observed[name] = s.steps.length + 1;
+      (trail.readings ??= {})[name] = {
+        step: s.steps.length + 1,
+        from: target.source,
+        locatedBy: describeTarget(target),
+        raw: clip(raw, 200),
+        ...(target.source === "page" ? { page: pagePath(s) } : { responseId: target.responseId }),
+        ...(trail.actor ? { actor: trail.actor } : {}),
+      };
+    };
+    if (mine?.type === "text") {
+      (s.texts ??= {})[name] = text;
+      reading();
+      return `Recorded ${name} = ${JSON.stringify(text)}`;
+    }
     const read = parseNumber(text);
     const value = reconcile(mine?.unit, raw, read);
     if (!value.comparable) throw new Error(`Observation "${name}" was not recorded: ${value.why}.`);
     s.observations[name] = value.value;
-    trailOf(s).observed[name] = s.steps.length + 1;
+    reading();
     return `Recorded ${name} = ${value.value}${value.converted ? ` (read as ${read}, converted to the declared unit)` : ""}`;
   },
 
@@ -587,6 +827,9 @@ const handlers: Handlers = {
     if (s.assertionResults.some((r) => r.assertionId === assertionId)) {
       throw new Error(`Assertion ${assertionId} already has a recorded result; it cannot be re-checked.`);
     }
+
+    if (assertion.actual) return checkObservation(s, assertion, assertion.actual.observation, target);
+    if (!target) throw new Error(`Assertion ${assertionId} needs a target: say where its actual value is.`);
 
     let expected: number | string;
     let actual: number | string;
@@ -607,7 +850,7 @@ const handlers: Handlers = {
         );
       } else {
         // Presence means shown: an element that is in the page but not visible is not there for the user.
-        const found = buildLocator(s.page, target).filter({ visible: true });
+        const found = buildLocator(s.page, asRef(target)).filter({ visible: true });
         const deadline = Date.now() + (assertion.kind === "present" ? LOCATE_TIMEOUT_MS : 1_000);
         count = await found.count();
         while (count === 0 && Date.now() < deadline) {

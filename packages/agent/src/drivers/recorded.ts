@@ -16,7 +16,7 @@ export function planToDraft(plan: RunReport["plan"]): PlanDraft {
       intent: p.scenario.intent,
       setup: p.scenario.setup ?? "",
       fixtures: Object.entries(p.scenario.fixtures).map(([alias, type]) => ({ alias, type })),
-      observations: (p.scenario.observations ?? []).map((o) => ({ name: o.name, what: o.what, when: o.when, unit: o.unit ?? "plain" })),
+      observations: (p.scenario.observations ?? []).map((o) => ({ name: o.name, what: o.what, when: o.when, unit: o.unit ?? "plain", ...(o.type ? { type: o.type } : {}) })),
       ...(p.focus ? { focus: p.focus } : {}),
       // A deferred scenario was runnable when planned; the selection is made again by code.
       status: p.status === "deferred" ? "runnable" : p.status,
@@ -31,6 +31,7 @@ export function planToDraft(plan: RunReport["plan"]): PlanDraft {
         expectedFormula: a.expected && "formula" in a.expected ? a.expected.formula : null,
         unit: a.unit ?? "plain",
         ...(a.subject ? { subject: a.subject } : {}),
+        ...(a.actual ? { actualObservation: a.actual.observation } : {}),
         requirementId: a.requirementId ?? "",
         alsoVerifies: a.alsoVerifies ?? [],
       })),
