@@ -7,16 +7,20 @@
  *   failed assertions   comparisons that did not match
  *   failed scenarios    scenarios with at least one such comparison
  *   failure patterns    groups of failed comparisons that belong together
- *   confirmed distinct defects   patterns with evidence beyond one page reading
+ *   evidence-backed defect candidates   patterns with evidence beyond one page reading
  *
  * Grouping is arithmetic on the record, not a diagnosis. Two failed
  * comparisons belong together when they rest on a common approved
- * requirement, or when they are numbers off by the same amount. A pattern is "confirmed" only when at least one of its comparisons
+ * requirement, or when they are numbers off by the same amount. A pattern is "evidence-backed" only when at least one of its comparisons
  * is backed by the application's own API response, by a second comparison
  * through another target, or by a second attempt that located the value its
  * own way, and that scenario's failure repeats. Anything else is an
  * unconfirmed pattern: it may be a defect, a wrong locator or a wrong
  * expectation, and the report does not call it a defect.
+ *
+ * An evidence-backed pattern is a defect candidate, not a confirmed root
+ * cause. The grouping is a heuristic: two candidates may share one cause, and
+ * one candidate may hide two. Establishing root causes is left to people.
  */
 export type PatternInput = {
   plan: { scenarios: { scenario: { id: string; assertions: { id: string; requirementId?: string; alsoVerifies?: string[] }[] } }[] };
@@ -33,7 +37,7 @@ export type FailurePattern = {
   /** Requirements the failed comparisons rest on directly. */
   requirementIds: string[];
   /** Whether the pattern has evidence beyond a single page reading. */
-  evidence: "confirmed" | "unconfirmed";
+  evidence: "evidence-backed" | "unconfirmed";
   /** Why it is classed that way. */
   basis: string;
 };
@@ -105,7 +109,7 @@ export function failurePatterns(run: PatternInput): FailurePattern[] {
       comparisons: members.map(({ requirementId: _r, linked: _l, standing: _s, ...comparison }) => comparison),
       scenarios,
       requirementIds,
-      evidence: backing ? ("confirmed" as const) : ("unconfirmed" as const),
+      evidence: backing ? ("evidence-backed" as const) : ("unconfirmed" as const),
       basis: backing
         ? `${backing.scenarioId}/${backing.assertionId} is backed by ${BASIS[backing.standing!]}, and the failure repeats`
         : backedNotRepeating
@@ -116,12 +120,12 @@ export function failurePatterns(run: PatternInput): FailurePattern[] {
 }
 
 /** The four counts a report gives, kept apart. */
-export function failureCounts(run: PatternInput): { assertions: number; scenarios: number; patterns: number; confirmed: number } {
+export function failureCounts(run: PatternInput): { assertions: number; scenarios: number; patterns: number; candidates: number } {
   const patterns = failurePatterns(run);
   return {
     assertions: patterns.reduce((n, p) => n + p.comparisons.length, 0),
     scenarios: run.results.filter((r) => r.assertionResults.some((a) => !a.pass)).length,
     patterns: patterns.length,
-    confirmed: patterns.filter((p) => p.evidence === "confirmed").length,
+    candidates: patterns.filter((p) => p.evidence === "evidence-backed").length,
   };
 }
