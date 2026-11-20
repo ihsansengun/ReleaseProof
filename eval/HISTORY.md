@@ -53,6 +53,7 @@ Notes:
 | 19 Nov | Sonnet 5.5 analysis and planning at medium effort, Haiku 5.5 execution, Sonnet escalation | the same four | 3 of 5 | 3 | $1.13 | [benchmark A](results/2026-11-19-routing-benchmark/README.md) |
 | 19 Nov | Opus 5.5 analysis and planning at high effort, Haiku 5.5 execution, Sonnet escalation (`opus-planning`) | the same four | 4 of 5 | 3 | $4.24 | [benchmark C](results/2026-11-19-routing-benchmark-c/README.md) |
 | 20 Nov | `opus-planning` after the locator, evidence and selection changes (reliability gate) | time-off with defects, shop fixed | 2 of 2 | 3 | $2.63 | [gate, failed](results/2026-11-20-reliability-gate/README.md) |
+| 20 Nov | `opus-planning` after the escalation rule, row-and-column targets, observation-based assertions and threshold-first selection (reliability gate, second attempt) | time-off with defects, shop fixed | 2 of 2 | 0 | $2.98 | [gate, passed](results/2026-11-20-reliability-gate-2/README.md) |
 
 ## What the history does not yet contain
 
