@@ -126,6 +126,18 @@ const schemas = {
   click: z.object({ element: ElementRef }),
   fill: z.object({ element: ElementRef, text: z.string() }),
   select: z.object({ element: ElementRef, option: z.string().describe("Visible label of the option to choose.") }),
+  upload: z.object({
+    element: ElementRef.describe("The control a user clicks to choose files (a button, a link, or the file field itself)."),
+    files: z
+      .array(
+        z.object({
+          name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}$/).describe('File name with its extension, e.g. "notes.txt". No folders.'),
+          kind: z.enum(["text", "image"]).describe('"text": a one-line plain text file. "image": a very small PNG picture.'),
+        }),
+      )
+      .min(1)
+      .max(5),
+  }),
   api_request: z.object({
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
     path: z.string(),
@@ -151,6 +163,8 @@ const descriptions: Record<ToolName, string> = {
   click: "Click one element. Returns the resulting page.",
   fill: "Replace the content of one input. Returns the resulting page. Secret placeholders from the test data are substituted for you.",
   select: "Choose one option of a drop-down by its visible label. Returns the resulting page.",
+  upload:
+    "Choose files in a file field, as a user does through the file dialog. The files are small synthetic ones made for the test: you give each a name and a kind, never a path. The tool reports each file's name, size in bytes and content. Returns the resulting page.",
   api_request:
     "Send an HTTP request to the application under test using the browser session's cookies. Returns status, body and a responseId usable as a target.",
   observe:
@@ -632,7 +646,7 @@ function noteStep(session: Session, tool: string, input: unknown): void {
   // Entering an alias's secret is how a session takes on an identity. The alias is test data, not a person.
   const alias = /\{\{secret:([A-Za-z][A-Za-z0-9_]*)\./.exec(JSON.stringify(input ?? null))?.[1];
   if (alias && (tool === "fill" || tool === "api_request")) trail.actor = { alias, step };
-  if ((tool === "click" || tool === "fill" || tool === "select") && given.element) {
+  if ((tool === "click" || tool === "fill" || tool === "select" || tool === "upload") && given.element) {
     trail.action = { step, tool, what: describeRef(given.element) };
   } else if (tool === "api_request" && given.method && given.method !== "GET") {
     trail.action = { step, tool, what: `${given.method} ${clip(String(given.path ?? ""), 120)}` };
@@ -741,6 +755,41 @@ export function circular(target: Target, expected: number | string, assertion: {
   return undefined;
 }
 
+// ---- parts of pages -----------------------------------------------------------
+
+export const PART_OF_A_PAGE =
+  "NOTE: this address returned a part of a page, not a whole page. The application loads it into another page (a dialog, a panel), and what that page's scripts add, such as the buttons that submit a form, is missing here. Do not work from this address: go to the page that links to it and click the link there.";
+
+/**
+ * Some addresses answer with a piece of HTML that the application places
+ * inside a page it already shows. Opened on its own, such a piece has no
+ * scripts and so lacks whatever they draw. A whole page declares itself with
+ * an html, head or body element; a piece does not. Decided from the response
+ * as the server sent it, since a browser wraps anything in those elements.
+ */
+export async function partOfAPage(response: { headers(): Record<string, string>; text(): Promise<string> } | null): Promise<string | undefined> {
+  if (!response || !/html/i.test(response.headers()["content-type"] ?? "")) return undefined;
+  const body = await response.text().catch(() => "");
+  if (body.trim() === "" || /<(html|head|body)[\s>]/i.test(body)) return undefined;
+  return PART_OF_A_PAGE;
+}
+
+// ---- synthetic files --------------------------------------------------------
+
+/** A picture of one transparent pixel. */
+const PIXEL = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+
+/**
+ * The content of a file made for a test. It depends on the name and kind
+ * alone, so a plan can state it in advance and a repeat sends the same bytes.
+ * Nothing is ever read from the machine the test runs on.
+ */
+export function syntheticFile(name: string, kind: "text" | "image"): { name: string; mimeType: string; buffer: Buffer } {
+  return kind === "image"
+    ? { name, mimeType: "image/png", buffer: PIXEL }
+    : { name, mimeType: "text/plain", buffer: Buffer.from(`Synthetic test file ${name}`, "utf8") };
+}
+
 // ---- tools ----------------------------------------------------------------
 
 type Handlers = { [K in ToolName]: (s: Session, input: z.infer<(typeof schemas)[K]>) => Promise<string> };
@@ -748,9 +797,10 @@ type Handlers = { [K in ToolName]: (s: Session, input: z.infer<(typeof schemas)[
 const handlers: Handlers = {
   async navigate(s, { path: p }) {
     if (!p.startsWith("/") || p.startsWith("//")) throw new Error('path must start with a single "/".');
-    await s.page.goto(new URL(p, s.baseUrl).toString(), { waitUntil: "load" });
+    const response = await s.page.goto(new URL(p, s.baseUrl).toString(), { waitUntil: "load" });
     await settle(s.page);
-    return describePage(s);
+    const part = await partOfAPage(response);
+    return `${part ? `${part}\n` : ""}${await describePage(s)}`;
   },
 
   async click(s, { element }) {
@@ -768,6 +818,37 @@ const handlers: Handlers = {
     await (await locate(s.page, element)).selectOption({ label: option });
     await settle(s.page);
     return describePage(s);
+  },
+
+  async upload(s, { element, files }) {
+    if (new Set(files.map((f) => f.name.toLowerCase())).size !== files.length) throw new Error("Each file needs its own name. Nothing was chosen.");
+    const made = files.map((f) => syntheticFile(f.name, f.kind));
+    const control = await locate(s.page, element);
+    // The file field itself takes the files directly. Anything else must open
+    // the browser's file dialog when clicked; that dialog is the only way a
+    // file enters the page, and it is given these synthetic files and no other.
+    const field = await control.evaluate((el) => el.tagName === "INPUT" && (el as HTMLInputElement).type === "file").catch(() => false);
+    if (field) {
+      if (made.length > 1 && !(await control.evaluate((el) => (el as HTMLInputElement).multiple))) {
+        throw new Error("This file field takes one file. Nothing was chosen.");
+      }
+      await control.setInputFiles(made);
+    } else {
+      const dialog = s.page.waitForEvent("filechooser", { timeout: LOCATE_TIMEOUT_MS }).catch(() => undefined);
+      await control.click();
+      const chooser = await dialog;
+      if (!chooser) {
+        throw new Error(`${describeRef(element)} was clicked and opened no file dialog, so it is not a control for choosing files. Nothing was chosen.`);
+      }
+      if (made.length > 1 && !chooser.isMultiple()) {
+        await chooser.setFiles([]).catch(() => undefined);
+        throw new Error("This file field takes one file. Nothing was chosen.");
+      }
+      await chooser.setFiles(made);
+    }
+    await settle(s.page);
+    const listing = made.map((f) => `${f.name} (${f.buffer.length} bytes, ${f.mimeType}${f.mimeType === "text/plain" ? `, content ${JSON.stringify(f.buffer.toString("utf8"))}` : ""})`).join("; ");
+    return `Chose ${made.length} file${made.length === 1 ? "" : "s"}: ${listing}\n${await describePage(s)}`;
   },
 
   async api_request(s, { method, path: p, body }) {
