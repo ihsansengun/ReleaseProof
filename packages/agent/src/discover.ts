@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { Driver } from "./drivers/driver.ts";
 import { closeSession, openSession } from "./execute/run.ts";
-import { describePage, settle, type Session } from "./execute/tools.ts";
+import { describePage, partOfAPage, settle, type Session } from "./execute/tools.ts";
 import type { AppMap, Manifest, Outcome, Scenario } from "./schema.ts";
 
 const SIGN_IN = `Sign in to this web application with the account you are given, using the tools.
@@ -37,8 +37,9 @@ async function crawl(session: Session, manifest: Manifest, view: View): Promise<
     const next = queue.shift()!;
     if (seen.has(next)) continue;
     seen.add(next);
+    let part: string | undefined;
     try {
-      await session.page.goto(new URL(next, origin).toString(), { waitUntil: "load" });
+      part = await partOfAPage(await session.page.goto(new URL(next, origin).toString(), { waitUntil: "load" }));
       await settle(session.page);
     } catch {
       continue;
@@ -48,7 +49,8 @@ async function crawl(session: Session, manifest: Manifest, view: View): Promise<
     if (landed.origin !== origin || (landedPath !== next && seen.has(landedPath))) continue;
     seen.add(landedPath);
 
-    const text = await describePage(session);
+    // A piece the application loads into another page is mapped as that, so nobody plans to open it by its address.
+    const text = `${part ? `${part}\n` : ""}${await describePage(session)}`;
     view.pages.push({
       path: landedPath,
       title: await session.page.title(),

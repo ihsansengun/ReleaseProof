@@ -164,9 +164,17 @@ Limits:
 | Problem seen | What changed |
 |---|---|
 | A ticket about attaching files could not be tested: the executor had no way to choose a file | A tool `upload`: the executor names the control a user clicks to choose files, and the browser's file dialog is given small synthetic files. The executor chooses names and kinds ("text", "image") only; content depends on name and kind alone, so a plan can state it and a model-free repeat sends the same bytes. A control that opens no file dialog is refused |
+| The first run on an application built by others made no comparison: the executor opened a form by the address its link carries, the application answered with a piece of HTML meant for a dialog, and the button that submits the form, drawn by the page's scripts, was not there | An HTML answer with no html, head or body element is a part of a page. `navigate` says so and tells the executor to go to the linking page and click; discovery marks such addresses in the application map; the briefing says to open forms and dialogs as a user does |
 
 Limits:
 
+- A part of a page is recognised from the server's answer alone. A whole
+  page whose scripts fail for another reason is not detected.
+- The token limit counts re-reads of the cached conversation. On an
+  application with large pages it ends a run long before the cost limit.
+  Left as it is; the limit is a repository variable.
+- `fill` returns the page at once. A list that appears a moment after
+  typing is seen on the next reading, not in the tool's own answer.
 - Pasting from the clipboard and dragging a file onto the page are not
   supported. The planner is told to block scenarios that need either.
 - A control that is clicked and opens no file dialog has still been clicked.

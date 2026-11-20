@@ -755,6 +755,25 @@ export function circular(target: Target, expected: number | string, assertion: {
   return undefined;
 }
 
+// ---- parts of pages -----------------------------------------------------------
+
+export const PART_OF_A_PAGE =
+  "NOTE: this address returned a part of a page, not a whole page. The application loads it into another page (a dialog, a panel), and what that page's scripts add, such as the buttons that submit a form, is missing here. Do not work from this address: go to the page that links to it and click the link there.";
+
+/**
+ * Some addresses answer with a piece of HTML that the application places
+ * inside a page it already shows. Opened on its own, such a piece has no
+ * scripts and so lacks whatever they draw. A whole page declares itself with
+ * an html, head or body element; a piece does not. Decided from the response
+ * as the server sent it, since a browser wraps anything in those elements.
+ */
+export async function partOfAPage(response: { headers(): Record<string, string>; text(): Promise<string> } | null): Promise<string | undefined> {
+  if (!response || !/html/i.test(response.headers()["content-type"] ?? "")) return undefined;
+  const body = await response.text().catch(() => "");
+  if (body.trim() === "" || /<(html|head|body)[\s>]/i.test(body)) return undefined;
+  return PART_OF_A_PAGE;
+}
+
 // ---- synthetic files --------------------------------------------------------
 
 /** A picture of one transparent pixel. */
@@ -778,9 +797,10 @@ type Handlers = { [K in ToolName]: (s: Session, input: z.infer<(typeof schemas)[
 const handlers: Handlers = {
   async navigate(s, { path: p }) {
     if (!p.startsWith("/") || p.startsWith("//")) throw new Error('path must start with a single "/".');
-    await s.page.goto(new URL(p, s.baseUrl).toString(), { waitUntil: "load" });
+    const response = await s.page.goto(new URL(p, s.baseUrl).toString(), { waitUntil: "load" });
     await settle(s.page);
-    return describePage(s);
+    const part = await partOfAPage(response);
+    return `${part ? `${part}\n` : ""}${await describePage(s)}`;
   },
 
   async click(s, { element }) {

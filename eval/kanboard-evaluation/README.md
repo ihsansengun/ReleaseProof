@@ -95,3 +95,62 @@ project checked itself.
   the ticket and the running application, not the default branch's log.
 - The QA agent sees each pull request's diff, as it would in normal use.
   What is withheld from it is which build is defective and what is wrong.
+
+## Paid run 1 (seeded pair, pull request #5): no result
+
+20 November 2026, QA run [44749488852](https://github.com/ihsansengun/ReleaseProof/actions/runs/44749488852),
+engine `main` at `0ca3156`, Opus 5.5 analysis and planning, Haiku 5.5
+discovery and execution, Sonnet 5.5 escalation. Recorded before the key is
+opened. This run says nothing about the build.
+
+Lines from the job log, as printed:
+
+    ticket: KBE-2 from a ticket file on the default branch
+    requirements: protected revision 6b6d8e09ffcf, 0 approved document(s), 1 GitHub and 1 Jira requirement owner(s)
+    limits: $2, 15 min, 3000000 tokens, 8 scenarios
+    Incomplete: 0 failed, 0 passed · 0 of 29 requirements verified · 8 without a verdict · 5 scenarios blocked · 2 not run (limit)
+    requirements: {"verified":0,"failed":0,"blocked":0,"unverified":28,"exercised":0,"deferred":1,"not planned":0}
+
+| | |
+|---|---|
+| Requirements found | 29 |
+| Scenarios started | 8 (S1 to S3, S5 to S9); 2 more not run because of the 8-scenario limit |
+| Passed / failed | 0 / 0 |
+| Blocked | S1, S2, S3 |
+| Unverified | S5 to S9 (S8 and S9 never began) |
+| Comparisons made | 0 of 37 |
+| Failure patterns, defect candidates, false positives | none: nothing was compared |
+| Escalations | 0 |
+| Cost | $0.88: discovery $0.00, analysis $0.27, planning $0.52, execution $0.09 |
+| Time | 6.5 minutes: analysis 92 s, planning 173 s, execution 85 s |
+
+Why nothing was tested:
+
+1. **The two test users could not be created.** Every scenario began by
+   creating the ticket's users, and each stalled on the "New user" form: no
+   "Save" control by role or by text. The executor had opened the form by
+   the address its link carries. Kanboard answers that address with a piece
+   of HTML meant for a dialog; the button is drawn by the page's scripts,
+   which a bare piece does not have. Posting the form directly returned the
+   form again. Checked afterwards without a model on the neutral base branch
+   `eval/s-base`: scripts load and run in the engine's browser, clicking
+   "New user" opens the dialog with its button, the user is saved, and the
+   suggestion list of the Permissions page appears after typing.
+2. **The token limit ended the run**: 3,041,906 of 3,000,000, with $0.09
+   spent on execution. The limit counts every re-read of the cached
+   conversation, and this application's pages are large.
+
+Also seen:
+
+- The $3 limit requested was capped at $2: `RELEASEPROOF_MAX_USD` is not set.
+- No report comment appeared on the fork's pull request although the report
+  job succeeded. Figures here come from the job log.
+- The plan's last scenario assumed a non-administrator account that the
+  fork's manifest does not declare. The run ended before it began.
+- One conflict about the approved requirements was reported unresolved. The
+  log does not say which.
+
+What changed afterwards, in the engine and for any application: opening an
+address that answers with a part of a page is now reported to the executor
+and marked in the application map (see `docs/RELIABILITY-BACKLOG.md`).
+Run 2 (pull request #6) was not started.
