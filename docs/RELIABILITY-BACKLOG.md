@@ -90,3 +90,27 @@ Limits:
   root causes: the grouping is a heuristic, two candidates may share one
   cause, and one may hide two.
 - Planning more candidates than run costs more planner output.
+
+## After the reliability gate (20 November 2026)
+
+The gate failed on three false-positive scenarios
+(`eval/results/2026-11-20-reliability-gate/`). Each time an escalated re-run
+recorded one mismatch through a wrong target, or at the wrong moment, and
+replaced a first attempt that had ended without a verdict.
+
+| Problem seen | What changed |
+|---|---|
+| An escalated failure replaced an inconclusive result as soon as it repeated when replayed, and a wrong target always repeats | An escalated failure replaces the first result only if it repeats and at least one of its mismatches is backed by more than a single page reading: the API response, a second failed comparison of the same requirement through another target, or the first attempt having failed the same assertion through a different target. Otherwise the first result stands and the escalated attempt stays on record as not kept. An escalated pass still replaces |
+
+Limits and what is still open from the gate:
+
+- A real defect that only the escalated run sees, through one page reading,
+  is left without a verdict. The attempt and its mismatch are in the
+  diagnostics for a person to judge.
+- This removes the wrong failures; it does not make the checks possible. A
+  cell whose text equals the expected text still cannot be singled out, and a
+  check still reads only the live page, so such scenarios end unverified.
+- Not changed: the circular rule matching digits inside words, the results
+  table's missing separator column, selection ranking a threshold position
+  below any first comparison, and the model-free repeat diverging when ids
+  are assigned at run time.

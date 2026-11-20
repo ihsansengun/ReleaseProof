@@ -69,6 +69,31 @@ export function needsEscalation(result: ScenarioResult, confirmation: string | u
 }
 
 /**
+ * Whether an escalated run replaces the first result.
+ *
+ * It does if it passed: every comparison matched, each on its own record.
+ *
+ * A failure has to carry more than its own repetition. Replaying it repeats
+ * the same target at the same moment, so a wrong target, or a right one read
+ * too late, repeats as faithfully as a defect does. An escalated failure
+ * therefore replaces the first result only if it repeats AND at least one of
+ * its mismatches is backed by something other than a single page reading:
+ * the application's own API response, a second failed comparison of the same
+ * requirement through another target, or the first attempt having failed the
+ * same assertion through a different target.
+ *
+ * Otherwise the first result stands as it was, inconclusive if it was
+ * inconclusive, and the escalated attempt stays on record as not kept. A real
+ * defect seen only once, through one page reading, is then left without a
+ * verdict; a person can read the attempt and decide.
+ */
+export function escalatedRunSettles(assertions: Assertion[], first: ScenarioResult, second: ScenarioResult, confirmation: string | undefined): boolean {
+  if (second.verdict === "passed") return true;
+  if (second.verdict !== "failed" || confirmation !== "reproduced") return false;
+  return [...standings(assertions, second, first).values()].some((standing) => standing !== "single");
+}
+
+/**
  * What becomes of a failed first result when a second attempt settled nothing
  * but disagreed with it: comparisons the two attempts located differently and
  * read differently (one mismatch, one match) are taken out, and the verdict
@@ -310,9 +335,7 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
           });
           confirmation = replay.verdict === "failed" ? "reproduced" : replay.verdict === "passed" ? "not reproduced" : "replay diverged";
         }
-        // The escalated run replaces the first only if it is conclusive: it
-        // passed on its own comparisons, or it failed and the failure repeats.
-        const conclusive = second.verdict === "passed" || (second.verdict === "failed" && confirmation === "reproduced");
+        const conclusive = escalatedRunSettles(scenario.assertions, first, second, confirmation);
         // Whichever run is not kept stays on record whole: why it ended as it did, its steps and its comparisons.
         report.escalations.push({
           scenarioId: scenario.id,
