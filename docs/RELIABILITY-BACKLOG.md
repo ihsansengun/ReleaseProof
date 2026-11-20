@@ -247,3 +247,35 @@ Limits:
   example is kept as the model worded it and sets no expected value.
 - Nothing here makes a scenario cheaper. A plan that is cut short by the
   token or time limit still leaves examples unrun; they are now named.
+
+### Checked on the application itself (20 November 2026, no model)
+
+After the merge, the engine's own tools were driven by hand-written steps
+against the four builds of the evaluation, started locally. Nothing was
+paid for and no model took part. `main` at `f261c4b`.
+
+| Check | Build | Result |
+|---|---|---|
+| Save a task in a project that has a category | defective attachments build | The page shows "Internal Error: SQL Error[HY000]: … table tasks has no column named screenshot". Pointed at through `finish`, it is read and recorded with actor (admin), action (click on "Save") and page. The same steps replayed meet it again: verdict `errored` |
+| The same steps | fixed attachments build | The task is created. No error is recorded, and a claim of an application error is refused both without a target and with one |
+| Search "%@example.com" in the user list | defective search build | Title "Users (2)" against the expected "Users (0)": mismatch. "Mary Smith" expected absent: present, mismatch. Verdict `failed` |
+| The same | fixed search build | "Users (0)", absent: both match. With "mary@" as well: passed |
+| Count rows after a search (the three unsound matches) | both search builds | Refused. This application lists users without table rows, so that count was 0 on every page, with or without users |
+| Count attachments through the two targets of the false failures | a task with two files | Both refused: one container is a label, the other does not exist |
+| Count attachments in the table | the same task | 2 links, 3 rows: match |
+
+What this showed that the tests on small pages did not:
+
+- **This application answers the error with HTTP 200.** Recording by
+  status does not see it. It was caught only through the second way, the
+  executor pointing at the text. Whether a model does that every time is
+  not established here; in the evaluation's run the executor did describe
+  the error in its own words.
+- The list of users has no table and no rows. An empty result cannot be
+  counted there at all; the title and the message are what can be read.
+  A plan that asks for a row count on such a page now ends unverified
+  where it used to pass for no reason.
+
+Not done: no run with a model. Whether a plan now reaches the wildcard
+term within the limits, and whether the executor reports the error
+through `finish`, are questions only such a run answers.
