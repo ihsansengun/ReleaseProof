@@ -158,3 +158,16 @@ Limits:
 - A failure whose repeat diverges is still sent for a second attempt on the
   escalation model even when it already has API evidence. That costs money
   and was left as it is.
+
+## Before the independent evaluation (20 November 2026)
+
+| Problem seen | What changed |
+|---|---|
+| A ticket about attaching files could not be tested: the executor had no way to choose a file | A tool `upload`: the executor names the control a user clicks to choose files, and the browser's file dialog is given small synthetic files. The executor chooses names and kinds ("text", "image") only; content depends on name and kind alone, so a plan can state it and a model-free repeat sends the same bytes. A control that opens no file dialog is refused |
+
+Limits:
+
+- Pasting from the clipboard and dragging a file onto the page are not
+  supported. The planner is told to block scenarios that need either.
+- A control that is clicked and opens no file dialog has still been clicked.
+- Files are a few dozen bytes. Size limits and large files cannot be tested.

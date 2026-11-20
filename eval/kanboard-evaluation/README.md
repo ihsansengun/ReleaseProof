@@ -33,10 +33,34 @@ message, and each build is one commit on its base.
 | S, an independently seeded defect | KBE-2 | `eval/s-base` `4b3ab6c5fcbb7a9e4552fe5b656597d450b750c8` | `eval/s-a` | `d909fa813f0e10b8dc6eb1427595f3a77bb9abaa` | #5 |
 | | | | `eval/s-b` | `0b00f946fd1987248ca85fe2c51363b5e4018019` | #6 |
 
-Requirement tickets: `eval/tickets/KBE-1.json` and `eval/tickets/KBE-2.json`
-on branch `eval/tickets` (`295994f8d44fd9d9ea08a667ba551e4d38a9ae96`), fork
-pull request #7 to `main`. A run reads tickets only from the fork's default
-branch, so #7 has to be merged by the repository owner before a paid run.
+Requirement tickets: `eval/tickets/KBE-1.json` and `eval/tickets/KBE-2.json`,
+prepared on branch `eval/tickets` (`295994f8d44fd9d9ea08a667ba551e4d38a9ae96`)
+as fork pull request #7. A run reads tickets only from the fork's default
+branch.
+
+### Requirement source, pinned
+
+The repository owner reviewed the acceptance criteria of both tickets and
+approved them on 20 November 2026. Pull request #7 was then merged, before
+any paid run:
+
+    fork main          6b6d8e09ffcf0be69209fd93f7ee1bdf6d2c271d
+    KBE-1.json (blob)  3f22e3358e5a46200da274fd228b0ad76dbc94e2
+    KBE-2.json (blob)  132dc305602316f2d96692ddc8a549aea843240d
+
+The merge added those two files and nothing else. Every run of this
+evaluation takes its expected values from them at that commit; a run's log
+names the ticket's source and the revision it read.
+
+## Readiness checks before the paid runs (20 November 2026, no model)
+
+| Check | Result |
+|---|---|
+| Ticket keys resolve through the trusted path | Jira has no issue `KBE-1` or `KBE-2`, so the lookup falls through to the ticket file on the fork's default branch. Both files load with the engine's own loader: 8 and 7 acceptance criteria |
+| Sealed key unchanged | SHA-256 recomputed without opening the file: equal to the hash above; 14219 bytes |
+| Builds unchanged | The head commits of pull requests #3 to #6 equal the table above (heads only; no diff was read) |
+| File upload through the interface | **Not supported** by the engine at `0ca3156`: no tool sets a file on a file field, and the HTTP tool sends JSON only. The historical case (KBE-1) is held back until an `upload` tool is merged. Pasting an image from the clipboard is not supported either, so KBE-1's screenshot criterion cannot be verified |
+| Cost limit | A request can only lower the configured limit, which is $2 a run unless the repository variable `RELEASEPROOF_MAX_USD` is set. The effective limit is the `limits:` line of each run's log |
 
 ## What the preparation agent stated
 

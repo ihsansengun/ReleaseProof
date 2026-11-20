@@ -19,6 +19,7 @@ Rules:
 - Assertions of kind "present" and "absent" are about whether something is shown. They count only visible elements. Scope them with "within" when the page could show the same text elsewhere.
 - An error from check or observe recorded no result. It says the target was wrong, not that the application is. Choose a better target and try again.
 - Point a check at the value the assertion describes, at the moment the scenario says it should hold. Each assertion can be checked once, so make sure the application is in the right state first.
+- To attach a file, use the upload tool on the control a user would click to choose files. It supplies small synthetic files; you choose their names and kinds. There is no way to paste from the clipboard or to drag a file onto the page: an assertion that needs one of those stays unchecked, and you say so when you finish.
 - Secret values in the test data appear as placeholders like {{secret:name.field}}. Pass the placeholder as it is; the tools substitute the real value, and page descriptions show the placeholder wherever that value appears.
 - If the scenario has a "Preparation" section, do that first, through the application as a user would. It is not what is being tested. If you cannot complete it, call finish with outcome "blocked" and say which part failed; do not check any assertion.
 - If the application does not let you reach a state the scenario needs, call finish with outcome "blocked" and say exactly what stopped you. Do not work around it and do not substitute a different check.
