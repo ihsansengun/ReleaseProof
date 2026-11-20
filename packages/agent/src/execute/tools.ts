@@ -61,6 +61,7 @@ const ROLES = [
   "button", "link", "textbox", "spinbutton", "checkbox", "radio", "combobox",
   "heading", "cell", "row", "listitem", "alert", "status", "paragraph", "strong",
   "region", "group", "table", "list", "form", "dialog", "article",
+  "columnheader", "rowheader", "banner", "navigation", "main", "menuitem", "option", "tab",
 ] as const;
 
 /** A row, section or other element that holds the one that is meant. */
@@ -126,6 +127,10 @@ const schemas = {
   click: z.object({ element: ElementRef }),
   fill: z.object({ element: ElementRef, text: z.string() }),
   select: z.object({ element: ElementRef, option: z.string().describe("Visible label of the option to choose.") }),
+  press: z.object({
+    element: ElementRef,
+    key: z.enum(["Enter", "Escape", "Tab", "ArrowDown", "ArrowUp"]).describe("The key to press while the element has the focus."),
+  }),
   upload: z.object({
     element: ElementRef.describe("The control a user clicks to choose files (a button, a link, or the file field itself)."),
     files: z
@@ -163,6 +168,8 @@ const descriptions: Record<ToolName, string> = {
   click: "Click one element. Returns the resulting page.",
   fill: "Replace the content of one input. Returns the resulting page. Secret placeholders from the test data are substituted for you.",
   select: "Choose one option of a drop-down by its visible label. Returns the resulting page.",
+  press:
+    "Press one key in one element, as a user does on the keyboard: Enter to submit a field that has no button, Escape to close what is open, the arrows to move in a list. Returns the resulting page.",
   upload:
     "Choose files in a file field, as a user does through the file dialog. The files are small synthetic ones made for the test: you give each a name and a kind, never a path. The tool reports each file's name, size in bytes and content. Returns the resulting page.",
   api_request:
@@ -194,11 +201,13 @@ const SNAPSHOT_LIMIT = 20_000;
 const LOCATE_TIMEOUT_MS = 3_000;
 const SETTLE_TIMEOUT_MS = 10_000;
 const STABLE_TIMEOUT_MS = 5_000;
+const TYPING_PAUSE_MS = 400;
 
 export async function describePage(session: Pick<Session, "page" | "vault">): Promise<string> {
   const { page } = session;
   const url = new URL(page.url());
-  let snapshot = session.vault.scrub(await page.locator("body").ariaSnapshot());
+  // Icon glyphs are left out: they carry no meaning as text and cannot be repeated back.
+  let snapshot = session.vault.scrub(await page.locator("body").ariaSnapshot()).replace(ICON_GLYPHS, "");
   // Whatever sits in a password field is hidden, whether or not we know it.
   const typed = await page
     .locator('input[type="password"]')
@@ -224,10 +233,24 @@ export function wholeWords(text: string): RegExp {
   return new RegExp(`${edge(trimmed[0]) ? "(?<![\\p{L}\\p{N}])" : ""}${body}${edge(trimmed.at(-1)) ? "(?![\\p{L}\\p{N}])" : ""}`, "iu");
 }
 
+/** Characters of the private-use range: glyphs of icon fonts. They are drawings, not text, and nobody can type them. */
+const ICON_GLYPHS = /[\uE000-\uF8FF]/g;
+
+/**
+ * An accessible name matched in full, except that icon glyphs and the spaces
+ * around them do not count: a link shown as a name followed by a small arrow
+ * is that name.
+ */
+export function exactName(value: string): RegExp {
+  const gap = "[\\s\\uE000-\\uF8FF]";
+  const words = value.replace(ICON_GLYPHS, " ").trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`^${gap}*${words.join(`${gap}+`)}${gap}*$`);
+}
+
 function buildIn(root: Page | Locator, ref: Omit<ElementRef, "within">): Locator {
   if (ref.by === "role") {
     if (!ref.role) throw new Error("role is required when by=role");
-    return root.getByRole(ref.role, { name: ref.value, exact: true });
+    return root.getByRole(ref.role, { name: ref.value.trim() === "" ? ref.value : exactName(ref.value), exact: true });
   }
   if (ref.by === "label") return root.getByLabel(ref.value, { exact: true });
   if (ref.by === "testid") return root.getByTestId(ref.value);
@@ -646,7 +669,7 @@ function noteStep(session: Session, tool: string, input: unknown): void {
   // Entering an alias's secret is how a session takes on an identity. The alias is test data, not a person.
   const alias = /\{\{secret:([A-Za-z][A-Za-z0-9_]*)\./.exec(JSON.stringify(input ?? null))?.[1];
   if (alias && (tool === "fill" || tool === "api_request")) trail.actor = { alias, step };
-  if ((tool === "click" || tool === "fill" || tool === "select" || tool === "upload") && given.element) {
+  if ((tool === "click" || tool === "fill" || tool === "select" || tool === "upload" || tool === "press") && given.element) {
     trail.action = { step, tool, what: describeRef(given.element) };
   } else if (tool === "api_request" && given.method && given.method !== "GET") {
     trail.action = { step, tool, what: `${given.method} ${clip(String(given.path ?? ""), 120)}` };
@@ -810,12 +833,35 @@ const handlers: Handlers = {
   },
 
   async fill(s, { element, text }) {
-    await (await locate(s.page, element)).fill(text);
-    return describePage(s);
+    const field = await locate(s.page, element);
+    await field.fill(text);
+    // Some pages move the caret when a field takes the focus, and the new text
+    // then lands after the old. What the field holds is checked; if it is not
+    // what was given, the field is emptied and the text typed key by key.
+    const holds = () => field.inputValue().catch(() => text);
+    if ((await holds()) !== text) {
+      await field.evaluate((el) => {
+        (el as HTMLInputElement).value = "";
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      if (text !== "") await field.pressSequentially(text);
+    }
+    const now = await holds();
+    // Lists of suggestions and live filters answer a moment after typing.
+    await s.page.waitForTimeout(TYPING_PAUSE_MS);
+    await settle(s.page);
+    const page = await describePage(s);
+    return now === text ? page : `NOTE: the field now holds ${JSON.stringify(now)}, which is not exactly what was given. The page may format what is typed, or may not have taken it.\n${page}`;
   },
 
   async select(s, { element, option }) {
     await (await locate(s.page, element)).selectOption({ label: option });
+    await settle(s.page);
+    return describePage(s);
+  },
+
+  async press(s, { element, key }) {
+    await (await locate(s.page, element)).press(key);
     await settle(s.page);
     return describePage(s);
   },

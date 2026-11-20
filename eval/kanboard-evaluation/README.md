@@ -154,3 +154,75 @@ What changed afterwards, in the engine and for any application: opening an
 address that answers with a part of a page is now reported to the executor
 and marked in the application map (see `docs/RELIABILITY-BACKLOG.md`).
 Run 2 (pull request #6) was not started.
+
+## Paid run 2 (seeded pair, pull request #5 again): no result
+
+20 November 2026, QA run [44755631966](https://github.com/ihsansengun/ReleaseProof/actions/runs/44755631966),
+engine `main` at `27e6e5f` (with the part-of-a-page guard and the upload
+tool), same models. Recorded before the key is opened. This run says
+nothing about the build.
+
+Lines from the job log, as printed:
+
+    ticket: KBE-2 from a ticket file on the default branch
+    requirements: protected revision 6b6d8e09ffcf, 0 approved document(s), 1 GitHub and 1 Jira requirement owner(s)
+    limits: $2, 15 min, 3000000 tokens, 8 scenarios
+    Incomplete: 0 failed, 0 passed · 0 of 25 requirements verified · 8 without a verdict · 5 scenarios blocked · 5 not run (limit)
+    requirements: {"verified":0,"failed":0,"blocked":1,"unverified":20,"exercised":0,"deferred":4,"not planned":0}
+
+| | |
+|---|---|
+| Requirements found | 25 |
+| Scenarios | 8 selected (S1, S3, S5, S7, S8, S9, S10, S12); 5 not run because of the scenario limit |
+| Passed / failed | 0 / 0 |
+| Blocked | S1, S3, S5 |
+| Unverified | S7, S8, S9, S10, S12, never begun |
+| Comparisons made | 0 of 29 |
+| Failure patterns, defect candidates, false positives | none: nothing was compared |
+| Escalations | 0 |
+| Cost | $0.89: analysis $0.22, planning $0.41, execution $0.26 |
+| Time | 5.6 minutes |
+
+What worked: in all three scenarios that ran, both test users were created
+through the "New user" dialog. No tool call failed.
+
+Why nothing was tested:
+
+1. **The search could not be submitted.** The user list's search box has
+   no button; a user presses Enter. The executor had no way to press a key.
+   It typed the term, tried a line break, clicked elsewhere, then opened the
+   list with a parameter of its own guessing. The list kept showing all
+   users, and it reported blocked instead of comparing an unfiltered list.
+2. **The token limit ended the run** after three scenarios: 3,060,883 of
+   3,000,000. `RELEASEPROOF_MAX_TOKENS` was not set.
+
+Paid so far: $1.77 in two runs without a result. Pull request #6 and the
+historical pair were not started.
+
+## Walkthrough without a model (after run 2)
+
+What should have preceded the first paid run. The journeys of both tickets
+were driven with the executor's own tools (`openSession`, `runTool`) against
+the neutral base branches `eval/s-base` and `eval/h-base`, started locally.
+Neither is one of the four builds.
+
+| Journey | At first | After the changes |
+|---|---|---|
+| Create the two users through the "New user" dialog | works | works |
+| Search the user list: a term, a term with no match, an empty term | no way to submit; and a second term was appended to the first, because the page moves the caret when the box takes the focus | works: Enter submits; `fill` checks what the field holds |
+| Read the title "Users (n)", the rows and "No users found." | works | works |
+| Type in the Permissions "Name" field and read the suggestions, or their absence | the list arrived after `fill` had returned, and a stale one was shown for the next term | works: `fill` waits for what follows typing |
+| Sign out, sign in as a second user | the menu link's name ends in an icon glyph and could not be matched | works: glyphs are not part of a name |
+| Non-administrator opens the user list: page text and HTTP status 403 | works | works |
+| Board, "+" of a column, "New task" form | four identical links, one per column; the tools had no column-header role to tell them apart | works: common landmark roles added |
+| Save without a title: "The title is required" | works | works |
+| "Create another task": form opens again, empty | works | works |
+| Attach two files to an existing task through "choose files"; listed with name and size | works with the upload tool | works |
+| Download an attachment and compare its content | text file: works. Picture: the bytes are returned as text and cannot be compared | unchanged |
+
+Not possible, and not attempted in a paid run: pasting an image from the
+clipboard; dragging a file onto the page.
+
+The base branches do not have the feature either ticket adds, so the
+attachment section of the "New task" form and the e-mail search itself were
+not walked. They use the same controls as the journeys above.
