@@ -1,6 +1,6 @@
 import type { Driver } from "./drivers/driver.ts";
 import { renderAppMap, renderEnvironment, renderPullRequest, renderSources } from "./ingest/context.ts";
-import { AnalysisDraft, type Analysis, type AppMap, type Conflict, type Manifest, type Requirement, type RunContext } from "./schema.ts";
+import { AnalysisDraft, type Analysis, type AppMap, type Conflict, type Manifest, type Requirement, type RunContext, type StatedExample } from "./schema.ts";
 import { attributeQuote, checkSupersession, normalise, ownerSupersessions, type DocChange, type SourceRecord, type Supersession } from "./sources.ts";
 
 export { normalise };
@@ -18,6 +18,7 @@ Requirements:
 - One requirement per testable behaviour. Split compound criteria into separate requirements.
 - kind "documented": a source states the behaviour. Give "sourceId" (the id of the ONE source you are quoting) and "quote" (an exact, contiguous copy of the text in that source). The quote is checked mechanically against that source alone; a paraphrase, a stitched-together quote or a quote from a different source is rejected.
 - You do not decide whether a quoted statement counts as approved. Quote it from where it actually is. A statement quoted from OTHER MATERIAL is recorded as a claim by the pull request and cannot be used as an expected value, whatever it says.
+- "examples": when the source names particular inputs, values or limits for a documented requirement (search terms, amounts, dates, names of cases), list each one: "input" is the value exactly as the source writes it, "expected" what the source says must happen for it, "quote" the exact, contiguous words of the source that contain the input. One entry per input; four terms in one sentence are four examples. Keep them under the one requirement they belong to; do not split a criterion into one requirement per example. Never add an example the source does not name: each is checked against the source and dropped if its words are not there.
 - kind "inferred": you believe the behaviour is intended, but no source states it. Use an empty sourceId and an empty quote.
 
 Statements in OTHER MATERIAL:
@@ -133,7 +134,25 @@ export function attribute(
     if (result.kind === "claimed") {
       notes.push(`${r.id} is a claim, not an approved requirement: its quote comes from ${source.id} (${source.trust}: ${source.basis}).`);
     }
+    // Examples count only for an approved requirement, and only where the
+    // source says them: the words must be in the source this requirement is
+    // quoted from, and the input must be in those words. Anything else is
+    // dropped and said so; nothing here can add a requirement of its own.
+    const examples: StatedExample[] = [];
+    if (result.kind === "documented") {
+      const text = normalise(source.text);
+      for (const e of r.examples ?? []) {
+        const [input, quote] = [e.input.trim(), e.quote.trim()];
+        if (input === "" || !normalise(quote).includes(normalise(input)) || !text.includes(normalise(quote))) {
+          notes.push(`An example given for ${r.id} ("${e.input.slice(0, 80)}") was dropped: its words are not in ${source.id}, or do not contain it.`);
+          continue;
+        }
+        if (examples.some((x) => normalise(x.input) === normalise(input))) continue;
+        examples.push({ id: `${r.id}.${examples.length + 1}`, input, expected: e.expected.trim(), quote });
+      }
+    }
     return {
+      ...(examples.length > 0 ? { examples } : {}),
       id: r.id,
       text: r.text,
       kind: result.kind,

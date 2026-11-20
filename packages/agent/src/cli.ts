@@ -223,7 +223,7 @@ async function main(): Promise<number> {
       const count = (v: string) => report.results.filter((r) => r.verdict === v).length;
       console.log(`\n${headline(assessment)}`);
       console.log(
-        `\n${report.ticketKey}: ${count("passed")} passed, ${count("failed")} failed, ${count("blocked")} blocked, ${count("unverified")} unverified; ${report.plan.scenarios.filter((s) => s.status === "blocked").length} not run; ${covered}/${documented.length} documented requirements compared`,
+        `\n${report.ticketKey}: ${count("passed")} passed, ${count("failed")} failed, ${count("errored")} application errors, ${count("blocked")} blocked, ${count("unverified")} unverified; ${report.plan.scenarios.filter((s) => s.status === "blocked").length} not run; ${covered}/${documented.length} documented requirements compared`,
       );
       console.log(`report: ${path.join(outDir, "report.md")}`);
       return count("failed") === 0 ? 0 : 1;

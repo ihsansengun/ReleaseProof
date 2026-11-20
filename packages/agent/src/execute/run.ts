@@ -10,7 +10,7 @@ import type { Manifest, Scenario, ScenarioResult, Step, Usage } from "../schema.
 import { SecretVault } from "../secrets.ts";
 import { briefing, SYSTEM } from "./briefing.ts";
 import { replaySteps } from "./replay.ts";
-import { ALL_TOOLS, requestAllowed, type Session } from "./tools.ts";
+import { ALL_TOOLS, noteResponse, requestAllowed, type Session } from "./tools.ts";
 import { computeVerdict } from "./verdict.ts";
 
 /** What the caller provides about the application beyond its manifest. Built by trusted code. */
@@ -96,6 +96,9 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
       : route.abort();
   });
 
+  // What the application answers to a user's action is kept when it is an error.
+  context.on("response", (response) => noteResponse(session, response));
+
   let sha: string | undefined;
   let serverDate: string | undefined;
   let fixtures: Record<string, unknown> = {};
@@ -153,6 +156,8 @@ export async function closeSession(
     reason: session.vault.scrub(reason),
     environment: { baseUrl: session.baseUrl, deployedSha: open.sha, expectedSha: open.expectedSha, commitEstablished: open.commitEstablished },
     assertionResults: session.assertionResults,
+    ...(session.appErrors?.length ? { applicationErrors: session.appErrors } : {}),
+    ...(outcome.kind === "blocked" && outcome.cause ? { blockedCause: outcome.cause } : {}),
     observations: session.observations,
     ...(session.texts && Object.keys(session.texts).length > 0 ? { textObservations: session.texts } : {}),
     steps: session.steps,

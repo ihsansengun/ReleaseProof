@@ -68,6 +68,8 @@ export const Assertion = z.object({
    * expected value still rests on `requirementId` alone.
    */
   alsoVerifies: z.array(z.string()).optional(),
+  /** The stated examples of its requirement that this comparison runs, by id. */
+  exampleIds: z.array(z.string()).optional(),
   /**
    * Where the expected value's authority comes from. Copied on by the plan
    * validator from the source record; never written by a model.
@@ -250,6 +252,8 @@ export const Evidence = z.object({
   target: z.object({
     locatedBy: z.string(),
     within: z.string().optional(),
+    /** For a count: where it was counted and how many elements of that kind the place holds in all. */
+    scope: z.string().optional(),
     matched: z.number().optional(),
     visible: z.boolean().optional(),
     element: z.object({ tag: z.string(), role: z.string().optional(), context: z.string().optional() }).optional(),
@@ -274,12 +278,38 @@ export const AssertionResult = z.object({
 });
 export type AssertionResult = z.infer<typeof AssertionResult>;
 
-export const Verdict = z.enum(["passed", "failed", "blocked", "unverified"]);
+/** Why an executor could not go on. Only the first is about the application. */
+export const BlockedCause = z.enum(["application-error", "cannot-operate", "missing-capability", "test-data"]);
+export type BlockedCause = z.infer<typeof BlockedCause>;
+
+/**
+ * An error the application answered with during a scenario. "response": an
+ * HTTP status of 500 or above to a request that followed a user action,
+ * noted by code. "page": error text the executor pointed at and code read.
+ */
+export const ApplicationError = z.object({
+  step: z.number(),
+  source: z.enum(["response", "page"]),
+  actor: z.object({ alias: z.string(), step: z.number() }).optional(),
+  action: z.object({ step: z.number(), tool: z.string(), what: z.string() }).optional(),
+  request: z.object({ method: z.string(), path: z.string(), status: z.number() }).optional(),
+  page: z.string().optional(),
+  locatedBy: z.string().optional(),
+  text: z.string(),
+});
+export type ApplicationError = z.infer<typeof ApplicationError>;
+
+/**
+ * "errored": the scenario could not reach its comparisons because the
+ * application itself answered with an error, and the same steps met the same
+ * error again without a model. Not a mismatch, and not a gap of the test.
+ */
+export const Verdict = z.enum(["passed", "failed", "errored", "blocked", "unverified"]);
 export type Verdict = z.infer<typeof Verdict>;
 
 export type Outcome =
   | { kind: "completed"; reason: string }
-  | { kind: "blocked"; reason: string }
+  | { kind: "blocked"; reason: string; cause?: BlockedCause }
   /** The run ended without the executor declaring an outcome. */
   | { kind: "stopped"; reason: string };
 
@@ -306,6 +336,10 @@ export type ScenarioResult = {
    * the value its own way, disagreed about them. They stay on record here.
    */
   setAside?: { assertionId: string; expected: number | string; actual: number | string; target: unknown; otherActual: number | string; otherTarget: unknown }[];
+  /** Errors the application answered with, in the sequence they were met. */
+  applicationErrors?: ApplicationError[];
+  /** Why the executor said it could not go on, when it did. */
+  blockedCause?: BlockedCause;
   observations: Record<string, number>;
   /** Observations that hold text, such as a status read at one moment. */
   textObservations?: Record<string, string>;
@@ -402,6 +436,12 @@ export const AnalysisDraft = z.object({
       relation: z.enum(["none", "consistent", "contradicts", "adds", "removes"]),
       /** The approved requirement the relation refers to, or empty. */
       relatedRequirementId: z.string(),
+      /**
+       * Inputs, boundaries and results the source itself names for this
+       * requirement, each with the exact words it is named in. Absent or
+       * empty when the source names none.
+       */
+      examples: z.array(z.object({ input: z.string(), expected: z.string(), quote: z.string() })).optional(),
     }),
   ),
   ambiguities: z.array(
@@ -469,7 +509,16 @@ export type Requirement = {
    * until a requirement owner settles it.
    */
   contested?: boolean;
+  /**
+   * What the source itself names for this requirement: an input, a boundary
+   * or a result, in the source's own words. Kept only where code found the
+   * words in the source and the input in the words. They are tracked one by
+   * one: a requirement with four examples is not verified by three.
+   */
+  examples?: StatedExample[];
 };
+
+export type StatedExample = { id: string; input: string; expected: string; quote: string };
 
 /** A disagreement between pull-request material and the approved requirements, or a change nobody accounted for. */
 export type Conflict = {
@@ -554,6 +603,8 @@ export const PlanDraft = z.object({
           requirementId: z.string(),
           /** Ids of other documented requirements this same comparison verifies. Empty if none. */
           alsoVerifies: z.array(z.string()),
+          /** Ids of the stated examples of its requirement that this comparison runs. Empty or absent if none. */
+          exampleIds: z.array(z.string()).optional(),
         }),
       ),
     }),
@@ -583,7 +634,7 @@ export type Plan = {
   /** Runnable scenarios the planner wrote that were dropped to respect the limit. */
   trimmedRunnable?: number;
   /** How the scenarios that run were chosen from the candidates. */
-  selection?: { cap: number; candidates: number; policy: "coverage" | "as planned"; boundaryGaps: string[] };
+  selection?: { cap: number; candidates: number; policy: "coverage" | "as planned"; boundaryGaps: string[]; exampleGaps?: string[] };
 };
 
 // ---- the whole run ----------------------------------------------------------

@@ -34,6 +34,7 @@ export function planToDraft(plan: RunReport["plan"]): PlanDraft {
         ...(a.actual ? { actualObservation: a.actual.observation } : {}),
         requirementId: a.requirementId ?? "",
         alsoVerifies: a.alsoVerifies ?? [],
+        ...(a.exampleIds?.length ? { exampleIds: a.exampleIds } : {}),
       })),
     })),
   };

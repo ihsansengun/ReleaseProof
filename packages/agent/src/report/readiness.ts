@@ -17,14 +17,14 @@
  *   deferred     only scenarios that were planned but not run under the scenario limit compare it
  *   not planned  nothing in the plan is tied to it
  */
-export type RequirementStatus = "verified" | "failed" | "blocked" | "unverified" | "exercised" | "deferred" | "not planned";
+export type RequirementStatus = "verified" | "failed" | "errored" | "blocked" | "unverified" | "exercised" | "deferred" | "not planned";
 export type Readiness = "not ready" | "incomplete" | "ready";
 
 /** The parts of a run this needs. Both the full run report and the CI stage's validated view fit. */
 export type ReadinessInput = {
   stopped?: string;
   analysis: {
-    requirements: { id: string; text: string; kind: string; quote: string; origin?: string }[];
+    requirements: { id: string; text: string; kind: string; quote: string; origin?: string; examples?: { id: string; input: string; expected: string }[] }[];
     /** Disagreements between pull-request material and the approved requirements. */
     conflicts?: { id: string; kind: string; description: string }[];
     supersessions?: { how: string }[];
@@ -38,15 +38,16 @@ export type ReadinessInput = {
       scenario: {
         id: string;
         requirementIds?: string[];
-        assertions: { id: string; requirementId?: string; alsoVerifies?: string[] }[];
+        assertions: { id: string; requirementId?: string; alsoVerifies?: string[]; exampleIds?: string[] }[];
       };
     }[];
   };
   results: {
     scenarioId: string;
-    verdict: "passed" | "failed" | "blocked" | "unverified";
+    verdict: "passed" | "failed" | "errored" | "blocked" | "unverified";
     reason: string;
     assertionResults: { assertionId: string; pass: boolean }[];
+    applicationErrors?: { source: string; text: string; request?: { method: string; path: string; status: number } }[];
   }[];
 };
 
@@ -59,13 +60,44 @@ export type RequirementCoverage = {
   status: RequirementStatus;
   /** Where the status comes from: comparisons made, or why none was. */
   detail: string;
+  /** Each input or value the source names for this requirement, and what became of it. */
+  examples?: ExampleCoverage[];
 };
+
+export type ExampleStatus = "matched" | "mismatched" | "errored" | "blocked" | "unverified" | "deferred" | "not planned";
+export type ExampleCoverage = { id: string; input: string; expected: string; status: ExampleStatus; detail: string };
+
+/** What became of one stated example: the strongest thing any comparison citing it shows. */
+function exampleStatus(run: ReadinessInput, id: string): { status: ExampleStatus; detail: string } {
+  const resultOf = new Map(run.results.map((r) => [r.scenarioId, r]));
+  const seen: { status: ExampleStatus; detail: string }[] = [];
+  for (const planned of run.plan.scenarios) {
+    for (const assertion of planned.scenario.assertions) {
+      if (!(assertion.exampleIds ?? []).includes(id)) continue;
+      const where = `${planned.scenario.id}/${assertion.id}`;
+      const result = resultOf.get(planned.scenario.id);
+      if (!result) {
+        seen.push(planned.status === "deferred" ? { status: "deferred", detail: `${where}: planned and not run because of the scenario limit` } : { status: "blocked", detail: `${where}: ${planned.blockedReason || "not run"}` });
+        continue;
+      }
+      const outcome = result.assertionResults.find((a) => a.assertionId === assertion.id);
+      if (outcome) seen.push({ status: outcome.pass ? "matched" : "mismatched", detail: `${where} ${outcome.pass ? "match" : "MISMATCH"}` });
+      else seen.push({ status: result.verdict === "errored" ? "errored" : result.verdict === "blocked" ? "blocked" : "unverified", detail: `${where} not compared (${result.verdict})` });
+    }
+  }
+  const ranking: ExampleStatus[] = ["mismatched", "matched", "errored", "unverified", "blocked", "deferred"];
+  for (const status of ranking) {
+    const found = seen.filter((x) => x.status === status);
+    if (found.length > 0) return { status, detail: found.map((x) => x.detail).join("; ") };
+  }
+  return { status: "not planned", detail: "no comparison in the plan runs this example" };
+}
 
 export type Assessment = {
   readiness: Readiness;
   /** Why the run is not "ready". Empty when it is. */
   reasons: string[];
-  execution: { passed: number; failed: number; blocked: number; unverified: number };
+  execution: { passed: number; failed: number; errored: number; blocked: number; unverified: number };
   /** Scenarios planned but never started, waiting on a decision or a capability. */
   notRun: number;
   /** Runnable scenarios that were planned and not chosen under the scenario limit. */
@@ -84,6 +116,7 @@ export function assess(run: ReadinessInput): Assessment {
       const waiting: string[] = [];
       const deferredBy: string[] = [];
       const passedThrough: string[] = [];
+      const erroredBy: string[] = [];
       let mismatch = false;
 
       for (const planned of run.plan.scenarios) {
@@ -108,7 +141,8 @@ export function assess(run: ReadinessInput): Assessment {
           if (!direct && !also) continue;
           tied = true;
           const outcome = result.assertionResults.find((a) => a.assertionId === assertion.id);
-          if (!outcome) uncompared.push(`${scenario.id}/${assertion.id} (${result.verdict}: ${result.reason})`);
+          if (!outcome && result.verdict === "errored") erroredBy.push(`${scenario.id}/${assertion.id} not compared: ${result.reason}`);
+          else if (!outcome) uncompared.push(`${scenario.id}/${assertion.id} (${result.verdict}: ${result.reason})`);
           else if (outcome.pass) comparisons.push(`${scenario.id}/${assertion.id} match`);
           else if (direct) {
             comparisons.push(`${scenario.id}/${assertion.id} MISMATCH`);
@@ -122,8 +156,22 @@ export function assess(run: ReadinessInput): Assessment {
         if (!tied && scenario.requirementIds?.includes(requirement.id)) passedThrough.push(`${scenario.id} (${result.verdict})`);
       }
 
-      const base = { id: requirement.id, text: requirement.text, quote: requirement.quote, origin: requirement.origin };
+      const examples: ExampleCoverage[] = (requirement.examples ?? []).map((e) => ({ id: e.id, input: e.input, expected: e.expected, ...exampleStatus(run, e.id) }));
+      const open = examples.filter((e) => e.status !== "matched" && e.status !== "mismatched");
+      const base = { id: requirement.id, text: requirement.text, quote: requirement.quote, origin: requirement.origin, ...(examples.length > 0 ? { examples } : {}) };
       if (mismatch) return { ...base, status: "failed" as const, detail: comparisons.join("; ") };
+      // The application stopped a comparison of this requirement with an error.
+      // Other comparisons of it that matched do not make it verified.
+      if (erroredBy.length > 0) return { ...base, status: "errored" as const, detail: [...erroredBy, ...comparisons].join("; ") };
+      // The source names particular inputs for this requirement. It is verified
+      // when each of them was compared and matched, not when some of them were.
+      if (comparisons.length > 0 && open.length > 0) {
+        return {
+          ...base,
+          status: "unverified" as const,
+          detail: `${examples.length - open.length} of ${examples.length} stated examples compared; not compared: ${open.map((e) => `"${e.input}" (${e.status})`).join(", ")}. Comparisons made: ${comparisons.join("; ")}`,
+        };
+      }
       if (comparisons.length > 0) return { ...base, status: "verified" as const, detail: comparisons.join("; ") };
       if (uncompared.length > 0) return { ...base, status: "unverified" as const, detail: uncompared.join("; ") };
       if (passedThrough.length > 0) {
@@ -136,12 +184,13 @@ export function assess(run: ReadinessInput): Assessment {
       return { ...base, status: "not planned" as const, detail: "No scenario in the plan compares this requirement." };
     });
 
-  const counts: Record<RequirementStatus, number> = { verified: 0, failed: 0, blocked: 0, unverified: 0, exercised: 0, deferred: 0, "not planned": 0 };
+  const counts: Record<RequirementStatus, number> = { verified: 0, failed: 0, errored: 0, blocked: 0, unverified: 0, exercised: 0, deferred: 0, "not planned": 0 };
   for (const r of requirements) counts[r.status]++;
   const verdicts = (v: string) => run.results.filter((r) => r.verdict === v).length;
   const execution = {
     passed: verdicts("passed"),
     failed: verdicts("failed"),
+    errored: verdicts("errored"),
     blocked: verdicts("blocked"),
     unverified: verdicts("unverified"),
   };
@@ -151,8 +200,14 @@ export function assess(run: ReadinessInput): Assessment {
 
   const reasons: string[] = [];
   if (execution.failed > 0) reasons.push(`${execution.failed} scenario${execution.failed === 1 ? "" : "s"} failed`);
+  if (execution.errored > 0) {
+    reasons.push(`${execution.errored} scenario${execution.errored === 1 ? " was" : "s were"} stopped by an error of the application that repeats`);
+  }
   const gaps = requirements.length - counts.verified - counts.failed;
   if (gaps > 0) reasons.push(`${gaps} of ${requirements.length} documented requirements were not verified`);
+  const stated = requirements.flatMap((r) => r.examples ?? []);
+  const notCompared = stated.filter((e) => e.status !== "matched" && e.status !== "mismatched").length;
+  if (notCompared > 0) reasons.push(`${notCompared} of ${stated.length} inputs or values the requirements name were not compared`);
   if (execution.blocked + execution.unverified > 0) {
     reasons.push(`${execution.blocked + execution.unverified} executed scenario${execution.blocked + execution.unverified === 1 ? "" : "s"} produced no verdict`);
   }
@@ -172,7 +227,7 @@ export function assess(run: ReadinessInput): Assessment {
     reasons.push(`${inferred} earlier rule${inferred === 1 ? " was" : "s were"} taken as replaced by a later comment without the requirement owner stating it`);
   }
 
-  const readiness: Readiness = execution.failed > 0 || counts.failed > 0 ? "not ready" : reasons.length > 0 ? "incomplete" : "ready";
+  const readiness: Readiness = execution.failed > 0 || counts.failed > 0 || execution.errored > 0 ? "not ready" : reasons.length > 0 ? "incomplete" : "ready";
   return { readiness, reasons, execution, notRun, deferred, requirements, counts };
 }
 
@@ -189,6 +244,7 @@ export function headline(a: Assessment): string {
     `${a.execution.failed} failed, ${a.execution.passed} passed`,
     `${a.counts.verified} of ${total} requirements verified`,
   ];
+  if (a.execution.errored > 0) parts.splice(1, 0, `${a.execution.errored} stopped by an application error`);
   const noVerdict = a.execution.blocked + a.execution.unverified;
   if (noVerdict > 0) parts.push(`${noVerdict} without a verdict`);
   if (a.notRun > 0) parts.push(`${a.notRun} scenarios blocked`);

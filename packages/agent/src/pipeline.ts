@@ -8,7 +8,7 @@ import type { Budget } from "./budget.ts";
 import { discover } from "./discover.ts";
 import type { Driver } from "./drivers/driver.ts";
 import { runScenario, type AppAccess } from "./execute/run.ts";
-import { computeVerdict } from "./execute/verdict.ts";
+import { computeVerdict, erroredVerdict } from "./execute/verdict.ts";
 import { contradicted, restsOnSingleObservations, standings } from "./report/standing.ts";
 import { buildContext, type AuthorityInputs } from "./ingest/context.ts";
 import { fingerprint } from "./sources.ts";
@@ -62,6 +62,8 @@ export function needsEscalation(result: ScenarioResult, confirmation: string | u
       ? "its failure repeats but rests on a single page observation that nothing else confirms"
       : undefined;
   }
+  // Stopped by the application itself: a stronger model would meet the same error.
+  if (result.verdict === "errored") return undefined;
   if (result.verdict === "passed" || result.steps.length === 0) return undefined;
   // Stopped for lack of budget: a stronger model would only spend more.
   if (/budget exhausted|limit (of|would)/i.test(result.reason)) return undefined;
@@ -300,6 +302,27 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
       });
       report.confirmations[scenario.id] =
         replay.verdict === "failed" ? "reproduced" : replay.verdict === "passed" ? "not reproduced" : "replay diverged";
+    }
+    // A scenario that got no verdict and met an error answer of the
+    // application is repeated the same way. If the same steps meet the same
+    // error, the application stopped the scenario: that is a finding, not a
+    // gap of the test. Seen once only, it stays on record and changes nothing.
+    for (const result of report.results.filter((r) => (r.verdict === "blocked" || r.verdict === "unverified") && r.applicationErrors?.length)) {
+      const scenario = runnable.find((s) => s.id === result.scenarioId)!;
+      const replay = await runScenario({
+        scenario,
+        manifest,
+        expectedSha,
+        app: options.app,
+        outDir: path.join(outDir, "confirmations", scenario.id),
+        mode: { kind: "replay", steps: result.steps },
+      });
+      const errored = erroredVerdict(result, replay);
+      if (errored) {
+        result.verdict = errored.verdict;
+        result.reason = errored.reason;
+        report.confirmations[scenario.id] = "reproduced";
+      }
     }
   });
 

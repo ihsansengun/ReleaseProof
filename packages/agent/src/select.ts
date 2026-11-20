@@ -43,7 +43,7 @@ const WORDS: Record<Aspect, string> = {
   "main-flow": "the main flow",
 };
 /** What one new item of each kind is worth. */
-const WEIGHT = { requirement: 3, boundary: 2, access: 2, state: 1, risk: 1 } as const;
+const WEIGHT = { requirement: 3, example: 3, boundary: 2, access: 2, state: 1, risk: 1 } as const;
 
 /** How many runnable candidates a plan may hold for a given limit. */
 export const poolSize = (cap: number) => Math.min(cap * 2, cap + 6);
@@ -55,6 +55,9 @@ function itemsOf(planned: PlannedScenario): Item[] {
   const items: Item[] = [];
   const requirements = new Set(planned.scenario.assertions.flatMap((a) => [a.requirementId, ...(a.alsoVerifies ?? [])]).filter((id): id is string => !!id));
   for (const id of [...requirements].sort()) items.push({ key: `requirement:${id}`, weight: WEIGHT.requirement, words: `first comparison of ${id}` });
+  // Each example the source names is something to run, by itself: three of four search terms are not the fourth.
+  const examples = new Set(planned.scenario.assertions.flatMap((a) => a.exampleIds ?? []));
+  for (const id of [...examples].sort()) items.push({ key: `example:${id}`, weight: WEIGHT.example, words: `stated example ${id}` });
   for (const f of planned.focus ?? []) {
     if (f.aspect === "main-flow") continue;
     const weight = BOUNDARY.includes(f.aspect) ? WEIGHT.boundary : f.aspect === "access-control" || f.aspect === "ownership" ? WEIGHT.access : f.aspect === "regression" ? WEIGHT.risk : WEIGHT.state;
@@ -68,9 +71,11 @@ function itemsOf(planned: PlannedScenario): Item[] {
  * Marks which runnable scenarios run. Those over the limit become "deferred":
  * they stay in the plan whole, with what they alone would have covered.
  */
-export function selectScenarios(plan: Plan, cap: number): Plan {
+export function selectScenarios(plan: Plan, cap: number, examples: { id: string; requirementId: string; input: string }[] = []): Plan {
   const candidates = plan.scenarios.filter((s) => s.status === "runnable");
-  const declared = candidates.some((s) => (s.focus ?? []).length > 0);
+  const cited = (list: PlannedScenario[]) => new Set(list.flatMap((s) => s.scenario.assertions.flatMap((a) => a.exampleIds ?? [])));
+  // A plan says what its scenarios are for through focus entries or through the examples its comparisons cite.
+  const declared = candidates.some((s) => (s.focus ?? []).length > 0) || cited(candidates).size > 0;
   const covered = new Set<string>();
   const chosen: PlannedScenario[] = [];
   const selection = new Map<string, NonNullable<PlannedScenario["selection"]>>();
@@ -142,6 +147,14 @@ export function selectScenarios(plan: Plan, cap: number): Plan {
     }
   }
 
+  // Examples: which of those the source names no chosen scenario runs.
+  const exampleGaps: string[] = [];
+  const [planned, running] = [cited(plan.scenarios), cited(chosen)];
+  for (const e of examples) {
+    if (running.has(e.id)) continue;
+    exampleGaps.push(`${e.requirementId}: the stated example "${e.input.length > 80 ? `${e.input.slice(0, 80)}…` : e.input}" ${planned.has(e.id) ? "is in a scenario that was planned and not run" : "is in no scenario of the plan"}`);
+  }
+
   return {
     ...plan,
     scenarios: plan.scenarios.map((s) => {
@@ -151,6 +164,6 @@ export function selectScenarios(plan: Plan, cap: number): Plan {
         ? { ...s, status: "deferred" as const, blockedReason: `Not run: the scenario limit is ${cap} and ${candidates.length} were planned.`, selection: mine }
         : { ...s, selection: mine };
     }),
-    selection: { cap, candidates: candidates.length, policy: declared ? "coverage" : "as planned", boundaryGaps },
+    selection: { cap, candidates: candidates.length, policy: declared ? "coverage" : "as planned", boundaryGaps, ...(exampleGaps.length > 0 ? { exampleGaps } : {}) },
   };
 }
