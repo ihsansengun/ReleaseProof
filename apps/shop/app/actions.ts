@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { requireCustomer, signIn, signOut } from "@/lib/session";
-import { addToCart, authenticate, checkout, setQuantity } from "@/lib/shop";
+import { addToCart, applyPromo, authenticate, checkout, removePromo, setQuantity } from "@/lib/shop";
 
 export async function loginAction(form: FormData) {
   const customer = authenticate(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
@@ -26,6 +26,19 @@ export async function updateQuantityAction(form: FormData) {
   const customer = await requireCustomer();
   const quantity = Math.max(0, Math.floor(Number(form.get("quantity")) || 0));
   setQuantity(customer.id, Number(form.get("productId")), quantity);
+  redirect("/cart");
+}
+
+export async function applyPromoAction(form: FormData) {
+  const customer = await requireCustomer();
+  const result = applyPromo(customer.id, String(form.get("code") ?? ""));
+  if (result.ok) redirect("/cart");
+  redirect(`/cart?promo=${result.reason}&code=${encodeURIComponent(result.code)}`);
+}
+
+export async function removePromoAction() {
+  const customer = await requireCustomer();
+  removePromo(customer.id);
   redirect("/cart");
 }
 
