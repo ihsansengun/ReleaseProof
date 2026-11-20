@@ -19,6 +19,9 @@ ReleaseProof. It is to be published here after the evaluation, unchanged;
 anyone can then check it against the hash above, which was committed before
 any paid run.
 
+It was opened on 20 November 2026 after all results were recorded, and is
+now `ANSWER-KEY.md` in this directory. See "The key, opened" below.
+
 ## Builds
 
 Fork: `ihsansengun/kanboard-releaseproof-eval`. Each case has a base branch
@@ -395,3 +398,93 @@ the tool and says nothing about the application.
 - One evidence record names the actor as the administrator although the
   page was read as the second user (PR #5, S7).
 - No report comment appeared on the fork's pull requests.
+
+## The key, opened
+
+Opened on 20 November 2026 after the record above was pushed as commit
+`f56b248`. Its SHA-256 was recomputed first and equals the hash committed
+before any paid run. It is published unchanged as `ANSWER-KEY.md` beside
+this file.
+
+| Case | Build | Key | What the key says is wrong |
+|---|---|---|---|
+| S (KBE-2) | PR #5 | **defective** | The address is compared with SQL LIKE, so a wildcard matches: "%@example.com" lists every user of that domain. Criterion 3; only that one of its four examples fails |
+| S (KBE-2) | PR #6 | fixed | nothing |
+| H (KBE-1) | PR #3 | **defective** | In a project with a category, or with more than one swimlane, saving the "New task" form creates no task. Criterion 7. Upstream's own regression, fixed upstream the same day |
+| H (KBE-1) | PR #4 | fixed | nothing |
+
+## Scoring
+
+| Build | Key | ReleaseProof's result | Score |
+|---|---|---|---|
+| PR #5 | defective | 0 failed; 13 comparisons, all matching | **Missed.** "%@example.com" was not searched on this build. The three other examples of criterion 3 were, and they pass on both builds |
+| PR #6 | fixed | 0 failed; 11 comparisons, all matching | **Correct.** No false positive. This run did search "%@example.com" and found nobody, on the build where that is right |
+| PR #3 | defective | 3 failed scenarios, none of them the defect | **Met but not reported.** Scenario S7 created a project with categories, saved a task and got an internal SQL error, twice: exactly the key's defect. It was recorded as blocked. The three reported failures are false positives |
+| PR #4 | fixed | 2 failed scenarios | **One false positive (S8), one real defect that the key does not list (S2).** See below |
+
+- **Seeded or historical defects reported as failures: 0 of 2.** One was
+  never exercised; one was exercised, observed and filed as "blocked".
+- **False-positive scenarios: 4** (PR #3: S1, S10, S11; PR #4: S8), all
+  from a count or a reading through a wrong target. None was labelled an
+  evidence-backed defect candidate; all were shown as failed scenarios and
+  made the run "Not ready".
+- **Evidence-backed defect candidates: 0** in all four runs. That label
+  produced no false positive and no true positive.
+- **Fixed builds reported clean: 1 of 2** (PR #6).
+
+### A defect the key does not list (PR #4, S2), checked after unsealing
+
+The key states that all eight criteria hold on PR #4. The run reported that
+after saving a task with a file and "Create another task" ticked, the
+reopened form still held the file and the next task received it. Checked
+on `eval/h-b` (`5d1a63d`) with the engine's tools and no model:
+
+    reopened form: title value = ""
+    file input files: [ 1 ]
+    task 1 (First task): attachment links = ["first.txt"]
+    task 2 (Second task): attachment links = ["first.txt"]
+
+The second task was saved without choosing any file and has the first
+task's file. The form's title is empty, as criterion 8 says; its file
+field is not. This comes with upstream's feature and is in both builds of
+the case. The run found it; the engine classed it as unconfirmed because
+its two readings count the same text.
+
+### Why the two defects were not reported
+
+- **PR #5.** The planner wrote 16 scenarios and 8 could run. The wildcard
+  example sat in a requirement whose scenario was not among them. Criterion
+  3 names four search terms; the three that ran are the three that pass on
+  the defective build. Nothing marked the four examples of one criterion
+  as each needing a run.
+- **PR #3.** A scenario that cannot reach its comparisons is "blocked",
+  whatever stopped it. An internal error of the application while saving
+  the form under test is treated like a missing button. The requirement it
+  rests on (criterion 7) was listed as unverified, not failed.
+
+### What this evaluation shows
+
+- On software it had never seen, with requirements from an independent
+  ticket, the engine needed five generic tool changes before it could act
+  at all (a dialog's form, a key press, replacing a field's content, icon
+  glyphs in names, landmark roles). All were found without a model once a
+  walkthrough was done; two paid runs were spent before that.
+- When it compared, most comparisons were sound: 60 of 67 matched and were
+  true. Of 7 mismatches, 2 were a real defect and 5 were wrong targets.
+- It did not report either defect of the key. It reported one real defect
+  nobody had planted.
+- A wrong count through an empty target is the main source of false
+  failures. An application error is the main source of a missed one.
+- Cost: $8.22 for six runs, $6.45 for the four that compared anything,
+  between $1.50 and $1.79 a run. Planning and analysis are about half.
+
+### Limits of this scoring
+
+- One run per build. A second run would plan differently.
+- The key was written by the preparation agent and missed a defect present
+  in both builds of case H. "Fixed" in the key means "without the planted
+  or historical defect", not "free of defects".
+- The blind judgements above the key section were written before it was
+  opened and are left as they were. They called PR #3's S7 "an application
+  error recorded as blocked" and PR #4's S2 "probably a real defect"; both
+  held. They could not tell which build of case S was defective.
