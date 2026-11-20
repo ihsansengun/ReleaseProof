@@ -226,3 +226,172 @@ clipboard; dragging a file onto the page.
 The base branches do not have the feature either ticket adds, so the
 attachment section of the "New task" form and the e-mail search itself were
 not walked. They use the same controls as the journeys above.
+
+## Before the remaining paid runs (20 November 2026, no model)
+
+- `RELEASEPROOF_MAX_TOKENS` = 12000000 and `RELEASEPROOF_MAX_USD` = 3 were
+  set by the repository owner. A full dispatch on the fork's pull request
+  #2, whose title names no ticket, ended before any model call and showed
+  the job receiving both values (QA run 44765464622).
+- Isolation on `main` at `8636ede` (QA run 44766351777, verify-only):
+  outbound network blocked, root filesystem read-only, user 10001, the
+  administrator signed in, a second separate container started.
+- Model-free preflight on the neutral base branches: 17 of 17 journeys.
+- Key hash, the four build heads and the requirement source: unchanged
+  before each paid run.
+
+## Paid runs 3 to 6: raw results
+
+Engine `main` at `8636ede` for all four. Opus 5.5 analysis and planning,
+Haiku 5.5 discovery and execution, Sonnet 5.5 escalation. Each run printed
+`limits: $3, 15 min, 12000000 tokens, 8 scenarios` and read its ticket
+from the file at revision `6b6d8e09ffcf`. Each planned from scratch; nothing
+from one run was given to another. **Written before the key was opened.**
+Judgements marked "blind" were made without the key.
+
+| | PR #5 (KBE-2) | PR #6 (KBE-2) | PR #3 (KBE-1) | PR #4 (KBE-1) |
+|---|---|---|---|---|
+| QA run | [44767161887](https://github.com/ihsansengun/ReleaseProof/actions/runs/44767161887) | [44772422779](https://github.com/ihsansengun/ReleaseProof/actions/runs/44772422779) | [44776279713](https://github.com/ihsansengun/ReleaseProof/actions/runs/44776279713) | [44780379990](https://github.com/ihsansengun/ReleaseProof/actions/runs/44780379990) |
+| Summary line | Incomplete: 0 failed, 2 passed | Incomplete: 0 failed, 1 passed | Not ready: 3 failed, 0 passed | Not ready: 2 failed, 2 passed |
+| Requirements found | 27 | 23 | 29 | 26 |
+| Requirements verified | 15 | 8 | 8 | 14 |
+| Scenarios executed | 8 | 8 | 8 | 8 |
+| Passed / failed | 2 / 0 | 1 / 0 | 0 / 3 | 2 / 2 |
+| Blocked / unverified | 2 / 4 | 1 / 6 | 3 / 2 | 2 / 2 |
+| Held back by the planner | 4 | 5 | 8 | 6 |
+| Not run (scenario limit) | 4 | 4 | 3 | 2 |
+| Comparisons: match / mismatch | 13 / 0 | 11 / 0 | 16 / 3 | 20 / 4 |
+| Planned comparisons not made | 21 | 22 | 24 | 13 |
+| Failure patterns | 0 | 0 | 1 | 3 |
+| Evidence-backed candidates | 0 | 0 | 0 | 0 |
+| Escalations (kept) | 0 | 0 | 2 (0) | 5 (1) |
+| Run ended by | token limit | token limit | time limit | time limit |
+| Time | 7.7 min | 7.7 min | 15.4 min | 15.3 min |
+| Cost | $1.54 | $1.62 | $1.50 | $1.79 |
+
+Paid in all: $0.88 + $0.89 + $1.54 + $1.62 + $1.50 + $1.79 = **$8.22** of
+the $12 allowed, in six runs. The first two compared nothing.
+
+### PR #5 (KBE-2)
+
+Compared, all matching: complete address of John Doe gives the title
+"Users (1)"; "@example.com", "mary@" and "example.com" each list 0 users;
+"No users found."; a complete address in the Permissions field gives at
+least one suggestion; suggestions never show the address (twice); a
+non-administrator gets "Access Forbidden" on the list and on a search (S7,
+passed); "jd", "SMITH" and "mary" find the right users (S8, passed).
+
+Not compared: that the complete-address search lists John Doe and only him
+(the row count read 5 and the name reading read the avatar initials "JD",
+so neither was used); the lower-case address (searched, nothing recorded);
+"Users (0)"; the suggestion's text "Mary Smith (msmith)" (22 list items,
+none singled out); partial addresses in the Permissions field, the empty
+search, "nobody", near-complete addresses (S6, S9, S11: token limit).
+
+### PR #6 (KBE-2)
+
+Compared, all matching: lower-case address lists John Doe, upper-case
+address lists Mary Smith, the profile shows the address as entered (S3,
+passed); "@example.com" gives "Users (0)"; "example.com" and
+"%@example.com" give 0 entries and "Users (0)"; the empty search gives 3
+entries and lists admin, John Doe and Mary Smith.
+
+Weak: "0 entries" was a count of bold elements and "3 entries" a count of a
+per-row icon label. Not row counts.
+
+Not compared: complete address finds that user only with "Users (1)" (S12,
+never begun); "mary@" (the count included the "New user" link and read 1,
+so it was not used); "No users found."; username and name search; the
+Permissions suggestions; the non-administrator 403 (token limit).
+
+Blind, for the pair: neither run reported a failure, so a seeded defect in
+one of the two builds was not detected. No false positive on either. The
+two runs covered mostly different rules.
+
+### PR #3 (KBE-1)
+
+Mismatches, one pattern (`F1: comparisons resting on R9, R28: numbers off
+by 2, 1`), each `standing: single`, each "reproduced" on replay:
+
+| | Compared | Expected | Read | Target |
+|---|---|---|---|---|
+| S1/A4 | attachment entries on the task's page | 2 | 0 | links with an empty name within the text "Attachments" |
+| S10/A3 | attachment entries on "First of batch" | 1 | 0 | link "alpha.txt" within group "Attachments" |
+| S11/A1 | attachment entries after uploading to an existing task | 1 | 0 | link "gamma.txt" within group "Attachments" |
+
+Blind: S1 and S11 are false positives. In the same scenarios the file
+names, the sizes (29 and 28 bytes) and the downloaded contents matched, so
+the files were attached, and in S11 the container "Attachments" was later
+reported as not found. S10 used the same target and has nothing else
+compared: unsupported. The executor's own closing notes say the counts were
+mis-targeted. The engine recorded them because a count of zero is a
+reading, and the replay repeats the same target.
+
+An application error, recorded as blocked and not as a failure: in S7, a
+project with two categories, saving the "New task" form with a file
+attached answered `Internal Error: SQL Error[HY000]: SQLSTATE[HY000]: G…`
+(cut in the log), on two attempts. The task was not created; none of the
+scenario's nine comparisons could be made.
+
+Matches: both files' names, sizes and downloaded content (S1); the file
+area's text and the rest of the form (S2); a task without attachments is on
+the board with 0 attachments (S4); no task without a title (S6); name and
+content of a file attached to an existing task (S11).
+
+Not compared: the section's title and collapsed state (a group legend, not
+a heading); the screenshot text in the kept run; removing a listed file
+(the control could not be singled out); the two messages; the "create
+another" count and empty form; everything in S7.
+
+### PR #4 (KBE-1)
+
+Mismatches, three patterns, each `standing: single`, each "reproduced":
+
+| | Compared | Expected | Read | Target |
+|---|---|---|---|---|
+| S2/A2 | files listed in the form reopened by "Create another task" | 0 | 1 | count of the text "first.txt" |
+| S2/A5 | attachments of the second task, saved with no file chosen | 0 | 1 | count of the text "first.txt" on that task's page |
+| S8/A3 | screenshot area text | the paste text | "Add attachments" | the section's summary element with a pattern |
+| S8/A4 | file area text | the drag-and-drop text | "Add attachments" | the same element |
+
+Blind: S2 is probably a real defect. Two readings at two places agree, and
+the escalated attempt, whose own counts were mis-targeted, describes the
+same thing ("the reopened form still listed first.txt, which looks like a
+leak"). S8 is a false positive: the evidence record shows both expected
+texts inside the element that was read; only its first words were taken.
+
+One escalation was kept: S5's first attempt read the error text from the
+wrong place and failed; the re-run read "The title is required" and passed.
+
+Matches: two files listed before saving, stored with names, sizes (29 and
+34 bytes) and unchanged content (S1, nine comparisons); a task without
+attachments shows the success message, is on the board, has 0 attachments
+and keeps assignee, column and priority (S3, passed); no task without a
+title, with the error text (S5, passed); a file attached to an existing
+task is listed (S10).
+
+Not compared: removing a listed file; attachment counts in four scenarios
+(recorded as 0 through targets that matched nothing, and left unused);
+projects with categories or several swimlanes (not in this run's eight).
+No application error appeared in this run.
+
+### Capability limits, both KBE-1 runs
+
+Pasting an image from the clipboard is not possible with the engine's
+tools. Criterion 4 of KBE-1 (a pasted screenshot is previewed and saved as
+"Screenshot taken …png") was not tested on either build. That is a limit of
+the tool and says nothing about the application.
+
+### Problems seen across the four runs
+
+- A count that matches nothing is recorded as 0 and compared. Five of the
+  seven mismatches come from that or from reading the wrong element.
+- An application error that stops a scenario is recorded as "blocked".
+- The token limit ended both KBE-2 runs after about five scenarios; each
+  scenario creates its two users again in a new container.
+- Between 11 and 40 tool calls per run failed on targets that matched no
+  element or several. Each was refused.
+- Unnamed controls (the remove link beside a listed file) cannot be named.
+- One evidence record names the actor as the administrator although the
+  page was read as the second user (PR #5, S7).
+- No report comment appeared on the fork's pull requests.
