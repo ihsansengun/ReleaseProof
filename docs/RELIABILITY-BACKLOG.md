@@ -308,3 +308,100 @@ Limits:
   one that legitimately begins a new line with such words after an action
   is noticed, and the executor has to judge.
 - Error text shown only inside a sample element is left out.
+
+## Two regression runs with a model (20 November 2026)
+
+Engine `main` at `e2a4524`. Opus 5.5 analysis and planning, Haiku 5.5
+discovery and execution, Sonnet 5.5 escalation; planned from scratch; the
+approved ticket and the normal pull-request context only. Both builds are
+the defective ones of the evaluation.
+
+**These runs were not blind.** The key had been opened, the fixes above were
+made for exactly these failures, and I had driven both defects by hand
+beforehand. The planner and executor were given none of that. Two runs
+measure no detection rate.
+
+| | Fork PR #3 (attachments) | Fork PR #5 (e-mail search) |
+|---|---|---|
+| QA run | [44828707696](https://github.com/ihsansengun/ReleaseProof/actions/runs/44828707696) | [44832605730](https://github.com/ihsansengun/ReleaseProof/actions/runs/44832605730) |
+| Limits | $3, 15 min, 12000000 tokens, 8 scenarios | $1.65, 15 min, 12000000 tokens, 8 scenarios |
+| Summary line | Not ready: 2 failed, 0 passed · 1 stopped by an application error · 6 of 29 requirements verified | Not ready: 1 failed, 1 passed · 5 of 16 requirements verified |
+| Scenarios executed | 8: 0 passed, 2 failed, 1 errored, 3 blocked, 2 unverified | 8: 1 passed, 1 failed, 0 errored, 1 blocked, 5 unverified |
+| Comparisons: match / mismatch / not made | 12 / 4 / 28 | 15 / 1 / 37 |
+| Comparisons with a full record | 16 of 16 | 16 of 16 |
+| Stated examples: identified / compared | 9 / 3 | 16 / 4 |
+| Tokens | about 5.6 million | 12.1 million |
+| Time | 15.5 min | 8.5 min |
+| Ended by | time limit | cost limit (3 scenarios), token limit (2) |
+| Cost | $2.09: analysis $0.36, planning $1.18, execution $0.10, escalation $0.46 | $1.66: analysis $0.22, planning $0.54, execution $0.90 |
+
+### Fork PR #3: the application error
+
+Scenario S5, a project with categories. The executor saved a task with a
+file attached. The tool's answer began with the note about newly shown
+text: "Internal Error: SQL Error[HY000]: SQLSTATE[HY000]: General error: 1
+table tasks has no column named screenshot". It finished with outcome
+blocked, cause `application-error`, and the place of the text; code read
+the text there. From the log:
+
+    application error at step 29, signed in as admin, after click role button "Save": the page showed, at text "Internal Error: SQL Error[HY000]: …": Internal Error: SQL Error[HY000]: SQLSTATE[HY000]: General error: 1 table tasks has no column named screenshot
+    replay of S5: reproduced
+
+Verdict `errored`. Six requirements, the ones about category, assignee,
+column and priority being kept, are `errored`. This is the defect the
+build was chosen for; in the evaluation it had been filed as blocked.
+
+Three other scenarios ended blocked with cause `cannot-operate` and stayed
+blocked. An "Internal Error: Controller not found" in answer to an address
+the executor had written itself was not counted.
+
+The two failed scenarios:
+
+- S9, "Create another task": the reopened form lists one file where none
+  is expected, and the second task has one attachment where none is
+  expected. This is the defect outside the key, found a second time. A
+  third comparison of S9 (two task cards against three) counted bold
+  elements in the board's table and is probably a wrong count.
+- S1, "the section is collapsed when the form opens": the text of the
+  screenshot area was counted once where zero was expected. The count
+  includes elements that are in the page and not shown. The key says this
+  criterion holds on both builds: probably a false positive.
+
+### Fork PR #5: the wildcard
+
+The analysis listed 16 inputs the ticket names. Scenario S3, "partial
+addresses (including %) find no user", carried all four terms of that
+criterion and ran third. The executor typed the fourth term and pressed
+Enter; the application's log shows
+`search=%25%40example.com`. From the log:
+
+    A12 mismatch [F1]: expected Users (0), observed Users (2) | Page title after searching [redacted e-mail] (titlePercent) contains Users (0) | rests on R6 | standing: single
+    replay of S3: reproduced
+
+No other scenario failed; the three other terms matched on the title and
+on "No users found.". No false positive. Twelve of the sixteen named inputs
+were not compared, and the run says so:
+`readiness: 12 of 16 inputs or values the requirements name were not compared`.
+
+### Seen in these runs, not fixed
+
+- **A count includes what is in the page and not shown.** One probable
+  false failure (PR #3, S1).
+- **A count inside a real container can ask for something the page does
+  not have.** On PR #5 the executor recorded 0 rows within a list while two
+  users were shown; the list is real, rows do not exist on that page. It
+  left the comparison unmade. Compared, it would have been a false pass.
+- **Planning ran twice on PR #3** (a repair) and cost $1.18 of $2.09.
+- **A run can pass its cost limit by one call's estimate**: $1.6559 against
+  $1.65.
+- **Limits still end runs with most scenarios without a verdict**: five of
+  eight on PR #5, where each scenario creates its two users again.
+- Targets that cannot be singled out (four identical links; an unnamed
+  remove control) blocked three scenarios on PR #3.
+
+### The whole exercise in figures
+
+Eight paid runs on this application, $11.96 of the $12 allowed: two that
+compared nothing, four of the blind evaluation ($6.45), two regression
+runs ($3.75). Blind: neither prepared defect reported. After the fixes,
+not blind: both reported, with evidence, and a third defect found twice.
