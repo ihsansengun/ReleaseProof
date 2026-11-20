@@ -179,3 +179,25 @@ Limits:
   supported. The planner is told to block scenarios that need either.
 - A control that is clicked and opens no file dialog has still been clicked.
 - Files are a few dozen bytes. Size limits and large files cannot be tested.
+
+## After the second run on the independent application (20 November 2026)
+
+Found by walking the tickets' journeys with the executor's tools and no
+model, on base branches that are not under evaluation.
+
+| Problem seen | What changed |
+|---|---|
+| A search box with no button could not be submitted; the run compared nothing | A tool `press`: one key (Enter, Escape, Tab, the up and down arrows) in one element. The briefing says to submit such fields with Enter and not to write a search term into an address |
+| A second term typed into a field was appended to the first: the page moves the caret when the field takes the focus | `fill` checks what the field holds afterwards. If it is not what was given, the field is emptied and the text typed key by key. If it still differs, the tool says what the field holds |
+| A list of suggestions appeared after `fill` had returned, and the previous one was shown for the next term | `fill` waits briefly and lets the page settle before returning it |
+| A menu link named by a user name and an icon could not be matched: the icon is a glyph of a private-use font | Such glyphs are left out of page descriptions and do not count when a role's name is matched. A name is still matched in full |
+| Four identical links, one per column of a board, could not be told apart | The roles a target or a container may have now include column and row headers, banner, navigation, main, menu items, options and tabs |
+
+Limits:
+
+- Only five keys. No key combinations, no typing of free text through keys.
+- The pause after `fill` is 0.4 seconds plus settling, for every field.
+- A downloaded picture cannot be compared with what was uploaded.
+- A walkthrough of this kind is not yet part of onboarding an application.
+  It should be: it costs nothing and found five gaps that two paid runs
+  found one at a time.
