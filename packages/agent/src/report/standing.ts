@@ -22,7 +22,11 @@ export type Standing =
   | "single";
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-const fromApi = (r: AssertionResult) => (r.target as { source?: unknown } | null)?.source === "api";
+/** Read from an API response, directly or through an observation that was recorded from one. */
+const fromApi = (r: AssertionResult) => {
+  const target = r.target as { source?: unknown; from?: unknown } | null;
+  return target?.source === "api" || (target?.source === "observation" && target.from === "api");
+};
 const requirementsOf = (a: Assertion | undefined) => new Set([a?.requirementId, ...(a?.alsoVerifies ?? [])].filter((id): id is string => !!id));
 
 /** The standing of each failed comparison of one scenario result. `other` is another attempt at the same scenario, if there was one. */

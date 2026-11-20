@@ -110,7 +110,34 @@ Limits and what is still open from the gate:
 - This removes the wrong failures; it does not make the checks possible. A
   cell whose text equals the expected text still cannot be singled out, and a
   check still reads only the live page, so such scenarios end unverified.
-- Not changed: the circular rule matching digits inside words, the results
-  table's missing separator column, selection ranking a threshold position
-  below any first comparison, and the model-free repeat diverging when ids
-  are assigned at run time.
+- Not changed here: the model-free repeat diverging when ids are assigned at
+  run time. The other causes are addressed in the next section.
+
+## Making the gate's checks possible (20 November 2026)
+
+| Problem seen | What changed |
+|---|---|
+| A table cell whose text equals the expected text could not be singled out, so it was reached through a neighbouring cell | A target can name a cell by its row and its column (`by: "cell"`): the row by a cell of its own that is not the value sought, an accessible name or a test id; the column by its header, matched whole. One row and one column, or nothing is read. A target can also name the value beside a label (`by: "labelled"`): the item after a term, the cell after a row header, the control of a form label |
+| A check could only read the page as it was when the check ran | An observation may hold text as well as a number, and keeps the record of where and when it was read. The plan can make an assertion about an observation (`actual.observation`); code then compares the recorded value, and a check that points at the live page for such an assertion is refused |
+| The scenario exactly at a threshold lost to broader ones | Scenarios the planner wrote just below and exactly at a stated threshold are taken first, up to half the limit, best-scoring first. The rest of the limit is filled by coverage as before. Positions that did not run, and positions nobody planned, are listed |
+| "Discount (TAKE15):" was refused as circular for an expected 15 | A number inside a word is part of a name, not a number |
+| The results table did not render | Its separator row has a cell for every column |
+
+Limits:
+
+- Row-and-column targets need a table with a header row and no merged cells.
+  Layouts built from plain blocks, cards or lists of unlabelled values are
+  not covered; such a value still needs a test id, a container, or a pattern
+  on a labelled line.
+- A form label that wraps its control together with other text is not
+  resolved by `labelled`; a label attached with `for`, or wrapping only the
+  control, is.
+- Whether an assertion is about an earlier moment is the planner's call. An
+  assertion the plan leaves on the live page is compared with the live page.
+- A second attempt to record an observation still marks it as needed at two
+  moments, and assertions that use it are then not compared.
+- Reserving threshold scenarios takes slots from breadth: up to half the
+  limit. A plan with many thresholds runs fewer distinct requirements.
+- "Just above the threshold" is not reserved.
+- The vocabulary tripwire no longer lists "column": the engine now uses the
+  word for the column of a table.

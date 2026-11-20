@@ -19,8 +19,12 @@ const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src")
 // The second group is for the first application that was not written for
 // this project (a project-management tool in PHP): its name, its nouns, and
 // the names of its controllers and form dialogs.
+//
+// "column" was on the second group, as that tool's word for a stage of work.
+// It was taken off when the agent gained its own, unrelated use of the word:
+// the column of a table, by whose header a cell is identified.
 const APPLICATION_TERMS =
-  /\b(loyalty|cart|checkout|customers?|products?|orders?|payments?|welcome|shop|points|employees?|managers?|time-?off|leave requests?)\b|(?<!\/rest)\/api\/|\/login|data-testid|\b(kanban|kanboard|swimlanes?|boards?|subtasks?|columns?|php)\b|controller=|modal-content|csrf_token/i;
+  /\b(loyalty|cart|checkout|customers?|products?|orders?|payments?|welcome|shop|points|employees?|managers?|time-?off|leave requests?)\b|(?<!\/rest)\/api\/|\/login|data-testid|\b(kanban|kanboard|swimlanes?|boards?|subtasks?|php)\b|controller=|modal-content|csrf_token/i;
 
 test("agent source contains no application-specific vocabulary, routes or selectors", async () => {
   const files = (await readdir(SRC, { recursive: true })).filter((f) => f.endsWith(".ts"));

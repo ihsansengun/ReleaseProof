@@ -154,6 +154,7 @@ export async function closeSession(
     environment: { baseUrl: session.baseUrl, deployedSha: open.sha, expectedSha: open.expectedSha, commitEstablished: open.commitEstablished },
     assertionResults: session.assertionResults,
     observations: session.observations,
+    ...(session.texts && Object.keys(session.texts).length > 0 ? { textObservations: session.texts } : {}),
     steps: session.steps,
     evidence: { trace: "trace.zip", dir: session.outDir },
     usage: info.usage,

@@ -1,6 +1,12 @@
 /**
  * Chooses which planned scenarios run when there are more than the limit.
  *
+ * Two passes. First, thresholds: where an approved requirement states a
+ * limit and the planner wrote scenarios just below it and exactly at it,
+ * those are taken before anything else, because a rule with a threshold is
+ * only tested at its threshold. They may take up to half the limit, so
+ * breadth is kept. Then coverage, as described below.
+ *
  * The planner proposes a pool and says, per scenario, which approved
  * requirement it probes in which way. Code then picks: each step takes the
  * candidate that adds most to what the chosen set already covers. The policy
@@ -70,6 +76,30 @@ export function selectScenarios(plan: Plan, cap: number): Plan {
   const selection = new Map<string, NonNullable<PlannedScenario["selection"]>>();
   const remaining = [...candidates];
 
+  // Pass 1: the scenarios just below and exactly at each stated threshold.
+  // Only positions the planner declared, each backed by one of the scenario's
+  // own comparisons, count; nothing is added here that the plan does not hold.
+  const DECISIVE: Aspect[] = ["boundary-below", "boundary-at"];
+  const decisive = (s: PlannedScenario) => (s.focus ?? []).filter((f) => DECISIVE.includes(f.aspect)).map((f) => `${f.aspect}:${f.requirementId}`);
+  const reserved = declared ? Math.min(cap, Math.ceil(cap / 2)) : 0;
+  while (chosen.length < reserved) {
+    let best: PlannedScenario | undefined;
+    let bestNew: Item[] = [];
+    let bestScore = -1;
+    for (const candidate of remaining) {
+      if (!decisive(candidate).some((key) => !covered.has(key))) continue;
+      const fresh = itemsOf(candidate).filter((i) => !covered.has(i.key));
+      const score = fresh.reduce((sum, i) => sum + i.weight, 0);
+      if (score > bestScore) [best, bestNew, bestScore] = [candidate, fresh, score];
+    }
+    if (!best) break;
+    remaining.splice(remaining.indexOf(best), 1);
+    chosen.push(best);
+    for (const i of itemsOf(best)) covered.add(i.key);
+    selection.set(best.scenario.id, { rank: chosen.length, score: bestScore, reasons: ["taken first because it tests a stated threshold at or just below it", ...bestNew.map((i) => i.words)] });
+  }
+
+  // Pass 2: what adds most to the scenarios already chosen.
   while (remaining.length > 0 && chosen.length < cap) {
     let best = remaining[0]!;
     let bestNew: Item[] = [];

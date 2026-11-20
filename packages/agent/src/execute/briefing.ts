@@ -13,6 +13,8 @@ Rules:
 - A check that reports "not compared" recorded no result. That is not a failure of the application. If the same value is shown elsewhere with its currency sign, check that; otherwise leave the assertion unchecked.
 - Point a check or an observation at the element that holds the value, not at the heading or label that names it. A heading or a label is refused as a target unless the assertion's "subject" says it is about that heading or label, or you give a pattern that picks the value out of it.
 - A target must match exactly one element. Text is matched on whole words, so "Total" does not match "Subtotal". If more than one element matches, narrow it: add "within" to name the row, section or other container that holds it, or use a role or test id. Never settle for a different element because the right one was hard to single out; leave the assertion unchecked and say so.
+- For a value in a table, use by="cell": name the row by something it contains that is not the value you are reading (an id, a name, a date), and the column by its header. For a value beside a label (a term and its item, a row header and its cell, a form field), use by="labelled". Do not reach a value through a neighbouring cell, and do not use a pattern that would match anything.
+- An assertion that carries "actual": {"observation": "<name>"} is about that observation as it was recorded at its moment. Record the observation at that moment, then call check for the assertion without a target: the recorded value is compared. Never point such a check at the page; the page may have changed since.
 - Never locate a value by searching for the value you expect to find. A target whose text or pattern contains the expected value is refused: finding "42" by looking for "42" shows only that it appears somewhere. Identify the element by what names it: its label, its role, the row or section it is in, or a test id.
 - Assertions of kind "present" and "absent" are about whether something is shown. They count only visible elements. Scope them with "within" when the page could show the same text elsewhere.
 - An error from check or observe recorded no result. It says the target was wrong, not that the application is. Choose a better target and try again.
@@ -37,7 +39,7 @@ export function briefing(
     scenario.intent,
     "",
     ...(scenario.observations?.length
-      ? ["Observations to record, each once, at its moment:", ...scenario.observations.map((o) => `- ${o.name} (${o.unit}): ${o.what}. When: ${o.when}`), ""]
+      ? ["Observations to record, each once, at its moment:", ...scenario.observations.map((o) => `- ${o.name} (${o.type === "text" ? "text" : o.unit}): ${o.what}. When: ${o.when}`), ""]
       : []),
     "Assertions to check:",
     JSON.stringify(scenario.assertions, null, 2),

@@ -245,7 +245,7 @@ export function render(input: ReportInput, runUrl: string): Rendered {
     })`,
     "",
     "| | Passed / verified | Failed | Blocked | Unverified | Exercised only | Not run (limit) | Not planned |",
-    "|---|---|---|---|---|---|---|",
+    "|---|---|---|---|---|---|---|---|",
     `| Scenarios (${run.plan.scenarios.length} planned, ${run.results.length} executed) | ${a.execution.passed} | ${a.execution.failed} | ${a.notRun + a.execution.blocked} | ${a.execution.unverified} | – | ${a.deferred} | ${run.plan.trimmedRunnable ? `${run.plan.trimmedRunnable} dropped by the limit` : "–"} |`,
     `| Documented requirements (${a.requirements.length}) | ${a.counts.verified} | ${a.counts.failed} | ${a.counts.blocked} | ${a.counts.unverified} | ${a.counts.exercised} | ${a.counts.deferred} | ${a.counts["not planned"]} |`,
     "",

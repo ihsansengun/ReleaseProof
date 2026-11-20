@@ -188,13 +188,14 @@ test("under a limit of six, the scenarios just below and exactly at the threshol
   const plan = select(POOL, 6);
   const ranked = plan.scenarios.filter((s) => s.selection?.rank !== undefined).sort((a, b) => a.selection!.rank! - b.selection!.rank!);
   assert.deepEqual(ranked.map((s) => [s.scenario.id, s.selection!.score, s.selection!.reasons]), [
+    // The two scenarios at the threshold are taken first, the better-scoring one leading.
+    ["S8", 5, ["taken first because it tests a stated threshold at or just below it", "first comparison of R4", "just below the threshold for R4"]],
+    ["S9", 2, ["taken first because it tests a stated threshold at or just below it", "exactly at the threshold for R4"]],
+    // Then coverage, as before.
     ["S2", 7, ["first comparison of R2", "first comparison of R3", "a side effect for R3"]],
     ["S4", 7, ["first comparison of R5", "ownership for R5", "access control for R5"]],
-    // S7 and S8 both add 5; the one the planner listed first is taken first.
     ["S7", 5, ["first comparison of R1", "regression risk for R1", "risk K1"]],
-    ["S8", 5, ["first comparison of R4", "just below the threshold for R4"]],
     ["S5", 4, ["first comparison of R6", "a state change for R6"]],
-    ["S9", 2, ["exactly at the threshold for R4"]],
   ]);
   // In the planner's sequence the first six would have been S1 to S6: no boundary at all.
   assert.deepEqual(plan.scenarios.filter((s) => s.status === "runnable").map((s) => s.scenario.id), ["S2", "S4", "S5", "S7", "S8", "S9"]);
@@ -240,7 +241,7 @@ test("the report lists the choice, what was not run and what that leaves unteste
   const analysis = requirements(["R1", "R2", "R3", "R4", "R5", "R6", "R7"]);
   const pool = [...POOL, candidate("S11", "A cancelled request cannot be reopened", ["R7"], [{ requirementId: "R7", aspect: "main-flow" }])];
   const plan = select(pool, 6, analysis);
-  assert.deepEqual(plan.scenarios.filter((s) => s.status === "deferred").map((s) => s.scenario.id), ["S1", "S3", "S6", "S9", "S10"]);
+  assert.deepEqual(plan.scenarios.filter((s) => s.status === "deferred").map((s) => s.scenario.id), ["S1", "S3", "S6", "S10", "S11"]);
   const passed = (id: string): ScenarioResult => ({ scenarioId: id, title: id, mode: "agent", verdict: "passed", reason: "ok", environment: { baseUrl: "http://localhost:1" }, assertionResults: plan.scenarios.find((s) => s.scenario.id === id)!.scenario.assertions.map((a) => ({ assertionId: a.id, expected: "present", actual: "present", pass: true, target: {} })), observations: {}, steps: [], evidence: { dir: "" }, startedAt: "2026-11-19T00:00:00Z", durationMs: 1 });
   const run = { ...runOf(plan.scenarios.filter((s) => s.status === "runnable").map((s) => passed(s.scenario.id)), []), analysis, plan } as unknown as RunReport;
 
@@ -249,14 +250,16 @@ test("the report lists the choice, what was not run and what that leaves unteste
   assert.equal(a.notRun, 0);
   assert.equal(a.readiness, "incomplete");
   assert.ok(a.reasons.includes("5 planned scenarios were not run because of the scenario limit"));
-  assert.deepEqual(a.requirements.map((r) => r.status), ["verified", "verified", "verified", "verified", "verified", "verified", "verified"]);
+  assert.deepEqual(a.requirements.map((r) => r.status), ["verified", "verified", "verified", "verified", "verified", "verified", "deferred"]);
 
   const body = render({ status: "completed", repo: "acme/tool", pr: 7, headSha: "a".repeat(40), run } as Parameters<typeof render>[0], "https://example.invalid/r").body;
-  assert.match(body, /### Scenario selection\n\n11 runnable scenarios were planned and the limit is 6\. Code chose them one at a time/);
-  assert.match(body, /\| 1 \| S2 Cancelling a far-future Approved request returns its days \| first comparison of R2; first comparison of R3; a side effect for R3 \|/);
-  assert.match(body, /### Not run because of the scenario limit[\s\S]*- \*\*S9\*\* An Approved request starting in exactly 3 days can be cancelled: exactly at the threshold for R4/);
+  assert.match(body, /### Scenario selection\n\n11 runnable scenarios were planned and the limit is 6\. Scenarios that test a stated threshold just below it or exactly at it were taken first, up to half the limit\. Then code chose one at a time/);
+  assert.match(body, /\| 1 \| S8 An Approved request starting in 2 days is refused \| taken first because it tests a stated threshold at or just below it; first comparison of R4; just below the threshold for R4 \|/);
+  assert.match(body, /\| 2 \| S9 An Approved request starting in exactly 3 days can be cancelled \| taken first because it tests a stated threshold at or just below it; exactly at the threshold for R4 \|/);
+  assert.match(body, /\| 3 \| S2 Cancelling a far-future Approved request returns its days \| first comparison of R2; first comparison of R3; a side effect for R3 \|/);
+  assert.match(body, /### Not run because of the scenario limit[\s\S]*- \*\*S11\*\* A cancelled request cannot be reopened: first comparison of R7/);
   assert.match(body, /- \*\*S1\*\* Cancel a Pending request: nothing the scenarios that ran do not already cover/);
-  assert.match(body, /Thresholds left untested:\n\n- R4: the scenario exactly at the threshold was planned and not run\n- R4: the scenario just above the threshold was planned and not run/);
+  assert.match(body, /Thresholds left untested:\n\n- R4: the scenario just above the threshold was planned and not run\n/);
   assert.match(body, /\| Exercised only \| Not run \(limit\) \| Not planned \|/);
 
   // A requirement only a deferred scenario compares is "not run (limit)", not "not planned".
