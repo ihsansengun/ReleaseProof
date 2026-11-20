@@ -122,6 +122,8 @@ export type Diagnostics = {
     repeat?: string;
     /** Errors the application answered with during the scenario, one line each. */
     errors?: string[];
+    /** Text that read like a failure after a step and was noticed from the words alone. */
+    leads?: string[];
     comparisons: {
       assertionId: string;
       description: string;
@@ -217,6 +219,7 @@ export function buildDiagnostics(run: RunReport): Diagnostics {
             ),
           }
         : {}),
+      ...(result.errorSignals?.length ? { leads: result.errorSignals.map((g) => brief(`step ${g.step}, after ${g.action.tool} ${g.action.what}: ${g.text}`, 400)) } : {}),
       comparisons,
       stepsRecorded: result.steps.length,
       lastSteps: passed ? all.filter((s) => EVIDENCE_TOOLS.has(s.tool)).slice(-2 * MAX_STEPS) : all.slice(-MAX_STEPS),
@@ -293,6 +296,7 @@ export function diagnosticLines(d: Diagnostics, maxLines = 700): string[] {
   for (const s of ordered) {
     out.push(`${s.id} ${s.verdict}${s.attempt ? ` [${s.attempt}]` : ""}: ${s.title}`, `  why: ${s.reason}${s.repeat ? ` | repeatability (same locators, no model): ${s.repeat}` : ""}`);
     for (const e of s.errors ?? []) out.push(`  application error at ${e}`);
+    for (const g of s.leads ?? []) out.push(`  possible application error (words only, nothing concluded) at ${g}`);
     for (const c of s.comparisons) {
       out.push(`  ${c.assertionId} ${c.outcome}${c.pattern ? ` [${c.pattern}]` : ""}: expected ${c.expected}${c.observed === "" ? "" : `, observed ${c.observed}`} | ${c.description}${c.requirementId ? ` | rests on ${c.requirementId}` : ""}${c.standing ? ` | standing: ${c.standing}` : ""}`);
       if (c.outcome !== "not compared" && c.target) out.push(`     located by ${c.target}${c.screenshot ? ` | screenshot ${c.screenshot}` : ""}`);

@@ -299,6 +299,15 @@ export const ApplicationError = z.object({
 });
 export type ApplicationError = z.infer<typeof ApplicationError>;
 
+export const ErrorSignal = z.object({
+  step: z.number(),
+  actor: z.object({ alias: z.string(), step: z.number() }).optional(),
+  action: z.object({ step: z.number(), tool: z.string(), what: z.string() }),
+  page: z.string(),
+  text: z.string(),
+});
+export type ErrorSignal = z.infer<typeof ErrorSignal>;
+
 /**
  * "errored": the scenario could not reach its comparisons because the
  * application itself answered with an error, and the same steps met the same
@@ -340,6 +349,13 @@ export type ScenarioResult = {
   applicationErrors?: ApplicationError[];
   /** Why the executor said it could not go on, when it did. */
   blockedCause?: BlockedCause;
+  /**
+   * Text that appeared after a user's action and reads like a failure of the
+   * application. Noted by code from the words alone, so it is a lead and
+   * never a finding: it changes no verdict unless the executor shows where it is
+   * and the same steps show it again.
+   */
+  errorSignals?: ErrorSignal[];
   observations: Record<string, number>;
   /** Observations that hold text, such as a status read at one moment. */
   textObservations?: Record<string, string>;

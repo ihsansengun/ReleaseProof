@@ -279,3 +279,32 @@ What this showed that the tests on small pages did not:
 Not done: no run with a model. Whether a plan now reaches the wildcard
 term within the limits, and whether the executor reports the error
 through `finish`, are questions only such a run answers.
+
+### An error written into a page answered with status 200 (20 November 2026)
+
+The check on the application showed that it answers its internal error with
+HTTP 200, where recording by status sees nothing.
+
+| Problem seen | What changed |
+|---|---|
+| An error shown in the page, with a normal status, reaches the record only if the executor reports it | After each user action the tool compares what the page shows with what it showed before. A line that is new and reads like a failure of the application ("Internal Error…", "Fatal error…", "Traceback (most recent call last)", "SQLSTATE[", a line beginning with a name ending in Exception or Error and a colon) is told to the executor in the tool's answer and kept with its step, actor, action and page |
+
+It is a lead and nothing more:
+
+- No verdict, requirement status or readiness rests on it. The report lists
+  it under "Possible application errors, not confirmed".
+- It becomes a finding only the way any application error does: the
+  executor shows where the text is, code reads it, and the same steps
+  replayed without a model show it again.
+- Not taken as a lead: text that was on the page before the step; text
+  inside samples and quotations (pre, code, blockquote and the like) and
+  editable fields; a sentence that mentions such words without beginning
+  with them; a line that contains words of that kind which the executor
+  typed itself.
+
+Limits:
+
+- A list of words. An application that fails in other words is not noticed;
+  one that legitimately begins a new line with such words after an action
+  is noticed, and the executor has to judge.
+- Error text shown only inside a sample element is left out.
