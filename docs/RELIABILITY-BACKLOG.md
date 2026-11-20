@@ -201,3 +201,49 @@ Limits:
 - A walkthrough of this kind is not yet part of onboarding an application.
   It should be: it costs nothing and found five gaps that two paid runs
   found one at a time.
+
+## After the independent evaluation (20 November 2026)
+
+The evaluation reported neither of its two prepared defects
+(`eval/kanboard-evaluation/README.md`). Three gaps decided that.
+
+| Problem seen | What changed |
+|---|---|
+| A count taken where nothing could be counted came back as 0 and was compared. Five of seven mismatches were false | A count is a reading only where its place is established. With `within`, the container must be one element and must be able to hold things: not missing, not several, not a heading or label, not bare words. A list, table or region found by its role may be empty: zero there is a reading. Without `within`, zero is refused. The record of a count says where it counted and how many elements of that role the place holds |
+| A role with an empty name matched only nameless elements, so `row ""` read 0 on any table | An empty name means any name |
+| An application error that stopped a scenario was filed as "blocked", like a missing button. The defect one build was chosen for was met twice and not reported | Responses with status 500 or above to a user's action are recorded with actor, action, request and text, and the executor is told at once. `finish` takes a cause; for an error shown on the page with status 200 the executor points at it and code reads it. Such scenarios are repeated without a model. Same steps, same error: the verdict is `errored`, the requirements whose comparisons could not be made are `errored`, and the run is not ready |
+| A criterion named four inputs; three ran and matched, the fourth was left out by the scenario limit, and the criterion read as verified | The analysis lists the inputs and values a source names for a requirement, each with the source's words; code keeps only those it finds there. An assertion cites the examples it runs. Selection counts an uncovered example like a first comparison of a requirement. Each example is reported as matched, mismatched, errored, blocked, unverified, deferred or not planned, and a requirement is verified only when every one it names was compared and matched |
+
+Still as before, and checked by tests: a list that is really empty; a
+control that is not there (blocked, cause "cannot-operate"); an expected
+refusal such as 403; an error to a request the executor wrote itself; an
+error seen once; a scenario that ends on a limit.
+
+### Correction to the evaluation's figures
+
+The record of the evaluation says 60 of its 67 comparisons were true
+matches. That is too many. In the run on fork pull request #5, three
+comparisons ("@example.com", "mary@" and "example.com" each list 0 users)
+counted rows through a role with an empty name. That count is 0 whatever
+the page shows, so they would have matched on a page full of users. The
+page did show "No users found." in the one comparison that read it, so the
+application was probably right; the three comparisons did not show it. The
+record itself is left as it was written.
+
+Limits:
+
+- A count above zero through a wrong target is still a reading: too many
+  (words that also sit in a link elsewhere) or too few. Only zero is guarded.
+- "absent" by a text is still judged across the whole page.
+- An application error is recognised by status 500 or above, or where the
+  executor points at it. An error drawn into a page with status 200 that
+  the executor does not report is missed.
+- An error counts as the application's when it follows a user's action.
+  Whether the action was a sensible one is not judged.
+- `errored` is decided on the first attempt and its repeat. An error met
+  only by the second, escalated attempt is recorded and decides nothing.
+- Examples are what the analysing model lists and code finds in the source.
+  An input the model does not list is not tracked. The stated result of an
+  example is kept as the model worded it and sets no expected value.
+- Nothing here makes a scenario cheaper. A plan that is cut short by the
+  token or time limit still leaves examples unrun; they are now named.

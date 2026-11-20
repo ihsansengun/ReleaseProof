@@ -120,6 +120,8 @@ export type Diagnostics = {
     reason: string;
     /** What the repeat without a model found, for failures. */
     repeat?: string;
+    /** Errors the application answered with during the scenario, one line each. */
+    errors?: string[];
     comparisons: {
       assertionId: string;
       description: string;
@@ -203,6 +205,18 @@ export function buildDiagnostics(run: RunReport): Diagnostics {
       verdict: result.verdict,
       reason: brief(result.reason, 300),
       repeat: attempt ? undefined : run.confirmations[result.scenarioId],
+      ...(result.applicationErrors?.length
+        ? {
+            errors: result.applicationErrors.map((e) =>
+              brief(
+                `step ${e.step}${e.actor ? `, signed in as ${e.actor.alias}` : ""}${e.action ? `, after ${e.action.tool} ${e.action.what}` : ""}: ${
+                  e.source === "response" ? `${e.request?.method} ${e.request?.path} answered HTTP ${e.request?.status}${e.text ? `: ${e.text}` : ""}` : `the page showed, at ${e.locatedBy}: ${e.text}`
+                }`,
+                400,
+              ),
+            ),
+          }
+        : {}),
       comparisons,
       stepsRecorded: result.steps.length,
       lastSteps: passed ? all.filter((s) => EVIDENCE_TOOLS.has(s.tool)).slice(-2 * MAX_STEPS) : all.slice(-MAX_STEPS),
@@ -278,6 +292,7 @@ export function diagnosticLines(d: Diagnostics, maxLines = 700): string[] {
   const ordered = [...d.scenarios.filter((s) => s.verdict !== "passed"), ...d.scenarios.filter((s) => s.verdict === "passed")];
   for (const s of ordered) {
     out.push(`${s.id} ${s.verdict}${s.attempt ? ` [${s.attempt}]` : ""}: ${s.title}`, `  why: ${s.reason}${s.repeat ? ` | repeatability (same locators, no model): ${s.repeat}` : ""}`);
+    for (const e of s.errors ?? []) out.push(`  application error at ${e}`);
     for (const c of s.comparisons) {
       out.push(`  ${c.assertionId} ${c.outcome}${c.pattern ? ` [${c.pattern}]` : ""}: expected ${c.expected}${c.observed === "" ? "" : `, observed ${c.observed}`} | ${c.description}${c.requirementId ? ` | rests on ${c.requirementId}` : ""}${c.standing ? ` | standing: ${c.standing}` : ""}`);
       if (c.outcome !== "not compared" && c.target) out.push(`     located by ${c.target}${c.screenshot ? ` | screenshot ${c.screenshot}` : ""}`);

@@ -3,7 +3,7 @@ import type { BrowserContext, Locator, Page } from "playwright";
 import { z } from "zod";
 import { evaluateFormula, formulaVariables } from "../formula.ts";
 import { reconcile, scaleUnclear } from "../units.ts";
-import type { AssertionResult, Evidence, Outcome, Scenario, Step } from "../schema.ts";
+import { BlockedCause, type ApplicationError, type AssertionResult, type Evidence, type Outcome, type Scenario, type Step } from "../schema.ts";
 import type { SecretVault } from "../secrets.ts";
 
 /** Everything one scenario execution accumulates. */
@@ -35,6 +35,12 @@ export type Session = {
     /** Where and when each observation was read: the record behind a later comparison of it. */
     readings?: Record<string, { step: number; from: "page" | "api"; locatedBy: string; raw: string; page?: string; responseId?: string; actor?: { alias: string; step: number } }>;
   };
+  /** Errors the application answered with. Filled by the response listener and by finish. */
+  appErrors?: ApplicationError[];
+  /** The user action being carried out right now, if any: responses to it are the application's answer to a user. */
+  acting?: string;
+  /** Bodies of error responses still being read. */
+  pendingErrors?: Promise<void>[];
   assertionResults: AssertionResult[];
   steps: Step[];
   outcome?: Outcome;
@@ -159,6 +165,10 @@ const schemas = {
   finish: z.object({
     outcome: z.enum(["completed", "blocked"]),
     reason: z.string(),
+    cause: BlockedCause.optional().describe(
+      'With outcome "blocked": what stopped you. "application-error": the application answered a valid action with an error. "cannot-operate": you could not find or operate a control. "missing-capability": your tools cannot do what the step needs. "test-data": data the scenario needs is not there.',
+    ),
+    error: PageTarget.optional().describe('With cause "application-error", when the error is shown on the page: the element that shows the error text. It is read and kept as evidence.'),
   }),
 } as const;
 export type ToolName = keyof typeof schemas;
@@ -179,7 +189,7 @@ const descriptions: Record<ToolName, string> = {
   check:
     "Run one planned assertion. The tool reads the actual value from the target you point at and compares it in code with the expectation fixed in the plan. For kinds present and absent, the target is the element (or API field) whose existence is in question. Each assertion can be checked once; the first result is final.",
   finish:
-    'End the scenario. Use "blocked" with a specific reason if something outside your control prevented a check. You do not decide pass or fail.',
+    'End the scenario. Use "blocked" with a specific reason and its cause if something outside your control prevented a check. You do not decide pass or fail.',
 };
 
 const RATIONALE = z.string().describe("One sentence: why you are taking this step now.");
@@ -250,7 +260,10 @@ export function exactName(value: string): RegExp {
 function buildIn(root: Page | Locator, ref: Omit<ElementRef, "within">): Locator {
   if (ref.by === "role") {
     if (!ref.role) throw new Error("role is required when by=role");
-    return root.getByRole(ref.role, { name: ref.value.trim() === "" ? ref.value : exactName(ref.value), exact: true });
+    // No name given means any name: every element of that role. An empty name
+    // matched literally would find only nameless elements, and a count of them
+    // reads 0 whatever the page shows.
+    return ref.value.trim() === "" ? root.getByRole(ref.role) : root.getByRole(ref.role, { name: exactName(ref.value), exact: true });
   }
   if (ref.by === "label") return root.getByLabel(ref.value, { exact: true });
   if (ref.by === "testid") return root.getByTestId(ref.value);
@@ -307,6 +320,63 @@ async function settleCount(page: Page, locator: Locator): Promise<number> {
     count = await locator.count();
   }
   return count;
+}
+
+/**
+ * How many elements a target matches, and where they were counted.
+ *
+ * A count is a reading only when the place it counts in is established. With
+ * a container, the container must be the one element that holds the items:
+ * not missing, not several, not a heading or label that merely names the
+ * section. An empty list or table found by its role is a valid place: zero
+ * there is a reading. Without a container a count of zero is refused: nothing matched
+ * anywhere, which is an empty collection or a wrong target, and from here the
+ * two cannot be told apart.
+ */
+async function countIn(page: Page, target: z.infer<typeof PageTarget>): Promise<{ count: number; scope: string }> {
+  const ref = asRef(target);
+  let root: Page | Locator = page;
+  let scope = "the whole page";
+  if (ref.within) {
+    const container = buildIn(page, ref.within);
+    const containers = await settleCount(page, container);
+    if (containers !== 1) {
+      throw new Error(
+        `Not counted: expected exactly one container for ${JSON.stringify(ref.within)}, found ${containers}. A count needs the one element that holds the items; without it, 0 would mean nothing. Nothing was read.`,
+      );
+    }
+    const kind = await elementKind(container);
+    // A list, table or region found by its role is a container even when it
+    // is empty: that is what an empty collection looks like. Words found by
+    // their text, with nothing inside them, are a name and not a container.
+    const named = ref.within.by === "text" || ref.within.by === "label";
+    const hollow = named && (await container.evaluate((el) => el.childElementCount)) === 0;
+    if (kind !== "value" || hollow) {
+      throw new Error(
+        `Not counted: the container ${describeRef(ref.within)} is ${kind !== "value" ? `a ${kind}` : "text with nothing inside it"}. It names a section and does not hold its items. Point "within" at the list, table, group or section itself. Nothing was read.`,
+      );
+    }
+    root = container;
+    scope = `within ${describeRef(ref.within)}`;
+  }
+  const items = buildIn(root, ref);
+  // Items may still be arriving; give them a moment before calling the place empty.
+  const deadline = Date.now() + 1_000;
+  let count = await items.count();
+  while (count === 0 && Date.now() < deadline) {
+    await page.waitForTimeout(100);
+    count = await items.count();
+  }
+  if (count === 0 && !ref.within) {
+    throw new Error(
+      `Not counted: nothing on the page matches ${JSON.stringify({ by: ref.by, role: ref.role, value: ref.value })}. That is an empty collection or a wrong target, and the two cannot be told apart from here. Scope the count with "within" to the list, table or section that would hold the items; if that element itself is gone when there is nothing to show, check what the page shows in its place. Nothing was read.`,
+    );
+  }
+  if (ref.by === "role" && ref.role && ref.value.trim() !== "") {
+    const all = await root.getByRole(ref.role).count();
+    scope += `, which holds ${all} element${all === 1 ? "" : "s"} of role ${ref.role} in all`;
+  }
+  return { count, scope };
 }
 
 const CELLS = ':scope > td, :scope > th, :scope > [role="cell"], :scope > [role="gridcell"], :scope > [role="rowheader"], :scope > [role="columnheader"]';
@@ -488,7 +558,7 @@ function parseNumber(text: string): number {
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 
 /** Reads the raw text behind a target, plus the element to highlight if any. */
-async function readTarget(session: Session, target: Target): Promise<{ text: string; raw: string; locator?: Locator }> {
+async function readTarget(session: Session, target: Target): Promise<{ text: string; raw: string; locator?: Locator; scope?: string }> {
   const read = await readText(session, target);
   return { raw: read.text, ...read, ...narrowed(read.text, target) };
 }
@@ -504,7 +574,7 @@ function narrowed(text: string, target: Target): { text: string } {
 }
 
 /** The text behind a target before any pattern narrows it, plus the element to highlight if any. */
-async function readText(session: Session, target: Target): Promise<{ text: string; locator?: Locator }> {
+async function readText(session: Session, target: Target): Promise<{ text: string; locator?: Locator; scope?: string }> {
   if (target.source === "api") {
     const response = session.apiResponses.get(target.responseId);
     if (!response) throw new Error(`Unknown responseId "${target.responseId}".`);
@@ -526,7 +596,10 @@ async function readText(session: Session, target: Target): Promise<{ text: strin
     return { text: String(value) };
   }
 
-  if (target.count) return { text: String(await buildLocator(session.page, asRef(target)).count()) };
+  if (target.count) {
+    const counted = await countIn(session.page, target);
+    return { text: String(counted.count), scope: counted.scope };
+  }
   const { locator, text: valueOfLine } = await locateTarget(session.page, target);
   let text: string;
   if (valueOfLine !== undefined) {
@@ -681,7 +754,7 @@ async function gatherEvidence(
   s: Session,
   assertion: Scenario["assertions"][number],
   target: Target,
-  found: { locator?: Locator; raw?: string; matched?: number },
+  found: { locator?: Locator; raw?: string; matched?: number; scope?: string },
 ): Promise<Evidence> {
   const trail = trailOf(s);
   const formula = assertion.expected && "formula" in assertion.expected ? assertion.expected.formula : undefined;
@@ -724,6 +797,7 @@ async function gatherEvidence(
       locatedBy: `${target.by === "cell" ? `cell in row ${target.row ? describeRef(target.row) : "?"}, column "${clip(target.value, 80)}"` : describeRef(target)}${target.pattern ? ` pattern ${clip(target.pattern, 80)}` : ""}${target.count ? " (count)" : ""}`,
       ...(target.within ? { within: describeRef(target.within) } : {}),
       matched: found.matched ?? (found.locator ? 1 : undefined),
+      ...(found.scope ? { scope: found.scope } : {}),
     };
     if (found.locator && (found.matched ?? 1) === 1) {
       evidence.target.visible = await found.locator.isVisible().catch(() => undefined);
@@ -939,7 +1013,7 @@ const handlers: Handlers = {
         `Observation "${name}" is already recorded as ${s.observations[name] ?? JSON.stringify(s.texts?.[name])}${mine ? `, for this moment: ${mine.when}` : ""}. It cannot be recorded again, and no assertion whose formula uses it can be checked from here on.`,
       );
     }
-    const { text, raw, locator } = await readTarget(s, target);
+    const { text, raw, locator, scope } = await readTarget(s, target);
     await requireSubject(locator, target, "value", `Observation "${name}"`);
     const trail = trailOf(s);
     const reading = () => {
@@ -947,7 +1021,7 @@ const handlers: Handlers = {
       (trail.readings ??= {})[name] = {
         step: s.steps.length + 1,
         from: target.source,
-        locatedBy: describeTarget(target),
+        locatedBy: `${describeTarget(target)}${scope ? `, counted ${scope}` : ""}`,
         raw: clip(raw, 200),
         ...(target.source === "page" ? { page: pagePath(s) } : { responseId: target.responseId }),
         ...(trail.actor ? { actor: trail.actor } : {}),
@@ -983,6 +1057,7 @@ const handlers: Handlers = {
     let readAs: number | undefined;
     let raw: string | undefined;
     let matched: number | undefined;
+    let scope: string | undefined;
 
     if (assertion.kind === "present" || assertion.kind === "absent") {
       // Existence is the question, so a target that matches nothing is an
@@ -1042,6 +1117,7 @@ const handlers: Handlers = {
           ? assertion.expected.literal
           : evaluateFormula(assertion.expected.formula, s.observations);
       raw = read.raw;
+      scope = read.scope;
       const loop = circular(target, expected, assertion);
       if (loop) throw new Error(`Assertion ${assertionId} was not compared: ${loop} No result was recorded.`);
       const numeric = (): number => {
@@ -1072,17 +1148,75 @@ const handlers: Handlers = {
       }
     }
 
-    const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched });
+    const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched, scope });
     const shot = await screenshot(s, `check-${assertionId}`, locator);
     s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, screenshot: shot });
     return `Recorded ${assertionId}: expected ${expected}, actual ${actual}${readAs === undefined ? "" : ` (read as ${readAs}, converted to the assertion's unit)`} -> ${pass ? "match" : "MISMATCH"}. This result is final.`;
   },
 
-  async finish(s, { outcome, reason }) {
-    s.outcome = { kind: outcome, reason };
+  async finish(s, { outcome, reason, cause, error }) {
+    if (outcome === "blocked" && cause === "application-error") {
+      if (error) {
+        // The executor says where the error is; code reads what it says.
+        const read = await readTarget(s, error);
+        if (read.text.trim() === "") throw new Error("The element pointed at as the error shows no text. Point at the element that shows the error message.");
+        const trail = trailOf(s);
+        (s.appErrors ??= []).push({
+          step: s.steps.length + 1,
+          source: "page",
+          ...(trail.actor ? { actor: trail.actor } : {}),
+          ...(trail.action ? { action: trail.action } : {}),
+          page: pagePath(s),
+          locatedBy: describeTarget(error),
+          text: clip(read.text, 300),
+        });
+      } else if (!(s.appErrors ?? []).length) {
+        throw new Error('No error answer of the application was recorded in this scenario. If the page shows an error message, point "error" at the element that shows it; otherwise choose another cause.');
+      }
+    }
+    s.outcome = outcome === "blocked" ? { kind: outcome, reason, ...(cause ? { cause } : {}) } : { kind: outcome, reason };
     return "Scenario ended.";
   },
 };
+
+/** Tools that do what a user does. An error answer to one of them is the application's answer to a user. */
+const USER_ACTIONS = new Set<string>(["navigate", "click", "fill", "select", "press", "upload"]);
+
+const errorNote = (e: ApplicationError) =>
+  `NOTE: the application answered ${e.request?.method} ${e.request?.path} with HTTP ${e.request?.status}${e.text ? `: "${e.text}"` : ""}. That is an error of the application, not of your step. If it keeps you from the checks, call finish with outcome "blocked" and cause "application-error".`;
+
+/**
+ * Notes an error answer of the application, if this response is one: same
+ * origin, status 500 or above, while a user action is being carried out.
+ * Requests the executor sends itself are not included; an error there may be
+ * the test's own doing, and its response is already on record.
+ */
+export function noteResponse(session: Session, response: { url(): string; status(): number; request(): { method(): string }; text(): Promise<string> }): void {
+  if (!session.acting || response.status() < 500) return;
+  let url: URL;
+  try {
+    url = new URL(response.url());
+  } catch {
+    return;
+  }
+  if (url.origin !== new URL(session.baseUrl).origin) return;
+  const entry: ApplicationError = {
+    step: session.steps.length + 1,
+    source: "response",
+    request: { method: response.request().method(), path: clip(`${url.pathname}${url.search}`, 200), status: response.status() },
+    text: "",
+  };
+  (session.appErrors ??= []).push(entry);
+  // The body of a page that has since been replaced may never arrive; the
+  // status is the finding, the text a help, so the wait for it is short.
+  (session.pendingErrors ??= []).push(
+    Promise.race([response.text(), new Promise<string>((resolve) => setTimeout(() => resolve(""), 2_000))])
+      .then((body) => {
+        entry.text = session.vault.scrub(clip(squash(body.replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ")), 300));
+      })
+      .catch(() => {}),
+  );
+}
 
 /**
  * Validates and runs one tool call, and records it as a step. Errors are
@@ -1103,7 +1237,27 @@ export async function runTool(
     if (!parsed.success) throw new Error(`Invalid input: ${z.prettifyError(parsed.error)}`);
     // Placeholders become real values only here, on the way into the browser.
     const resolved = session.vault.resolve(parsed.data);
-    output = await (handlers[tool] as (s: Session, i: unknown) => Promise<string>)(session, resolved);
+    const before = session.appErrors?.length ?? 0;
+    session.acting = USER_ACTIONS.has(tool) ? tool : undefined;
+    try {
+      output = await (handlers[tool] as (s: Session, i: unknown) => Promise<string>)(session, resolved);
+    } finally {
+      await Promise.all(session.pendingErrors ?? []);
+      session.pendingErrors = [];
+      session.acting = undefined;
+    }
+    const met = (session.appErrors ?? []).slice(before).filter((e) => e.source === "response");
+    if (met.length > 0) {
+      const trail = trailOf(session);
+      for (const e of met) {
+        e.step = session.steps.length + 1;
+        if (trail.actor) e.actor = trail.actor;
+        // The action that was answered with the error is this one, not the last one noted before it.
+        const given = resolved as { element?: { by: string; role?: string; value: string }; path?: string };
+        e.action = { step: e.step, tool, what: session.vault.scrub(given.element ? describeRef(given.element) : clip(String(given.path ?? ""), 120)) };
+      }
+      output = `${met.map(errorNote).join("\n")}\n${output}`;
+    }
   } catch (error) {
     ok = false;
     output = `Error: ${(error as Error).message.split("\n")[0]}`;

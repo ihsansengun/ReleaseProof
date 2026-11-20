@@ -172,6 +172,12 @@ export function validatePlan(
         if (!usable && id !== a.requirementId) trimmed.push(`${where} lists "${id}" as also verified, which is not an approved requirement; the link was removed.`);
         return usable;
       });
+      // The stated examples this comparison runs: only those of its own requirement.
+      const own = new Set((requirement.get(a.requirementId)?.examples ?? []).map((e) => e.id));
+      const exampleIds = [...new Set(a.exampleIds ?? [])].filter((id) => {
+        if (!own.has(id)) trimmed.push(`${where} cites example "${id}", which is not an example of ${a.requirementId}; the citation was removed.`);
+        return own.has(id);
+      });
       const numeric = a.kind === "number_equals" || a.kind === "number_at_least" || a.kind === "number_at_most";
       // An assertion about an earlier moment compares what was recorded then.
       // The observation must exist in the plan and be of the kind compared.
@@ -204,6 +210,7 @@ export function validatePlan(
         expected,
         requirementId: a.requirementId,
         ...(alsoVerifies.length ? { alsoVerifies } : {}),
+        ...(exampleIds.length ? { exampleIds } : {}),
         provenance,
       });
     }
@@ -251,6 +258,10 @@ export function validatePlan(
     });
   }
   // More candidates than may run: code chooses, and the rest stay in the plan as deferred.
-  const plan = selectScenarios({ scenarios, notes: [...problems, ...trimmed], clarifications, trimmedRunnable }, maxScenarios);
+  const plan = selectScenarios(
+    { scenarios, notes: [...problems, ...trimmed], clarifications, trimmedRunnable },
+    maxScenarios,
+    analysis.requirements.filter((r) => r.kind === "documented").flatMap((r) => (r.examples ?? []).map((e) => ({ ...e, requirementId: r.id }))),
+  );
   return { plan, problems };
 }

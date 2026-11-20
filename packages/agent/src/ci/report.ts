@@ -2,6 +2,8 @@ import { z } from "zod";
 import { authorityLines } from "../report/authority.ts";
 import { failureCounts, failurePatterns } from "../report/patterns.ts";
 import { redact } from "../report/diagnostics.ts";
+import { applicationErrorLines } from "../report/errors.ts";
+import { exampleLines } from "../report/examples.ts";
 import { assess, headline, READINESS_LABEL } from "../report/readiness.ts";
 import { MODES } from "../report/run.ts";
 import { selectionLines } from "../report/selection.ts";
@@ -29,7 +31,7 @@ export function safe(value: unknown, max = 300): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-const Verdict = z.enum(["passed", "failed", "blocked", "unverified"]);
+const Verdict = z.enum(["passed", "failed", "errored", "blocked", "unverified"]);
 const Scalar = z.union([z.string(), z.number()]);
 
 const Stage = z.object({
@@ -102,6 +104,7 @@ export const ReportInput = z.object({
             sourceId: z.string().optional(),
             trust: z.string().optional(),
             origin: z.string().optional(),
+            examples: z.array(z.object({ id: z.string(), input: z.string(), expected: z.string() })).optional(),
             relation: z.string().optional(),
           }),
         ),
@@ -111,7 +114,7 @@ export const ReportInput = z.object({
       }),
       plan: z.object({
         trimmedRunnable: z.number().int().nonnegative().optional(),
-        selection: z.object({ cap: z.number(), candidates: z.number(), policy: z.string(), boundaryGaps: z.array(z.string()) }).optional(),
+        selection: z.object({ cap: z.number(), candidates: z.number(), policy: z.string(), boundaryGaps: z.array(z.string()), exampleGaps: z.array(z.string()).optional() }).optional(),
         scenarios: z.array(
           z.object({
             status: z.string(),
@@ -121,7 +124,7 @@ export const ReportInput = z.object({
               id: z.string(),
               title: z.string(),
               requirementIds: z.array(z.string()).optional(),
-              assertions: z.array(z.object({ id: z.string(), description: z.string(), requirementId: z.string().optional(), alsoVerifies: z.array(z.string()).optional() })),
+              assertions: z.array(z.object({ id: z.string(), description: z.string(), requirementId: z.string().optional(), alsoVerifies: z.array(z.string()).optional(), exampleIds: z.array(z.string()).optional() })),
             }),
           }),
         ),
@@ -137,6 +140,20 @@ export const ReportInput = z.object({
             z.object({ assertionId: z.string(), expected: Scalar, actual: Scalar, pass: z.boolean(), standing: z.enum(["state", "corroborated", "re-resolved", "single"]).optional() }),
           ),
           setAside: z.array(z.object({ assertionId: z.string(), expected: Scalar, actual: Scalar, otherActual: Scalar })).optional(),
+          applicationErrors: z
+            .array(
+              z.object({
+                step: z.number(),
+                source: z.enum(["response", "page"]),
+                actor: z.object({ alias: z.string(), step: z.number() }).optional(),
+                action: z.object({ step: z.number(), tool: z.string(), what: z.string() }).optional(),
+                request: z.object({ method: z.string(), path: z.string(), status: z.number() }).optional(),
+                page: z.string().optional(),
+                locatedBy: z.string().optional(),
+                text: z.string(),
+              }),
+            )
+            .optional(),
         }),
       ),
       confirmations: z.record(z.string(), z.string()).optional(),
@@ -249,6 +266,7 @@ export function render(input: ReportInput, runUrl: string): Rendered {
     `| Scenarios (${run.plan.scenarios.length} planned, ${run.results.length} executed) | ${a.execution.passed} | ${a.execution.failed} | ${a.notRun + a.execution.blocked} | ${a.execution.unverified} | – | ${a.deferred} | ${run.plan.trimmedRunnable ? `${run.plan.trimmedRunnable} dropped by the limit` : "–"} |`,
     `| Documented requirements (${a.requirements.length}) | ${a.counts.verified} | ${a.counts.failed} | ${a.counts.blocked} | ${a.counts.unverified} | ${a.counts.exercised} | ${a.counts.deferred} | ${a.counts["not planned"]} |`,
     "",
+    ...(a.execution.errored > 0 ? [`- Stopped by an application error that repeats: ${a.execution.errored} scenario${a.execution.errored === 1 ? "" : "s"}, ${a.counts.errored} requirement${a.counts.errored === 1 ? "" : "s"}`] : []),
     `- Questions for the ticket owner: ${run.analysis.ambiguities.length + run.plan.clarifications.length}`,
     `- Execution mode: ${MODES[run.executionMode]}`,
     `- Model: ${safe(run.driver, 120)}`,
@@ -328,6 +346,9 @@ export function render(input: ReportInput, runUrl: string): Rendered {
       lines.push("");
     }
   }
+
+  lines.push(...applicationErrorLines(run, (text, max = 300) => safe(text, max), "###"));
+  lines.push(...exampleLines(a, (text, max = 300) => safe(text, max), "###"));
 
   if (inconclusive > 0) {
     lines.push("### Not verified", "", "These produced no pass or fail and are not counted as either.", "");

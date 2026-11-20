@@ -1,3 +1,5 @@
+import { applicationErrorLines } from "./errors.ts";
+import { exampleLines } from "./examples.ts";
 import { selectionLines } from "./selection.ts";
 import { STANDING_TEXT } from "./standing.ts";
 import type { RunReport } from "../schema.ts";
@@ -38,10 +40,10 @@ export function renderRunReport(run: RunReport): string {
     ...(assessment.reasons.length > 0 ? ["Why it is not \"ready\":", "", ...assessment.reasons.map((r) => `- ${r}`), ""] : []),
     "## Execution results",
     "",
-    `- Scenarios executed: ${run.results.length} — ${count("passed")} passed, ${count("failed")} failed, ${count("blocked")} blocked during execution, ${count("unverified")} unverified`,
+    `- Scenarios executed: ${run.results.length} — ${count("passed")} passed, ${count("failed")} failed, ${count("errored")} stopped by an application error, ${count("blocked")} blocked during execution, ${count("unverified")} unverified`,
     `- Scenarios planned but not run: ${blocked.length} (waiting on a decision or a missing capability)`,
     ...(assessment.deferred > 0 ? [`- Scenarios planned and not run because of the scenario limit: ${assessment.deferred}`] : []),
-    `- Documented requirements: ${assessment.counts.verified} verified, ${assessment.counts.failed} failed, ${assessment.counts.blocked} blocked, ${assessment.counts.unverified} unverified, ${assessment.counts.exercised} exercised only, ${assessment.counts.deferred} not run (limit), ${assessment.counts["not planned"]} not planned (of ${documented.length})`,
+    `- Documented requirements: ${assessment.counts.verified} verified, ${assessment.counts.failed} failed, ${assessment.counts.errored} stopped by an application error, ${assessment.counts.blocked} blocked, ${assessment.counts.unverified} unverified, ${assessment.counts.exercised} exercised only, ${assessment.counts.deferred} not run (limit), ${assessment.counts["not planned"]} not planned (of ${documented.length})`,
     `- Clarification requests: ${run.analysis.ambiguities.length + run.plan.clarifications.length}`,
     `- Environment: ${run.environment.baseUrl}, commit \`${run.environment.deployedSha ?? "not reported by the application"}\`${!run.environment.deployedSha && run.environment.commitEstablished ? `; established otherwise: ${run.environment.commitEstablished}` : ""}`,
     ...(run.environment.instances === "per-scenario" ? ["- Every scenario, and every repeat of one, ran against its own freshly started application."] : []),
@@ -88,6 +90,9 @@ export function renderRunReport(run: RunReport): string {
     }
     lines.push(`- Repeatability (the same steps and locators replayed without a model; says nothing about whether the locators were right): ${run.confirmations[failure.scenarioId] ?? "not attempted"}`, "");
   }
+
+  lines.push(...applicationErrorLines(run, (text) => cell(String(text)), "##"));
+  lines.push(...exampleLines(assessment, (text) => cell(String(text)), "##"));
 
   const inconclusive = run.results.filter((r) => r.verdict === "blocked" || r.verdict === "unverified");
   if (inconclusive.length > 0) {
