@@ -11,10 +11,21 @@
  *
  * Grouping is arithmetic on the record, not a diagnosis. Two failed
  * comparisons belong together when they rest on a common approved
- * requirement, or when they are numbers off by the same amount. A pattern is "evidence-backed" only when at least one of its comparisons
- * is backed by the application's own API response, by a second comparison
- * through another target, or by a second attempt that located the value its
- * own way, and that scenario's failure repeats. Anything else is an
+ * requirement, or when they are numbers off by the same amount.
+ *
+ * A pattern is "evidence-backed" when one of its comparisons has evidence
+ * that was validated independently of the reading itself:
+ *
+ *   - the application's own API response, or a second attempt that located
+ *     the value its own way and saw the same mismatch. These stand on their
+ *     own. A model-free repeat that could not be completed does not weaken
+ *     them: applications assign new identifiers on each run, so a recording
+ *     often stops fitting for reasons that have nothing to do with the defect.
+ *   - a second comparison through another target in the same attempt, when
+ *     the failure also repeats on replay.
+ *
+ * A repeat that ran to the comparison and found it MATCHING contradicts the
+ * failure, and nothing is called evidence-backed then. Anything else is an
  * unconfirmed pattern: it may be a defect, a wrong locator or a wrong
  * expectation, and the report does not call it a defect.
  *
@@ -44,6 +55,8 @@ export type FailurePattern = {
 
 const round = (n: number) => Math.round(n * 1e6) / 1e6;
 const BACKED = new Set(["state", "corroborated", "re-resolved"]);
+/** Evidence validated outside the attempt's own page readings. */
+const INDEPENDENT = new Set(["state", "re-resolved"]);
 const BASIS: Record<string, string> = {
   state: "the application's own API response",
   corroborated: "a second comparison through another target",
@@ -101,7 +114,12 @@ export function failurePatterns(run: PatternInput): FailurePattern[] {
     const amounts = [...new Set(members.map(difference).filter((d): d is number => d !== undefined))];
     const other = members.some((m) => difference(m) === undefined);
     const what = [amounts.length > 0 ? `number${amounts.length === 1 && members.length === 1 ? "" : "s"} off by ${amounts.join(", ")}` : "", other ? "text, presence or status that differs" : ""].filter(Boolean).join("; ");
-    const backing = members.find((m) => m.standing && BACKED.has(m.standing) && run.confirmations?.[m.scenarioId] === "reproduced");
+    const repeat = (m: Failure) => run.confirmations?.[m.scenarioId];
+    // Evidence that stands without the replay, unless the replay contradicts it.
+    const independent = members.find((m) => m.standing && INDEPENDENT.has(m.standing) && repeat(m) !== "not reproduced");
+    const repeated = members.find((m) => m.standing && BACKED.has(m.standing) && repeat(m) === "reproduced");
+    const backing = independent ?? repeated;
+    const contradicted = members.find((m) => m.standing && BACKED.has(m.standing) && repeat(m) === "not reproduced");
     const backedNotRepeating = members.find((m) => m.standing && BACKED.has(m.standing));
     return {
       id: `F${index + 1}`,
@@ -111,10 +129,18 @@ export function failurePatterns(run: PatternInput): FailurePattern[] {
       requirementIds,
       evidence: backing ? ("evidence-backed" as const) : ("unconfirmed" as const),
       basis: backing
-        ? `${backing.scenarioId}/${backing.assertionId} is backed by ${BASIS[backing.standing!]}, and the failure repeats`
-        : backedNotRepeating
-          ? `${backedNotRepeating.scenarioId}/${backedNotRepeating.assertionId} is backed by ${BASIS[backedNotRepeating.standing!]}, but the failure did not repeat when replayed`
-          : "rests on single page observations; nothing else confirms it",
+        ? `${backing.scenarioId}/${backing.assertionId} is backed by ${BASIS[backing.standing!]}${
+            repeat(backing) === "reproduced"
+              ? ", and the failure repeats"
+              : repeat(backing) === "replay diverged"
+                ? "; the model-free repeat could not be completed, which does not bear on this evidence"
+                : ""
+          }`
+        : contradicted
+          ? `${contradicted.scenarioId}/${contradicted.assertionId} is backed by ${BASIS[contradicted.standing!]}, but the same steps repeated without a model found the comparison matching`
+          : backedNotRepeating
+            ? `${backedNotRepeating.scenarioId}/${backedNotRepeating.assertionId} is backed by ${BASIS[backedNotRepeating.standing!]} in the same attempt only, and the failure did not repeat when replayed`
+            : "rests on single page observations; nothing else confirms it",
     };
   });
 }

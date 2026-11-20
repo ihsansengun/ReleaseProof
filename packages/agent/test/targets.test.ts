@@ -406,3 +406,59 @@ test("a number inside a name is not the number, and the results table has a sepa
   assert.equal(columns(body[header + 2]!), 8);
   assert.equal(columns(body[header + 3]!), 8);
 });
+
+// ---- a line that carries its own label --------------------------------------
+
+test("the value of a \"Label: value\" line is read by its label, and nothing inside the label is read", async () => {
+  // The layout both demonstration applications use, which the labelled target refused 13 times in the second gate.
+  const page = `<section aria-label="Summary">
+      <p>Subtotal: $60.00</p>
+      <p>Discount (TAKE15): -$15.00</p>
+      <p>Total: <strong>$45.00</strong></p>
+      <p>Items: 5 of 12 in stock</p>
+    </section>
+    <h2>Balance: 20 days</h2>
+    <p>Days remaining: <span>20</span></p>
+    <section aria-label="Earlier"><p>Total: $48.00</p></section>
+    <p>Note:</p>`;
+  const n = (id: string, literal: number, unit?: Assertion["unit"]): Assertion => ({ id, description: id, kind: "number_equals", expected: { literal }, requirementId: "R1", ...(unit ? { unit } : {}) });
+  const summary = { within: { by: "role", role: "region", value: "Summary" } };
+  const { value, result } = await withApp(html(page), scenario([n("A1", 60, "currency-units"), n("A2", 15, "currency-units"), n("A3", 20), n("A4", 20), n("A5", 45, "currency-units"), n("A6", 44, "currency-units"), n("A7", 5)]), async (run) => ({
+    subtotal: await check(run, "A1", labelled("Subtotal")),
+    // The label holds a number of its own, "15" in the code name. Only what follows the colon is read.
+    discount: await check(run, "A2", labelled("Discount (TAKE15)", summary)),
+    // A heading that carries a value: the label names it, so the value may be read.
+    balance: await check(run, "A3", labelled("Balance")),
+    // With or without the colon, and with the value in a child element.
+    days: await check(run, "A4", labelled("Days remaining:")),
+    // "Total" begins two lines on the page; "Subtotal: ..." is not one of them.
+    ambiguous: await check(run, "A5", labelled("Total")),
+    total: await check(run, "A5", labelled("Total", summary)),
+    // A total that really is wrong still fails.
+    wrong: await check(run, "A6", labelled("Total", summary)),
+    // A value with more than one number in it is not guessed at.
+    several: await check(run, "A7", labelled("Items", summary)),
+    // A label with nothing after its colon has no value.
+    empty: await check(run, "A7", labelled("Note")),
+  }));
+  assert.match(value.subtotal.output, /expected 60, actual 60 -> match/);
+  assert.match(value.discount.output, /expected 15, actual 15 -> match/);
+  assert.match(value.balance.output, /expected 20, actual 20 -> match/);
+  assert.match(value.days.output, /expected 20, actual 20 -> match/);
+  assert.match(value.ambiguous.output, /Ambiguous target: 2 labels read "Total"\. Narrow it with "within"\. Nothing was read\./);
+  assert.match(value.total.output, /expected 45, actual 45 -> match/);
+  assert.match(value.wrong.output, /expected 44, actual 45 -> MISMATCH/);
+  assert.match(value.several.output, /Expected exactly one number in "5 of 12 in stock", found 2/);
+  assert.match(value.empty.output, /Expected exactly one label "Note" with a value beside it, found 0/);
+  assert.equal(result.verdict, "failed");
+  assert.deepEqual(result.assertionResults.map((r) => [r.assertionId, r.pass]), [["A1", true], ["A2", true], ["A3", true], ["A4", true], ["A5", true], ["A6", false]]);
+  // What was read is on record: the value, not the line.
+  const discount = result.assertionResults.find((r) => r.assertionId === "A2")!.evidence!;
+  assert.equal(discount.raw, "-$15.00");
+  assert.equal(discount.target.locatedBy, 'labelled "Discount (TAKE15)"');
+
+  // The circular rule still applies to the label: a line may not be named by the value sought.
+  const circularLabel = await withApp(html(page), scenario([n("A1", 60)]), (run) => check(run, "A1", labelled("Subtotal: $60.00")));
+  assert.equal(circularLabel.value.ok, false);
+  assert.equal(circularLabel.result.verdict, "unverified");
+});

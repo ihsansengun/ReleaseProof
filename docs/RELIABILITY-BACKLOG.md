@@ -141,3 +141,20 @@ Limits:
 - "Just above the threshold" is not reserved.
 - The vocabulary tripwire no longer lists "column": the engine now uses the
   word for the column of a table.
+
+## After the second reliability gate (20 November 2026)
+
+| Problem seen | What changed |
+|---|---|
+| Two defects with API evidence were shown as unconfirmed because the model-free repeat diverged: the application assigns new identifiers on each run | A pattern is an evidence-backed defect candidate when one of its comparisons rests on the application's API response, or on a second attempt that reached the value another way, whether or not the repeat could be completed. Two page readings in one attempt still need the failure to repeat. A repeat that reaches the comparison and finds it matching contradicts the failure, and nothing is then called evidence-backed |
+| The labelled target was refused 13 times: both applications write label and value in one line | `by: "labelled"` also reads a line that begins with the label and a colon ("Subtotal: $60.00", "Balance: 20 days"). Only what follows the colon is the value, so a number inside the label ("Discount (TAKE15): ...") is never read. One such line, or nothing is read |
+
+Limits:
+
+- An evidence-backed candidate is not a confirmed defect or root cause, and
+  the report never says so.
+- A line whose label is not followed by a colon, and a block of several
+  "Label: value" pairs in one element, are not resolved.
+- A failure whose repeat diverges is still sent for a second attempt on the
+  escalation model even when it already has API evidence. That costs money
+  and was left as it is.
