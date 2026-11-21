@@ -5,7 +5,7 @@ import { evaluateFormula, formulaVariables } from "../formula.ts";
 import { reconcile, scaleUnclear } from "../units.ts";
 import { BlockedCause, type ApplicationError, type ErrorSignal, type AssertionResult, type Evidence, type Outcome, type Scenario, type Step } from "../schema.ts";
 import type { SecretVault } from "../secrets.ts";
-import { answerNotEvidence, newState, noteInput, ownField, pageNotEvidence, placeOf, type SuppliedState } from "./supplied.ts";
+import { answerNotEvidence, newState, noteInput, noteOpened, ownField, pageNotEvidence, placeOf, type SuppliedState } from "./supplied.ts";
 
 /** Everything one scenario execution accumulates. */
 export type Session = {
@@ -681,13 +681,13 @@ export const suppliedOf = (s: Session): SuppliedState => (s.supplied ??= newStat
  * executor's own field, in every run; and in a run whose plan is not the
  * engine's own, anything but a page or an answer as the application served it.
  */
-async function requireEvidence(s: Session, what: string, target: Target, locator: Locator | undefined): Promise<void> {
+async function requireEvidence(s: Session, what: string, target: Target, locator: Locator | undefined, matched = true): Promise<void> {
   let why: string | undefined;
   if (target.source === "api") {
-    if (s.untrustedPlan) why = answerNotEvidence(s.supplied?.requests[target.responseId], target.field === "status");
+    if (s.untrustedPlan && matched) why = answerNotEvidence(s.supplied?.requests[target.responseId], target.field === "status");
   } else {
     why = await ownField(s.supplied, locator);
-    if (!why && s.untrustedPlan) why = pageNotEvidence(s.supplied);
+    if (!why && s.untrustedPlan && matched) why = pageNotEvidence(s.supplied, s.page.url());
   }
   if (why) throw new Error(`${what}: ${why} No result was recorded.`);
 }
@@ -753,8 +753,10 @@ function sameReading(s: Session, names: string[], where: string, raw: string, si
   return names.filter((name) => {
     const reading = trail.readings?.[name];
     if (!reading || reading.where !== where || reading.raw !== clip(raw, 200)) return false;
+    // A plan that is not the engine's own does not get to say that something changed in between.
+    if (s.untrustedPlan) return true;
     if (reading.writes !== writes) return false;
-    return s.untrustedPlan ? true : trail.action === undefined || trail.action.step <= Math.min(reading.step, sinceStep);
+    return trail.action === undefined || trail.action.step <= Math.min(reading.step, sinceStep);
   });
 }
 
@@ -785,7 +787,8 @@ async function checkObservation(s: Session, assertion: Scenario["assertions"][nu
   const expected = "literal" in assertion.expected ? assertion.expected.literal : evaluateFormula(assertion.expected.formula, s.observations);
   const about = trailOf(s).readings?.[name];
   if (about?.where !== undefined && variables.length > 0) {
-    const same = sameReading(s, variables.filter((v) => v !== name), about.where, about.raw, about.step);
+    // The observation itself, used in its own expected value, is the same reading by definition.
+    const same = [...variables.filter((v) => v === name), ...sameReading(s, variables.filter((v) => v !== name), about.where, about.raw, about.step)];
     if (same.length === variables.length) {
       throw new Error(`Assertion ${id} was not compared: its expected value is calculated only from ${same.join(", ")}, read from the same place as "${name}" with nothing changed in between. That compares a value with itself. No result was recorded.`);
     }
@@ -1003,14 +1006,11 @@ const handlers: Handlers = {
   async navigate(s, { path: p }) {
     if (!p.startsWith("/") || p.startsWith("//")) throw new Error('path must start with a single "/".');
     const state = suppliedOf(s);
-    state.navigating = true;
-    let response;
-    try {
-      response = await s.page.goto(new URL(p, s.baseUrl).toString(), { waitUntil: "load" });
-    } finally {
-      state.navigating = false;
-    }
+    state.opened = { not: "the page could not be opened" };
+    const response = await s.page.goto(new URL(p, s.baseUrl).toString(), { waitUntil: "load" });
     await settle(s.page);
+    // Where the page ended up once it had settled, fragment included: a page may send itself on.
+    noteOpened(state, p, response ? { method: response.request().method(), status: response.status() } : undefined, s.page.url());
     const part = await partOfAPage(response);
     return `${part ? `${part}\n` : ""}${await describePage(s)}`;
   },
@@ -1047,7 +1047,7 @@ const handlers: Handlers = {
 
   async select(s, { element, option }) {
     const list = await locate(s.page, element);
-    noteInput(suppliedOf(s), { handle: await list.elementHandle().catch(() => null) }, [option]);
+    noteInput(suppliedOf(s), { handle: await list.elementHandle().catch(() => null) });
     await list.selectOption({ label: option });
     await settle(s.page);
     return describePage(s);
@@ -1065,7 +1065,7 @@ const handlers: Handlers = {
     if (new Set(files.map((f) => f.name.toLowerCase())).size !== files.length) throw new Error("Each file needs its own name. Nothing was chosen.");
     const made = files.map((f) => syntheticFile(f.name, f.kind));
     const control = await locate(s.page, element);
-    noteInput(suppliedOf(s), { handle: await control.elementHandle().catch(() => null) }, files.map((f) => f.name));
+    noteInput(suppliedOf(s), { handle: await control.elementHandle().catch(() => null) });
     // The file field itself takes the files directly. Anything else must open
     // the browser's file dialog when clicked; that dialog is the only way a
     // file enters the page, and it is given these synthetic files and no other.
@@ -1116,7 +1116,7 @@ const handlers: Handlers = {
     }
     const id = `R${s.apiResponses.size + 1}`;
     s.apiResponses.set(id, { status: response.status(), body: parsed });
-    suppliedOf(s).requests[id] = { method, path: `${url.pathname}${url.search}${url.hash}`, status: response.status() };
+    suppliedOf(s).requests[id] = { method, path: `${url.pathname}${url.search}${url.hash}`, status: response.status(), body: body !== undefined };
     if (method !== "GET" && response.status() < 400) suppliedOf(s).writes += 1;
     trailOf(s).requests[id] = { step: s.steps.length + 1, method, path: url.pathname };
     return JSON.stringify({ responseId: id, status: response.status(), body: parsed });
@@ -1297,8 +1297,9 @@ const handlers: Handlers = {
       }
     }
 
-    // A match counts only if what was read is evidence about the application. A mismatch always counts.
-    if (pass) await requireEvidence(s, `Assertion ${assertionId} was not compared`, target, locator);
+    // The executor's own field is never compared, match or not: what it holds is the executor's, and may be a secret.
+    // Beyond that, a match counts only if what was read is evidence about the application. A mismatch always counts.
+    await requireEvidence(s, `Assertion ${assertionId} was not compared`, target, locator, pass);
     const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched, scope, ...counted });
     const shot = await screenshot(s, `check-${assertionId}`, locator);
     s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, screenshot: shot });

@@ -55,6 +55,7 @@ async function app(): Promise<{ baseUrl: string; server: Server; state: { nickna
          <p>Selected file: <span data-testid="file"></span></p>
          <button onclick="document.querySelector('[data-testid=details]').textContent = 'Tier: 60 points'">Show details</button>
          <p data-testid="details"></p>
+         <a href="/export">Export orders</a>
          <button onclick="fetch('/noop', { method: 'POST' })">Save draft</button>`,
       );
     }
@@ -65,6 +66,14 @@ async function app(): Promise<{ baseUrl: string; server: Server; state: { nickna
       return html(`<h1>Customers</h1><ul>${found.map((name) => `<li data-testid="customer">${name}</li>`).join("")}</ul>`);
     }
     if (url.pathname === "/noop") return json({ ok: true });
+    // A file to save: the browser asks for it and stays on the page it was on.
+    if (url.pathname === "/export") {
+      response.writeHead(200, { "content-type": "text/csv", "content-disposition": "attachment; filename=orders.csv" });
+      return response.end("order,total\n");
+    }
+    // A page that shows what its fragment says, as pages routed by fragment do.
+    if (url.pathname === "/app") return html(`<p>Results for <span data-testid="route"></span></p><script>const show = () => (document.querySelector('[data-testid=route]').textContent = location.hash.split('/').pop() ?? ''); addEventListener('hashchange', show); show();</script>`);
+    if (url.pathname === "/api/preview") return void body().then((text) => json({ preview: text ? (JSON.parse(text) as unknown) : null }));
     if (url.pathname === "/redirect") {
       response.writeHead(302, { location: "/account", "content-type": "text/plain" });
       return response.end(`Found. Redirecting to ${url.searchParams.get("to") ?? ""}`);
@@ -157,6 +166,27 @@ for (const typed of ["160", "x160", "160px", "_160"]) {
   });
 }
 
+test("every run: typing into the same field twice does not make the second value the application's", async () => {
+  for (const mode of ["own", "untrusted"] as const) {
+    const { result } = await replay(mode, [open("/account"), step("fill", { element: textbox("Search orders"), text: "abc" }), step("fill", { element: textbox("Search orders"), text: "160" }), check(label("Search orders")), FINISH]);
+    refused(result, /a field the executor itself put a value into/);
+  }
+});
+
+test("every run: a value typed and then moved with a key is still the executor's own", async () => {
+  for (const mode of ["own", "untrusted"] as const) {
+    const spin = { by: "role", role: "spinbutton", value: "Points to redeem" };
+    const { result } = await replay(mode, [open("/account"), step("fill", { element: spin, text: "159" }), step("press", { element: spin, key: "ArrowUp" }), check(label("Points to redeem")), FINISH]);
+    refused(result, /a field the executor itself put a value into/);
+  }
+});
+
+test("every run: a mismatch read from the executor's own field is not recorded either, so what was typed stays out of the result", async () => {
+  const { result } = await replay("own", [open("/account"), step("fill", { element: textbox("Search orders"), text: "a-secret-77" }), check(label("Search orders")), FINISH], [text("something else")]);
+  assert.deepEqual(result.assertionResults, []);
+  assert.ok(!JSON.stringify({ ...result, steps: [] }).includes("a-secret-77"));
+});
+
 test("every run: a number field moved with a key is the executor's own input too", async () => {
   for (const mode of ["own", "untrusted"] as const) {
     const spin = { by: "role", role: "spinbutton", value: "Points to redeem" };
@@ -207,12 +237,24 @@ attack("the same with a letter in front and a pattern", [open("/search?q=x160"),
 attack(
   "searching for the value through the application's own form",
   [open("/account"), step("fill", { element: textbox("Search orders"), text: "x160" }), step("click", { element: button("Search") }), check(testid("query", { pattern: "(\\d+)" })), FINISH],
-  /holds something the executor itself entered/,
+  /the executor has acted in this page/,
 );
 attack(
   "a form answered with a page that repeats it",
   [open("/profile"), step("fill", { element: textbox("Scratch"), text: "160" }), step("click", { element: button("Send") }), check(testid("said")), FINISH],
-  /answer to a POST request/,
+  /the executor has acted in this page/,
+);
+attack(
+  "a mirror, after a link that makes the browser fetch a file and stay where it is",
+  [open("/account"), step("fill", { element: textbox("Preview"), text: "160" }), step("click", { element: { by: "role", role: "link", value: "Export orders" } }), check(testid("mirror")), FINISH],
+  /the executor has acted in this page/,
+);
+attack("a page that shows what the fragment of its address says", [open("/app#/search/160"), check(testid("route")), FINISH], /an address with a query or a fragment/);
+attack("the same after opening the page by its plain address first", [open("/app"), open("/app#/search/160"), check(testid("route")), FINISH], /an address with a query or a fragment/);
+attack(
+  "a read request that carries a body, answered by repeating it",
+  [step("api_request", { method: "GET", path: "/api/preview", body: { balance: 160 } }), check({ source: "api", responseId: "R1", jsonPath: "preview.balance" }), FINISH],
+  /the request carried a body/,
 );
 attack("an error answer that repeats the address requested", [step("api_request", { method: "GET", path: "/api/x160" }), check({ source: "api", responseId: "R1", jsonPath: "path", pattern: "(\\d+)" }), FINISH], /status 404/);
 attack("a redirect answer that repeats its own parameter", [step("api_request", { method: "GET", path: "/redirect?to=160" }), check({ source: "api", responseId: "R1", jsonPath: "" }), FINISH], /status 302/);
@@ -281,7 +323,11 @@ test("legitimate: a value the application shows by itself passes, and a wrong on
 });
 
 test("legitimate: edit, save, and read what the application shows afterwards", async () => {
-  const save = [open("/profile"), step("fill", { element: textbox("Nickname"), text: "Grace" }), step("click", { element: button("Save") })];
+  const edit = [open("/profile"), step("fill", { element: textbox("Nickname"), text: "Grace" }), step("click", { element: button("Save") })];
+  // Without opening the page again, the page shown is one the executor acted to reach.
+  const early = await replay("untrusted", [...edit, check(testid("nickname")), FINISH], [text("Grace")]);
+  refused(early.result, /the executor has acted in this page/);
+  const save = [...edit, open("/profile")];
   const shown = await replay("untrusted", [...save, check(testid("nickname")), FINISH], [text("Grace")]);
   assert.equal(shown.state.nickname, "Grace");
   assert.equal(shown.result.verdict, "passed", shown.result.reason);
@@ -307,6 +353,22 @@ test("a view the page builds only after a click is read after opening the page a
   const clicked = await replay("untrusted", [open("/account"), step("click", { element: button("Show details") }), check(testid("details", { pattern: "(\\d+)" })), FINISH], [assertion({ expected: { literal: 60 } })]);
   refused(clicked.result, /the executor has acted in this page/);
 });
+
+test("in such a run a presence check looks for whole words the approved text states", async () => {
+  const present = assertion({ kind: "present", expected: undefined, unit: undefined });
+  const own = await replay("untrusted", [open("/account"), check({ source: "page", by: "text", value: "Your account" }), FINISH], [present]);
+  refused(own.result, /whole words the approved text states/);
+  const quoted = await replay("untrusted", [open("/account"), check({ source: "page", by: "text", value: "loyalty balance" }), FINISH], [present]);
+  assert.equal(quoted.result.verdict, "passed", quoted.result.reason);
+});
+
+attack(
+  "an observation compared with a calculation of itself",
+  [open("/account"), step("observe", { name: "b", target: testid("loyalty-balance") }), step("check", { assertionId: "A1" }), FINISH],
+  /compares a value with itself/,
+  [assertion({ expected: { formula: "b + 160 - 160" }, actual: { observation: "b" } })],
+  { observations: [balance] },
+);
 
 // ---- the pull-request path keeps its read-only flows -------------------------------
 
@@ -345,6 +407,11 @@ test("an expected value is quoted only if the approved text states it", () => {
   assert.match(notQuoted({ literal: 160 }, "after 1600ms", "plain") ?? "", /the number 160/);
   assert.match(notQuoted({ literal: 123 }, "items 1,2,3", "plain") ?? "", /the number 123/);
   assert.equal(notQuoted({ literal: 1600 }, "a total of 1,600.00", "plain"), undefined);
+  // A reference, a list marker, a fraction, a range, a time: none states the number.
+  for (const quote of ["see KAN-160", "issue #160", "2. After the order", "1/160 of the total", "between 10-160 items", "at 160:00"]) {
+    assert.match(notQuoted({ literal: quote.startsWith("2.") ? 2 : 160 }, quote, "plain") ?? "", /the number/, quote);
+  }
+  assert.match(notQuoted({ literal: 1.6 }, QUOTE, "currency-units") ?? "", /the number 1.6/);
   // Hundredths of an amount written with a decimal point, and of nothing else.
   assert.equal(notQuoted({ literal: 6000 }, QUOTE, "currency-hundredths"), undefined);
   assert.match(notQuoted({ literal: 300 }, "At most 3 attempts", "currency-hundredths") ?? "", /the number 300/);
@@ -365,7 +432,7 @@ test("with the quoted rule, a plan's own expectation and its own kind of compari
     risks: [],
     conflicts: [],
   };
-  const drafted = (kind: string, expectedNumber: number | null) => ({
+  const drafted = (kind: string, expectedNumber: number | null, expectedFormula: string | null = null) => ({
     scenarios: [
       {
         id: "S1",
@@ -376,23 +443,27 @@ test("with the quoted rule, a plan's own expectation and its own kind of compari
         intent: "Read the balance.",
         setup: "",
         fixtures: [],
-        observations: [],
+        observations: [{ name: "b", what: "balance", when: "first", unit: "plain", type: "number" }],
         status: "runnable" as const,
         blockedReason: "",
         ambiguityIds: [],
-        assertions: [{ id: "A1", description: "Balance", kind, expectedNumber, expectedText: null, expectedFormula: null, unit: "plain" as const, requirementId: "R1", alsoVerifies: [] }],
+        assertions: [{ id: "A1", description: "Balance", kind, expectedNumber, expectedText: null, expectedFormula, unit: "plain" as const, requirementId: "R1", alsoVerifies: [] }],
       },
     ],
   });
   const manifest = Manifest.parse({ baseUrl: "http://localhost:1" });
-  const kept = (kind: string, expectedNumber: number | null, quoted: boolean) =>
-    validatePlan(drafted(kind, expectedNumber) as never, analysis as never, manifest, 5, { declared: true, quoted }).plan.scenarios.flatMap((s) => s.scenario.assertions.map((a) => a.id));
+  const kept = (kind: string, expectedNumber: number | null, quoted: boolean, formula: string | null = null) =>
+    validatePlan(drafted(kind, expectedNumber, formula) as never, analysis as never, manifest, 5, { declared: true, quoted }).plan.scenarios.flatMap((s) => s.scenario.assertions.map((a) => a.id));
   assert.deepEqual(kept("number_equals", 160, true), ["A1"]);
   assert.deepEqual(kept("number_equals", 999, true), []);
   // "The balance is 160" is not "the balance is at most 160", which 60 would satisfy.
   assert.deepEqual(kept("number_at_most", 160, true), []);
-  // Nor does it say that anything is absent.
+  // Nor does it say that anything is absent, or that something is shown.
   assert.deepEqual(kept("absent", null, true), []);
+  assert.deepEqual(kept("present", null, true), []);
+  // A calculation can cancel what it reads and arrive at any number; none is accepted yet.
+  assert.deepEqual(kept("number_equals", null, true, "b - b + 160 / 1.6"), []);
+  assert.deepEqual(kept("number_equals", null, false, "b + 100"), ["A1"]);
   // The pull-request path does not set the rule, and keeps what it kept before.
   assert.deepEqual(kept("number_equals", 999, false), ["A1"]);
   assert.deepEqual(kept("number_at_most", 160, false), ["A1"]);

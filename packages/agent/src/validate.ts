@@ -171,11 +171,19 @@ export function validatePlan(
               ? /\b(at most|or less|maximum|no more than|not more than|up to|or fewer|or below)\b/
               : a.kind === "absent"
                 ? /\b(not|no|never|without|hidden|removed|absent|cannot|can't|isn't|doesn't)\b/
-                : undefined;
+                : a.kind === "present"
+                  ? /\b(shown|shows|show|displayed|displays|display|visible|appears?|present|sees?|listed|lists)\b/
+                  : undefined;
         if (bound && !bound.test(said)) {
           problems.push(`${where} is a "${a.kind}" comparison, and the approved text it cites does not word the requirement that way ("${source.quote.slice(0, 200)}"). It was removed.`);
           continue;
         }
+      }
+      if (!fault && options.quoted === true && expected && "formula" in expected) {
+        // What a calculation means cannot be checked against the text: one can cancel its
+        // recorded values and arrive at any number. Until that can be checked, there are none.
+        problems.push(`${where} expects a calculated value. In this run an expected value must be written in the approved text itself; calculations are not accepted yet. It was removed.`);
+        continue;
       }
       if (!fault && options.quoted === true && expected) {
         // The expected value itself must be in the approved text the comparison
@@ -295,7 +303,10 @@ export function validatePlan(
 }
 
 // A number as the text writes it. It ends where its digits end: "160px" states no number, and neither does a part of "1600".
-const QUOTED_NUMBER = /(?<![\p{L}\p{N}_.,])-?\d+(?:,\d{3})*(?:\.\d+)?(?![\p{L}\p{N}_]|[.,]\d)/gu;
+// Not a number the text states either: part of a reference ("KAN-160", "#160"), of a fraction, a range, a date or a time.
+const QUOTED_NUMBER = /(?<![\p{L}\p{N}_.,#/:]|[\p{L}\p{N}]-)-?\d+(?:,\d{3})*(?:\.\d+)?(?![\p{L}\p{N}_/:]|[.,]\d|-\d)/gu;
+/** A list marker at the start of a line ("2. After…") numbers the line; it states nothing. */
+const unnumbered = (quote: string) => quote.replace(/^\s*\d+[.)]\s+/gm, "");
 
 /**
  * Says what part of an expected value the quoted text does not state, if any.
@@ -305,19 +316,20 @@ const QUOTED_NUMBER = /(?<![\p{L}\p{N}_.,])-?\d+(?:,\d{3})*(?:\.\d+)?(?![\p{L}\p
  * must be in the text (as written, or as a percentage of it).
  */
 export function notQuoted(expected: NonNullable<Assertion["expected"]>, quote: string, unit: string): string | undefined {
+  quote = unnumbered(quote);
   const stated = (quote.match(QUOTED_NUMBER) ?? []).map((n) => Number(n.replace(/,/g, "")));
   const has = (n: number, scales: number[]) => stated.some((s) => scales.some((scale) => Math.abs(s * scale - n) < 1e-9));
   if ("literal" in expected) {
     if (typeof expected.literal === "number") {
       // An amount in hundredths may be written in whole units, and only an amount: a number with a decimal point.
       const amounts = (quote.match(QUOTED_NUMBER) ?? []).filter((n) => n.includes(".")).map((n) => Number(n.replace(/,/g, "")));
-      const converted = unit === "currency-hundredths" ? amounts.some((s) => Math.abs(s * 100 - Number(expected.literal)) < 1e-9) : unit === "currency-units" ? stated.some((s) => Math.abs(s * 0.01 - Number(expected.literal)) < 1e-9) : false;
+      const converted = unit === "currency-hundredths" && amounts.some((s) => Math.abs(s * 100 - Number(expected.literal)) < 1e-9);
       return has(expected.literal, [1]) || converted ? undefined : `the number ${expected.literal}`;
     }
     const squash = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
     const wanted = squash(expected.literal);
     // Whole words, and enough of them to be a statement: "active" is not stated by "inactive".
-    const found = wanted.length >= 3 && new RegExp(`(?<![\\p{L}\\p{N}])${wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u").test(squash(quote));
+    const found = wanted.length >= 4 && new RegExp(`(?<![\\p{L}\\p{N}])${wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u").test(squash(quote));
     return found ? undefined : `the text ${JSON.stringify(expected.literal.slice(0, 80))}`;
   }
   // A calculation with no recorded value in it is a number of the plan's own making.

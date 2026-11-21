@@ -644,14 +644,9 @@ test("a recorded run says its passes are not yet verdicts on the criteria", asyn
   assert.equal(result.verdictsTrusted, false);
 });
 
-test("in a remote run a presence check must look for wording the approved text states", async () => {
+test("in a remote run a presence check is removed unless the approved text says that something is shown", async () => {
   const present = { id: "A1", description: "Something is shown", kind: "present", expectedNumber: null, expectedText: null, expectedFormula: null, unit: "plain", requirementId: "R1", alsoVerifies: [] };
-  const check = (target: Record<string, unknown>) => [STEPS[0]!, { tool: "check", input: { assertionId: "A1", target }, ok: true, summary: "recorded" }, STEPS[2]!];
-  // "Your account" is on the page, and nowhere in the approved text.
-  const own = await run("160", recording({ assertion: present, steps: { S1: check({ source: "page", by: "text", value: "Your account" }) } }));
-  assert.notEqual(own.result.results[0]!.verdict, "passed");
-  assert.match(own.result.results[0]!.reason, /whole words the approved text states/);
-  // "Loyalty balance" is on the page and in the approved text.
-  const quoted = await run("160", recording({ assertion: present, steps: { S1: check({ source: "page", by: "text", value: "loyalty balance" }) } }));
-  assert.equal(quoted.result.results[0]!.verdict, "passed", quoted.result.results[0]!.reason);
+  const { result } = await run("160", recording({ assertion: present }));
+  assert.ok(result.planProblems.some((problem) => /is a "present" comparison, and the approved text it cites does not word the requirement that way/.test(problem)), result.planProblems.join("\n"));
+  assert.ok(!result.results.some((r) => r.verdict === "passed"));
 });

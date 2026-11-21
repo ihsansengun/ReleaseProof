@@ -179,68 +179,79 @@ application. Two rules, in the comparison code every run shares
 
 **In every run**, also for a pull request with a live model: a field the
 executor itself typed into, chose in, pressed keys in or gave a file to is
-not a place to read a value from while the page that was typed into is still
-shown. If the application changed what was typed, the field shows the
-application's answer and may be read. Nothing else changes for these runs:
-search, filter and before-and-after checks work as they did.
+not compared while the page that was typed into is still shown, whether the
+comparison would match or not. If the executor only typed into it and the
+application changed what was last typed, the field shows the application's
+answer and may be read. Nothing else changes for these runs: search, filter
+and before-and-after checks work as they did.
 
 **In a run whose plan is not the engine's own** (`untrustedPlan`; every
 remote run sets it), the question is where the text read came from, not what
-it looks like. An earlier attempt compared values and could be passed by
-typing `x160`, cutting a number with a pattern, pressing keys, naming a file,
-and more. So a matching comparison, and any observation, counts only if it is
-read from:
+it looks like. Two earlier attempts, one comparing values and one following
+what the executor did through the page, were each passed in several ways by
+an independent review. So there is one way to a reading that counts. A
+matching comparison, and any observation, is taken only from:
 
-- a page the application served in answer to a GET with a status from 200 to
-  299, in which the executor has done nothing since it loaded (no typing,
-  choosing, key, file or click), and whose address holds nothing the executor
-  chose: no query or fragment when the executor asked for the address itself,
-  and nothing it typed when the application chose the address; or
-- the answer to a GET the executor made itself, with a status from 200 to 299
-  and no query in its address. How the application answered (the status) may
-  be read from any request.
+- a page the executor has just opened itself by a plain address (no query, no
+  fragment), which the application answered to a GET with a status from 200
+  to 299, which ended up at a plain address, and in which the executor has
+  done nothing since (no typing, choosing, key, file or click) and which is
+  still at that address; or
+- the answer to a GET the executor made itself, with a plain address, no
+  body, and a status from 200 to 299. How the application answered (the
+  status) may be read from any request.
 
-So "edit, save, look again" works, because the page after saving is one the
-application served afterwards. "Type it and read it back", in any spelling,
-does not. The answer to a request never counts for what that request carried.
+So the way to verify a change is: edit, save, **open the page again by its
+plain address**, and read. "Type it and read it back", in any spelling, does
+not count, and neither does the page a form or a link leads to.
 
-A **mismatch** is always recorded: the application not showing a value is
-evidence whatever was typed.
+A **mismatch** is always recorded, except from the executor's own field: the
+application not showing a value is evidence whatever was typed.
 
 Also refused: an expected value calculated only from readings of the same
-place showing the same text as the value compared, with nothing changed in
-between. The place is the element's position in its page, or the request and
-field, whatever way the plan pointed at it. In a run whose plan is the
-engine's own, an action in between is taken to be what the comparison is
-about; otherwise only a change the application accepted is.
+place showing the same text as the value compared (or from the compared
+observation itself). The place is the element's position in its page, or the
+request and field, however the plan pointed at it. In a run whose plan is the
+engine's own, an action or an accepted change in between is taken to be what
+the comparison is about; in other runs nothing is.
 
-In a remote run the plan is checked more strictly as well: an expected number
-must be written in the approved text cited, an expected text must be in it as
-whole words, a calculation must use a recorded value and may only write
-numbers the text states, "at least", "at most" and "absent" must be worded
-that way by the text, and a presence check must look for whole words the text
-states.
+In a remote run the plan is checked more strictly as well:
+
+- an expected number must be written whole in the approved text cited (not a
+  part of a longer number, a reference such as "KAN-160", a list marker, a
+  fraction, a range or a time), and an expected text must be in it as whole
+  words;
+- **calculated expected values are not accepted yet**: a calculation can
+  cancel what it reads and arrive at any number;
+- "at least", "at most", "absent" and "present" must be worded that way by
+  the text, and a presence check must look for whole words the text states.
 
 What a remote run cannot do yet, because of these rules:
 
-- read a search or filter result (its address holds what was searched for);
-- read a view the page builds only after a click, without a new page.
+- read a search or filter result, or any page whose address has a query or a
+  fragment, including one the application redirects a plain address to;
+- read what a page shows after a click, a form or a key, without the page
+  being opened again: a view built in the page, a message shown once after
+  saving, a form answered in place;
+- read the body of the answer to a change (only its status);
+- expect a calculated value.
 
 What these rules do not establish:
 
-- **Which element is the right one to read.** A value the executor saved
-  where the application keeps it, or made it keep by a request with side
-  effects, can be read back from there in a later page. This is why
-  `verdictsTrusted` stays false.
-- That a calculation is the one the approved text means. Only its written
-  numbers are checked.
-- An application that shows a part of a plain address (no query, no digits
-  needed) in a page it answers with status 200 would show back what the
-  executor asked for.
+- **Which element is the right one to read, and which number of the approved
+  text it should show.** A value the executor saved where the application
+  keeps it (on the server, or in the browser's own storage for that site), or
+  made it keep by a request with side effects, can be read back from there in
+  a page opened later. A plan can expect one stated number where the text
+  means another. This is why `verdictsTrusted` stays false.
+- An application that shows a part of a plain address in a page it answers
+  with status 200 would show back what the executor asked for.
 - On the pull-request path, a page that shows back what was typed somewhere
   else than in the field typed into, or an answer that repeats its request,
-  can still be read. Refusing those by comparing values refused ordinary
-  search and filter checks too.
+  can still be read, and so can a calculation that cancels itself. Refusing
+  those by comparing values refused ordinary search and filter checks too.
+- A value typed into a form sent by GET ends up in the page's address, and
+  so in step summaries and evidence. That was so before this change.
 
 ## Security checklist
 

@@ -10,7 +10,6 @@ import type { Manifest, Scenario, ScenarioResult, Step, Usage } from "../schema.
 import { SecretVault } from "../secrets.ts";
 import { briefing, SYSTEM } from "./briefing.ts";
 import { replaySteps } from "./replay.ts";
-import { noteDocument } from "./supplied.ts";
 import { ALL_TOOLS, noteResponse, requestAllowed, suppliedOf, type Session } from "./tools.ts";
 import { computeVerdict } from "./verdict.ts";
 
@@ -154,16 +153,12 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   // What the application answers to a user's action is kept when it is an error.
   context.on("response", (response) => {
     noteResponse(session, response);
-    // And how the page now shown was obtained, and whether the application accepted a change.
+    // And whether the application accepted a change.
     try {
       const request = response.request();
       if (new URL(response.url()).origin !== origin) return;
-      const state = suppliedOf(session);
       const method = request.method();
-      if (method !== "GET" && method !== "HEAD" && response.status() < 400) state.writes += 1;
-      if (request.isNavigationRequest() && request.frame() === session.page.mainFrame()) {
-        noteDocument(state, { method, status: response.status(), url: response.url() });
-      }
+      if (method !== "GET" && method !== "HEAD" && response.status() < 400) suppliedOf(session).writes += 1;
     } catch {
       // A response whose request or frame is already gone says nothing here.
     }
