@@ -55,8 +55,23 @@ but for another run, workspace, project, target, text or approver. A ticket, a
 pull request or a page cannot approve itself: nothing but a verifying
 signature counts. The signing key never enters the engine or a run machine.
 
+An approval also covers where the run may go and what it may spend: it carries
+a digest of the request's target address, allowed hosts and limits. Whoever
+writes a request cannot add a host, change the path or raise a limit and keep
+the approval.
+
+`check-remote-request` checks authority by default and needs `--approvals` and
+`--authority-keys`. A flag left out or empty is refused, never read as "skip".
+Checking integrity alone takes an explicit `--integrity-only`, and its output
+says authority was not checked.
+
 Not built yet: the control plane's side (issuing approvals), and handing an
 authoritative snapshot to the planner as a source.
+
+Still open, for the change that adds `run-remote`: the engine's caller must
+state which run and workspace it asked for, from outside the request, and a
+run id must be accepted once. Today a valid request and approval pair can be
+presented again until the approval expires (at most 24 hours).
 
 ## The run-level verdict (decided 21 November 2026)
 

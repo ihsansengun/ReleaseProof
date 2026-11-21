@@ -23,7 +23,7 @@
 import { createPublicKey, verify, type KeyObject } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
-import { RemoteRequestRefused, type AdmittedRun, type IntactSnapshot } from "./request.ts";
+import { RemoteRequestRefused, sha256Hex, type AdmittedRun, type IntactSnapshot, type RemoteRunRequest } from "./request.ts";
 
 /** Says how the signed statement is laid out. Part of what is signed. */
 export const APPROVAL_VERSION = 1;
@@ -31,16 +31,40 @@ const DOMAIN = "releaseproof-criteria-approval-v1";
 
 /** One line of the signed statement: no line breaks, so fields cannot run into each other. */
 const Line = z.string().min(1).max(500).regex(/^[^\r\n]+$/, "must be a single line");
+/** A key id is printed in refusals, so it is kept to characters that are safe to print. */
+const KeyId = z.string().regex(/^[A-Za-z0-9._-]{1,100}$/, "must be letters, digits, dot, underscore or hyphen");
+const MAX_APPROVALS = 40;
+
+/**
+ * A digest of where the run may go and how much it may spend: the target
+ * address, the hosts it may reach and its limits. An approval is bound to it,
+ * so whoever writes a request cannot widen an approved run. The hosts are
+ * sorted, so their sequence in the request does not matter.
+ */
+export function scopeSha256(request: Pick<RemoteRunRequest, "target" | "limits">): string {
+  return sha256Hex(
+    JSON.stringify([
+      "releaseproof-run-scope-v1",
+      new URL(request.target.baseUrl).href,
+      [...request.target.allowedHosts].sort(),
+      request.limits.maxUsd,
+      request.limits.maxScenarios,
+      request.limits.maxMinutes,
+    ]),
+  );
+}
 
 export const Approval = z.strictObject({
   approvalVersion: z.literal(APPROVAL_VERSION),
   /** Which of the control plane's keys signed this. */
-  keyId: Line.max(100),
+  keyId: KeyId,
   workspaceId: z.uuid(),
   projectId: z.uuid(),
   runId: z.uuid(),
   /** The scheme and host the run is allowed to target, as an origin. */
   targetOrigin: z.url({ protocol: /^https?$/ }),
+  /** `scopeSha256` of the request this approval is for: its address, allowed hosts and limits. */
+  scopeSha256: z.string().regex(/^[0-9a-f]{64}$/),
   snapshotId: Line.max(64),
   snapshotSha256: z.string().regex(/^[0-9a-f]{64}$/),
   /** Who approved the text, as the control plane authenticated them. */
@@ -64,6 +88,7 @@ export function signedStatement(approval: Omit<Approval, "signature">): string {
     approval.projectId,
     approval.runId,
     new URL(approval.targetOrigin).origin,
+    approval.scopeSha256,
     approval.snapshotId,
     approval.snapshotSha256,
     approval.approvedBy,
@@ -78,7 +103,7 @@ export type TrustedKeys = ReadonlyMap<string, KeyObject>;
 
 const TrustedKeysFile = z.strictObject({
   keys: z
-    .array(z.strictObject({ keyId: Line.max(100), publicKeyPem: z.string().min(1) }))
+    .array(z.strictObject({ keyId: KeyId, publicKeyPem: z.string().min(1) }))
     .min(1)
     .max(10),
 });
@@ -88,7 +113,16 @@ export async function loadTrustedKeys(file: string): Promise<TrustedKeys> {
   const parsed = TrustedKeysFile.parse(JSON.parse(await readFile(file, "utf8")));
   const keys = new Map<string, KeyObject>();
   for (const { keyId, publicKeyPem } of parsed.keys) {
-    const key = createPublicKey(publicKeyPem);
+    // A private key would be read as its public half. It has no place here: the engine never holds one.
+    if (!publicKeyPem.trimStart().startsWith("-----BEGIN PUBLIC KEY-----")) {
+      throw new Error(`Trusted key "${keyId}" is not a public key in PEM form.`);
+    }
+    let key: KeyObject;
+    try {
+      key = createPublicKey({ key: publicKeyPem, format: "pem", type: "spki" });
+    } catch {
+      throw new Error(`Trusted key "${keyId}" could not be read as a public key.`);
+    }
     if (key.type !== "public" || key.asymmetricKeyType !== "ed25519") {
       throw new Error(`Trusted key "${keyId}" is not an Ed25519 public key.`);
     }
@@ -127,9 +161,12 @@ export function authoriseRemoteRun(
   if (trusted.size === 0) {
     throw new RemoteRequestRefused(["no trusted approval key was given, so no approval can be checked"]);
   }
-  const list = z.array(z.unknown()).max(40).safeParse(evidence);
+  const list = z.array(z.unknown()).safeParse(evidence);
   if (!list.success) {
     throw new RemoteRequestRefused(["the approval evidence is missing or is not a list"]);
+  }
+  if (list.data.length > MAX_APPROVALS) {
+    throw new RemoteRequestRefused([`the approval evidence lists more than ${MAX_APPROVALS} approvals`]);
   }
 
   // Approvals that are well formed AND whose signature verifies. Nothing else is looked at.
@@ -147,6 +184,11 @@ export function authoriseRemoteRun(
       return;
     }
     const { signature, ...statement } = approval;
+    // One spelling per signature: the spare bits of the last character must be zero.
+    if (Buffer.from(signature, "base64url").toString("base64url") !== signature) {
+      reasons.push(`approval ${index + 1} has a signature that is not in canonical base64url`);
+      return;
+    }
     if (!verify(null, Buffer.from(signedStatement(statement), "utf8"), key, Buffer.from(signature, "base64url"))) {
       reasons.push(`approval ${index + 1} has a signature that does not verify`);
       return;
@@ -156,9 +198,15 @@ export function authoriseRemoteRun(
 
   const { request } = admitted;
   const targetOrigin = new URL(request.target.baseUrl).origin;
+  const scope = scopeSha256(request);
   const snapshots: AuthoritativeSnapshot[] = [];
 
   for (const snapshot of admitted.snapshots) {
+    // Recomputed here as well: this check does not rely on who built `admitted`.
+    if (sha256Hex(snapshot.content) !== snapshot.sha256) {
+      reasons.push(`criteria snapshot "${snapshot.id}" does not match its hash`);
+      continue;
+    }
     const mine = genuine.filter((approval) => approval.snapshotId === snapshot.id);
     if (mine.length === 0) {
       reasons.push(`criteria snapshot "${snapshot.id}" has no valid approval`);
@@ -172,11 +220,21 @@ export function authoriseRemoteRun(
       if (approval.workspaceId !== request.workspaceId) found.push("it is for another workspace");
       if (approval.projectId !== request.projectId) found.push("it is for another project");
       if (new URL(approval.targetOrigin).origin !== targetOrigin) found.push("it is for another target");
+      if (approval.scopeSha256 !== scope) found.push("it is for a different target address, set of allowed hosts or limits");
       if (approval.approvedBy !== snapshot.approvedBy) found.push("it names a different approver than the snapshot does");
       if (Date.parse(approval.approvedAt) !== Date.parse(snapshot.approvedAt)) found.push("it gives a different approval time than the snapshot does");
-      if (Date.parse(approval.expiresAt) <= now.getTime()) found.push("it has expired");
-      if (Date.parse(approval.issuedAt) > now.getTime() + 5 * 60_000) found.push("it is dated in the future");
-      if (Date.parse(approval.expiresAt) - Date.parse(approval.issuedAt) > 24 * 3_600_000) found.push("it is valid for more than 24 hours");
+      const approvedAt = Date.parse(approval.approvedAt);
+      const issuedAt = Date.parse(approval.issuedAt);
+      const expiresAt = Date.parse(approval.expiresAt);
+      if (![approvedAt, issuedAt, expiresAt].every(Number.isFinite)) {
+        found.push("one of its times cannot be read");
+        return found;
+      }
+      if (expiresAt <= now.getTime()) found.push("it has expired");
+      if (issuedAt > now.getTime() + 5 * 60_000) found.push("it is dated in the future");
+      if (expiresAt <= issuedAt) found.push("it expires before it was issued");
+      if (approvedAt > issuedAt) found.push("it was issued before the approval it states");
+      if (expiresAt - issuedAt > 24 * 3_600_000) found.push("it is valid for more than 24 hours");
       return found;
     };
     const fitting = mine.find((approval) => mismatches(approval).length === 0);

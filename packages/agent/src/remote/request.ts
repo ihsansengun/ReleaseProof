@@ -130,6 +130,10 @@ export function admitRemoteRun(raw: unknown, now: Date = new Date()): AdmittedRu
   }
 
   const base = new URL(request.target.baseUrl);
+  // One reading only: nothing a different URL parser could take for another host.
+  if (!/^[\x21-\x7e]+$/.test(request.target.baseUrl) || request.target.baseUrl.includes("\\")) {
+    reasons.push("target.baseUrl must be plain ASCII with no backslash or space");
+  }
   if (base.username !== "" || base.password !== "") {
     reasons.push("target.baseUrl must not carry credentials");
   }

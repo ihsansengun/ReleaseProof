@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { authoriseRemoteRun, loadTrustedKeys, signedStatement, type Approval, type TrustedKeys } from "../src/remote/authority.ts";
+import { authoriseRemoteRun, loadTrustedKeys, scopeSha256, signedStatement, type Approval, type TrustedKeys } from "../src/remote/authority.ts";
 import { admitRemoteRun, RemoteRequestRefused, sha256Hex } from "../src/remote/request.ts";
 
 const NOW = new Date("2026-11-21T12:00:00Z");
@@ -49,6 +49,7 @@ function approval(overrides: Partial<Approval> = {}, key: KeyObject = controlPla
     projectId: PROJECT,
     runId: RUN,
     targetOrigin: "https://shop.releaseproof.test",
+    scopeSha256: scopeSha256(request()),
     snapshotId: "checkout-r3",
     snapshotSha256: sha256Hex(CRITERIA),
     approvedBy: "owner-a@releaseproof.test",
@@ -105,15 +106,77 @@ test("KAN-16 criterion 2: an approval that was not asked for does no harm and gr
 
 // ---- criterion 3 and 4: missing, forged, mismatched or unapproved is refused ---
 
-for (const [what, evidence] of [
-  ["no approval evidence at all", undefined],
-  ["evidence that is not a list", { approval: "yes" }],
-  ["an empty list", []],
+for (const [what, evidence, reason] of [
+  ["no approval evidence at all", undefined, /missing or is not a list/],
+  ["evidence that is not a list", { approval: "yes" }, /missing or is not a list/],
+  ["an empty list", [], /"checkout-r3" has no valid approval/],
+  ["more approvals than are ever needed", Array.from({ length: 41 }, () => ({})), /more than 40 approvals/],
 ] as const) {
   test(`KAN-16 criterion 4: ${what} is refused`, () => {
-    assert.match(refusal(request(), evidence), /no valid approval|missing or is not a list/);
+    assert.match(refusal(request(), evidence), reason);
   });
 }
+
+// ---- the approval covers where the run may go and what it may spend ------------
+
+for (const [what, changed] of [
+  ["another path on the approved host", { target: { baseUrl: "https://shop.releaseproof.test/admin/delete?x=1", allowedHosts: ["shop.releaseproof.test"] } }],
+  ["an extra allowed host", { target: { baseUrl: "https://shop.releaseproof.test/", allowedHosts: ["shop.releaseproof.test", "attacker.releaseproof.test"] } }],
+  ["a higher spending limit", { limits: { maxUsd: 100, maxScenarios: 5, maxMinutes: 10 } }],
+  ["more scenarios", { limits: { maxUsd: 1, maxScenarios: 50, maxMinutes: 10 } }],
+  ["more minutes", { limits: { maxUsd: 1, maxScenarios: 5, maxMinutes: 120 } }],
+] as const) {
+  test(`KAN-16 criterion 4: an approval does not stretch to ${what}`, () => {
+    // The approval is genuine and was issued for the unchanged request.
+    assert.match(refusal(request(changed), [approval()]), /different target address, set of allowed hosts or limits/);
+  });
+}
+
+test("the allowed hosts are bound as a set: their sequence does not matter", () => {
+  const hosts = (list: string[]) => request({ target: { baseUrl: "https://shop.releaseproof.test/", allowedHosts: list } });
+  const forward = hosts(["shop.releaseproof.test", "cdn.releaseproof.test"]);
+  const backward = hosts(["cdn.releaseproof.test", "shop.releaseproof.test"]);
+  assert.equal(scopeSha256(forward), scopeSha256(backward));
+  const issued = approval({ scopeSha256: scopeSha256(forward) });
+  assert.equal(authoriseRemoteRun(admitRemoteRun(backward, NOW), [issued], trusted, NOW).snapshots.length, 1);
+});
+
+test("the authority check recomputes the hash itself and does not rely on who built its input", () => {
+  const admitted = admitRemoteRun(request(), NOW);
+  const swapped = { ...admitted, snapshots: admitted.snapshots.map((s) => ({ ...s, content: "Everything is free.\n" })) };
+  assert.throws(() => authoriseRemoteRun(swapped, [approval()], trusted, NOW), /does not match its hash/);
+});
+
+test("a signature has one accepted spelling", () => {
+  const good = approval();
+  const last = good.signature.at(-1)!;
+  // Same 512 bits, different spare bits in the last character.
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const twin = good.signature.slice(0, -1) + alphabet[alphabet.indexOf(last) + 1];
+  assert.match(refusal(request(), [{ ...good, signature: twin }]), /not in canonical base64url/);
+});
+
+for (const [what, times, reason] of [
+  ["expires exactly now", { expiresAt: "2026-11-21T12:00:00Z" }, /it has expired/],
+  ["expires before it was issued", { issuedAt: "2026-11-21T12:04:00Z", expiresAt: "2026-11-21T12:01:00Z" }, /expires before it was issued/],
+  ["was issued before the approval it states", { issuedAt: "2026-11-20T09:00:00Z", expiresAt: "2026-11-21T08:00:00Z" }, /issued before the approval it states/],
+  ["is dated more than five minutes ahead", { issuedAt: "2026-11-21T12:05:01Z" }, /dated in the future/],
+] as const) {
+  test(`KAN-16 criterion 4: an approval that ${what} is refused`, () => {
+    assert.match(refusal(request(), [approval(times)]), reason);
+  });
+}
+
+test("an approval issued up to five minutes ahead of this clock is accepted", () => {
+  const issued = approval({ issuedAt: "2026-11-21T12:05:00Z" });
+  assert.equal(authoriseRemoteRun(admitRemoteRun(request(), NOW), [issued], trusted, NOW).snapshots.length, 1);
+});
+
+test("a key id that is not plain printable characters is refused before it is printed", () => {
+  const reasons = refusal(request(), [{ ...approval(), keyId: "zz\u001b[2J" }]);
+  assert.match(reasons, /malformed/);
+  assert.ok(!reasons.includes("\u001b"));
+});
 
 test("KAN-16 criterion 4: an approval signed with a key that is not the control plane's is refused", () => {
   assert.match(refusal(request(), [approval({}, someoneElse.privateKey)]), /signature that does not verify/);
@@ -228,9 +291,14 @@ test("the trusted keys file accepts only Ed25519 public keys", async () => {
   const twice = path.join(dir, "twice.json");
   writeFileSync(twice, JSON.stringify({ keys: [{ keyId: "k", publicKeyPem: pem(controlPlane.publicKey) }, { keyId: "k", publicKeyPem: pem(someoneElse.publicKey) }] }));
   await assert.rejects(loadTrustedKeys(twice), /more than once/);
+
+  // A private key would otherwise be read as its public half.
+  const secret = path.join(dir, "private.json");
+  writeFileSync(secret, JSON.stringify({ keys: [{ keyId: "k", publicKeyPem: controlPlane.privateKey.export({ type: "pkcs8", format: "pem" }).toString() }] }));
+  await assert.rejects(loadTrustedKeys(secret), /not a public key in PEM form/);
 });
 
-test("the command authorises a run only with approvals that verify against the keys it was given, and holds no private key", async () => {
+test("the command authorises a run only with approvals that verify against the keys it was given", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "rp-authority-"));
   const cli = path.resolve(import.meta.dirname, "../src/cli.ts");
   const env = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" };
@@ -259,4 +327,27 @@ test("the command authorises a run only with approvals that verify against the k
 
   const none = await run(file("none.json", []));
   assert.equal(none.code, 2, none.text);
+  assert.match(none.text, /has no valid approval/);
+
+  // Authority is never skipped by leaving a flag out or empty.
+  const bare = (...flags: string[]) =>
+    promisify(execFile)(process.execPath, ["--import", "tsx", cli, "check-remote-request", requestFile, ...flags], { env }).then(
+      (out) => ({ code: 0, text: out.stdout + out.stderr }),
+      (error: { code: number; stdout: string; stderr: string }) => ({ code: error.code, text: error.stdout + error.stderr }),
+    );
+  for (const flags of [[], ["--approvals", ""], ["--approvals", "", "--authority-keys", ""], ["--approvals=", "--authority-keys="], ["--authority-keys", keys]]) {
+    const result = await bare(...flags);
+    assert.equal(result.code, 2, `${JSON.stringify(flags)}: ${result.text}`);
+    assert.match(result.text, /needs --approvals and --authority-keys/);
+  }
+  const mixed = await bare("--integrity-only", "--approvals", file("mixed.json", []));
+  assert.equal(mixed.code, 2, mixed.text);
+
+  const integrity = await bare("--integrity-only");
+  assert.equal(integrity.code, 0, integrity.text);
+  assert.match(integrity.text, /authority was NOT checked/);
+
+  const unreadable = await bare("--approvals", file("broken.json", "x").replace("broken.json", "absent.json"), "--authority-keys", keys);
+  assert.equal(unreadable.code, 2, unreadable.text);
+  assert.match(unreadable.text, /approvals file could not be read/);
 });

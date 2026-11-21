@@ -164,6 +164,7 @@ async function main(): Promise<number> {
       "trust-local-docs": { type: "boolean", default: false },
       approvals: { type: "string" },
       "authority-keys": { type: "string" },
+      "integrity-only": { type: "boolean", default: false },
     },
   });
   const [command, scenarioFile] = positionals;
@@ -177,21 +178,39 @@ async function main(): Promise<number> {
     try {
       const admitted = await loadRemoteRequest(scenarioFile);
       const { request } = admitted;
-      if (!values.approvals && !values["authority-keys"]) {
+      // Authority is checked unless the caller says, in so many words, not to.
+      // A flag that is absent or empty is never read as that.
+      if (values["integrity-only"]) {
+        if (values.approvals !== undefined || values["authority-keys"] !== undefined) {
+          console.error("--integrity-only is not given together with --approvals or --authority-keys");
+          return 2;
+        }
         console.log(`Run ${request.runId} against ${request.target.baseUrl}: the request is well formed and every snapshot matches its hash.`);
         for (const snapshot of admitted.snapshots) {
           console.log(`  criteria ${snapshot.id}  sha256 ${snapshot.sha256}  approver as claimed: ${snapshot.approvedBy} at ${snapshot.approvedAt} (not verified)`);
         }
-        console.log("Integrity only. Give --approvals and --authority-keys to check that the control plane approved these criteria for this run.");
+        console.log("Integrity only: authority was NOT checked. Nothing here says the control plane approved these criteria.");
         return 0;
       }
       if (!values.approvals || !values["authority-keys"]) {
-        console.error("--approvals and --authority-keys are given together");
+        console.error("check-remote-request needs --approvals and --authority-keys, each naming a file. To check integrity alone, give --integrity-only.");
         return 2;
       }
       // The keys come from this command's caller, never from the request.
-      const trusted = await loadTrustedKeys(values["authority-keys"]);
-      const evidence = JSON.parse(await readFile(values.approvals, "utf8")) as unknown;
+      let trusted: Awaited<ReturnType<typeof loadTrustedKeys>>;
+      let evidence: unknown;
+      try {
+        trusted = await loadTrustedKeys(values["authority-keys"]);
+      } catch (error) {
+        console.error(`The trusted keys could not be read: ${error instanceof Error ? error.message.split("\n")[0] : "unknown error"}`);
+        return 2;
+      }
+      try {
+        evidence = JSON.parse(await readFile(values.approvals, "utf8")) as unknown;
+      } catch {
+        console.error("The approvals file could not be read as JSON.");
+        return 2;
+      }
       const authorised = authoriseRemoteRun(admitted, evidence, trusted);
       console.log(`Run ${request.runId} against ${request.target.baseUrl}: every snapshot matches its hash and is approved for this run.`);
       for (const snapshot of authorised.snapshots) {
