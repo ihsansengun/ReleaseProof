@@ -35,6 +35,8 @@ export type Session = {
     /** Where and when each observation was read: the record behind a later comparison of it. */
     readings?: Record<string, { step: number; from: "page" | "api"; locatedBy: string; raw: string; page?: string; responseId?: string; actor?: { alias: string; step: number } }>;
   };
+  /** Places where items of a kind were counted and found, in this session: the record that a later zero there is a reading. */
+  counted?: Set<string>;
   /** Errors the application answered with. Filled by the response listener and by finish. */
   appErrors?: ApplicationError[];
   /** Text that newly read like an application failure after a user action. A lead only. */
@@ -261,13 +263,13 @@ export function exactName(value: string): RegExp {
   return new RegExp(`^${gap}*${words.join(`${gap}+`)}${gap}*$`);
 }
 
-function buildIn(root: Page | Locator, ref: Omit<ElementRef, "within">): Locator {
+function buildIn(root: Page | Locator, ref: Omit<ElementRef, "within">, includeHidden = false): Locator {
   if (ref.by === "role") {
     if (!ref.role) throw new Error("role is required when by=role");
     // No name given means any name: every element of that role. An empty name
     // matched literally would find only nameless elements, and a count of them
     // reads 0 whatever the page shows.
-    return ref.value.trim() === "" ? root.getByRole(ref.role) : root.getByRole(ref.role, { name: exactName(ref.value), exact: true });
+    return ref.value.trim() === "" ? root.getByRole(ref.role, { includeHidden }) : root.getByRole(ref.role, { name: exactName(ref.value), exact: true, includeHidden });
   }
   if (ref.by === "label") return root.getByLabel(ref.value, { exact: true });
   if (ref.by === "testid") return root.getByTestId(ref.value);
@@ -337,7 +339,8 @@ async function settleCount(page: Page, locator: Locator): Promise<number> {
  * anywhere, which is an empty collection or a wrong target, and from here the
  * two cannot be told apart.
  */
-async function countIn(page: Page, target: z.infer<typeof PageTarget>): Promise<{ count: number; scope: string }> {
+async function countIn(session: Session, target: z.infer<typeof PageTarget>): Promise<{ count: number; scope: string; present: number }> {
+  const page = session.page;
   const ref = asRef(target);
   let root: Page | Locator = page;
   let scope = "the whole page";
@@ -363,7 +366,12 @@ async function countIn(page: Page, target: z.infer<typeof PageTarget>): Promise<
     root = container;
     scope = `within ${describeRef(ref.within)}`;
   }
-  const items = buildIn(root, ref);
+  // What is in the page but not shown is not there for the user: only shown
+  // items are counted. How many are present in all goes on record beside it.
+  // Elements found by role leave out what is hidden; those found by text or
+  // test id do not. Both are asked for in full, then narrowed to what shows.
+  const every = buildIn(root, ref, true);
+  const items = buildIn(root, ref).filter({ visible: true });
   // Items may still be arriving; give them a moment before calling the place empty.
   const deadline = Date.now() + 1_000;
   let count = await items.count();
@@ -376,11 +384,37 @@ async function countIn(page: Page, target: z.infer<typeof PageTarget>): Promise<
       `Not counted: nothing on the page matches ${JSON.stringify({ by: ref.by, role: ref.role, value: ref.value })}. That is an empty collection or a wrong target, and the two cannot be told apart from here. Scope the count with "within" to the list, table or section that would hold the items; if that element itself is gone when there is nothing to show, check what the page shows in its place. Nothing was read.`,
     );
   }
-  if (ref.by === "role" && ref.role && ref.value.trim() !== "") {
-    const all = await root.getByRole(ref.role).count();
-    scope += `, which holds ${all} element${all === 1 ? "" : "s"} of role ${ref.role} in all`;
+  const present = await every.count();
+  const kindOfItem = ref.by === "role" && ref.role ? ref.role : undefined;
+  const all = kindOfItem ? await root.getByRole(kindOfItem as Parameters<Page["getByRole"]>[0]).filter({ visible: true }).count() : 0;
+  const place = ref.within ? `${describeRef(ref.within)}|${kindOfItem ?? ""}` : undefined;
+  if (count > 0 && place) (session.counted ??= new Set()).add(place);
+  if (count === 0 && kindOfItem && place && all === 0 && !session.counted?.has(place)) {
+    // The place is real, but nothing says items of this kind are ever shown
+    // in it: the page may draw its items as something else, and 0 would then
+    // be read whatever it shows. The zero stands only when the place holds
+    // nothing but its headings, says it is empty, or held such items earlier.
+    const holds = await (root as Locator).evaluate((el) => {
+      const text = (el as HTMLElement).innerText ?? "";
+      let rest = text;
+      for (const h of el.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"], legend, caption, summary, thead, label')) {
+        const words = ((h as HTMLElement).innerText ?? "").trim();
+        if (words) rest = rest.replace(words, "");
+      }
+      return { text, rest: rest.trim() };
+    });
+    const saysEmpty = /\b(no|none|nothing|empty|zero)\b|\(0\)|\b0\b/i.test(holds.text);
+    if (holds.rest !== "" && !saysEmpty) {
+      throw new Error(
+        `Not counted: ${describeRef(ref.within!)} shows content, but no element of role ${kindOfItem} was seen in it, now or earlier, and it does not say it is empty. Its items may be drawn as another kind of element, in which case 0 would be read whatever it shows. Look at the page tree for the role its items have and count that. Nothing was read.`,
+      );
+    }
   }
-  return { count, scope };
+  if (kindOfItem && ref.value.trim() !== "") {
+    scope += `, which holds ${all} element${all === 1 ? "" : "s"} of role ${kindOfItem} in all`;
+  }
+  if (present !== count) scope += `; ${present - count} more present in the page but not shown, and not counted`;
+  return { count, scope, present };
 }
 
 const CELLS = ':scope > td, :scope > th, :scope > [role="cell"], :scope > [role="gridcell"], :scope > [role="rowheader"], :scope > [role="columnheader"]';
@@ -562,7 +596,7 @@ function parseNumber(text: string): number {
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 
 /** Reads the raw text behind a target, plus the element to highlight if any. */
-async function readTarget(session: Session, target: Target): Promise<{ text: string; raw: string; locator?: Locator; scope?: string }> {
+async function readTarget(session: Session, target: Target): Promise<{ text: string; raw: string; locator?: Locator; scope?: string; present?: number }> {
   const read = await readText(session, target);
   return { raw: read.text, ...read, ...narrowed(read.text, target) };
 }
@@ -578,7 +612,7 @@ function narrowed(text: string, target: Target): { text: string } {
 }
 
 /** The text behind a target before any pattern narrows it, plus the element to highlight if any. */
-async function readText(session: Session, target: Target): Promise<{ text: string; locator?: Locator; scope?: string }> {
+async function readText(session: Session, target: Target): Promise<{ text: string; locator?: Locator; scope?: string; present?: number }> {
   if (target.source === "api") {
     const response = session.apiResponses.get(target.responseId);
     if (!response) throw new Error(`Unknown responseId "${target.responseId}".`);
@@ -601,8 +635,8 @@ async function readText(session: Session, target: Target): Promise<{ text: strin
   }
 
   if (target.count) {
-    const counted = await countIn(session.page, target);
-    return { text: String(counted.count), scope: counted.scope };
+    const counted = await countIn(session, target);
+    return { text: String(counted.count), scope: counted.scope, present: counted.present };
   }
   const { locator, text: valueOfLine } = await locateTarget(session.page, target);
   let text: string;
@@ -758,7 +792,7 @@ async function gatherEvidence(
   s: Session,
   assertion: Scenario["assertions"][number],
   target: Target,
-  found: { locator?: Locator; raw?: string; matched?: number; scope?: string },
+  found: { locator?: Locator; raw?: string; matched?: number; scope?: string; shown?: number; present?: number },
 ): Promise<Evidence> {
   const trail = trailOf(s);
   const formula = assertion.expected && "formula" in assertion.expected ? assertion.expected.formula : undefined;
@@ -802,6 +836,7 @@ async function gatherEvidence(
       ...(target.within ? { within: describeRef(target.within) } : {}),
       matched: found.matched ?? (found.locator ? 1 : undefined),
       ...(found.scope ? { scope: found.scope } : {}),
+      ...(found.present !== undefined ? { shown: found.shown, present: found.present } : {}),
     };
     if (found.locator && (found.matched ?? 1) === 1) {
       evidence.target.visible = await found.locator.isVisible().catch(() => undefined);
@@ -1062,6 +1097,7 @@ const handlers: Handlers = {
     let raw: string | undefined;
     let matched: number | undefined;
     let scope: string | undefined;
+    let counted: { shown: number; present: number } | undefined;
 
     if (assertion.kind === "present" || assertion.kind === "absent") {
       // Existence is the question, so a target that matches nothing is an
@@ -1122,6 +1158,7 @@ const handlers: Handlers = {
           : evaluateFormula(assertion.expected.formula, s.observations);
       raw = read.raw;
       scope = read.scope;
+      if (read.present !== undefined) counted = { shown: Number(read.raw), present: read.present };
       const loop = circular(target, expected, assertion);
       if (loop) throw new Error(`Assertion ${assertionId} was not compared: ${loop} No result was recorded.`);
       const numeric = (): number => {
@@ -1152,7 +1189,7 @@ const handlers: Handlers = {
       }
     }
 
-    const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched, scope });
+    const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched, scope, ...counted });
     const shot = await screenshot(s, `check-${assertionId}`, locator);
     s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, screenshot: shot });
     return `Recorded ${assertionId}: expected ${expected}, actual ${actual}${readAs === undefined ? "" : ` (read as ${readAs}, converted to the assertion's unit)`} -> ${pass ? "match" : "MISMATCH"}. This result is final.`;

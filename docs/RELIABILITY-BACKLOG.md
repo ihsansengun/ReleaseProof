@@ -405,3 +405,24 @@ Eight paid runs on this application, $11.96 of the $12 allowed: two that
 compared nothing, four of the blind evaluation ($6.45), two regression
 runs ($3.75). Blind: neither prepared defect reported. After the fixes,
 not blind: both reported, with evidence, and a third defect found twice.
+
+## The two counting gaps (KAN-18, 21 November)
+
+Both were left open by the work above. Fixed in code, with tests in
+`test/counts.test.ts`; no model run was made.
+
+- **Only what is shown is counted.** Elements found by text or by test id
+  were counted even when hidden. A count now takes shown elements only, and
+  the evidence records how many were shown and how many were present
+  (`target.shown`, `target.present`); the scope says so when they differ.
+  Elements found by role already left hidden ones out.
+- **A zero for a kind of element never seen in the place is not a
+  reading.** Inside a real container, a count by role of a kind the page does
+  not use for its items read 0 and could pass a "none shown" check. That zero
+  now stands only when the container holds elements of that role under other
+  names, holds nothing but its headings, says it is empty, or held such items
+  earlier in the same session. Otherwise nothing is compared.
+
+Known limit: "says it is empty" is a match on English words (no, none,
+nothing, empty, zero, 0). It can only let through a zero that was let through
+before this change; it never produces a verdict by itself.
