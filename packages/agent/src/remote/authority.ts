@@ -21,7 +21,9 @@
  * approve itself: only a signature made with the control plane's key counts.
  */
 import { createPublicKey, verify, type KeyObject } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import { RemoteRequestRefused, sha256Hex, type AdmittedRun, type IntactSnapshot, type RemoteRunRequest } from "./request.ts";
 
@@ -141,6 +143,8 @@ export type AuthoritativeSnapshot = Omit<IntactSnapshot, "approverVerified"> & {
     readonly approvedAt: string;
     readonly issuedAt: string;
     readonly expiresAt: string;
+    /** The signature that was verified. It identifies this approval in the ledger of used ones. */
+    readonly signature: string;
   };
 };
 
@@ -251,10 +255,98 @@ export function authoriseRemoteRun(
         approvedAt: fitting.approvedAt,
         issuedAt: fitting.issuedAt,
         expiresAt: fitting.expiresAt,
+        signature: fitting.signature,
       },
     });
   }
 
   if (reasons.length > 0) throw new RemoteRequestRefused(reasons);
   return { request, snapshots };
+}
+
+/**
+ * What the engine's caller asked for, stated by the caller itself and never
+ * read from the request. A genuine request and approval for some other run,
+ * workspace or project is refused, however valid its signature.
+ */
+export interface ExpectedRun {
+  readonly runId: string;
+  readonly workspaceId: string;
+  readonly projectId: string;
+}
+
+/**
+ * Remembers which approvals have been used. `claim` returns true the first
+ * time it is given a key and false ever after. It must be kept outside
+ * anything a request can write to.
+ */
+export interface ApprovalLedger {
+  claim(key: string): boolean;
+}
+
+/** A ledger kept in memory, for one process. */
+export function memoryLedger(): ApprovalLedger {
+  const used = new Set<string>();
+  return {
+    claim(key) {
+      if (used.has(key)) return false;
+      used.add(key);
+      return true;
+    },
+  };
+}
+
+/** A ledger kept as one file per used approval. Creating the file is the claim, so two claims cannot both succeed. */
+export function directoryLedger(directory: string): ApprovalLedger {
+  mkdirSync(directory, { recursive: true });
+  return {
+    claim(key) {
+      if (!/^[0-9a-f]{64}$/.test(key)) throw new Error("a ledger key is a SHA-256 in hexadecimal");
+      try {
+        writeFileSync(path.join(directory, key), "", { flag: "wx" });
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+        throw error;
+      }
+    },
+  };
+}
+
+/** Whether the admitted run is the one the caller asked for. Returns the reasons it is not. */
+export function unexpected(admitted: AdmittedRun, expected: ExpectedRun): string[] {
+  const { request } = admitted;
+  const reasons: string[] = [];
+  if (request.runId !== expected.runId) reasons.push("the request is for a run this engine was not asked to do");
+  if (request.workspaceId !== expected.workspaceId) reasons.push("the request is for another workspace than the caller named");
+  if (request.projectId !== expected.projectId) reasons.push("the request is for another project than the caller named");
+  return reasons;
+}
+
+/**
+ * The check a run must pass before it may start: the only way to an
+ * `AuthorisedRun` that is allowed to reach a model or a browser.
+ *
+ * On top of `authoriseRemoteRun` it requires that the run is the one the
+ * caller asked for, and that none of its approvals was used before. An
+ * approval is claimed only once everything else has passed, so a refused
+ * attempt uses nothing up. Presenting the same request and approvals a second
+ * time is refused.
+ */
+export function authoriseForExecution(
+  admitted: AdmittedRun,
+  evidence: unknown,
+  trusted: TrustedKeys,
+  caller: { readonly expected: ExpectedRun; readonly ledger: ApprovalLedger; readonly now?: Date },
+): AuthorisedRun {
+  const mismatch = unexpected(admitted, caller.expected);
+  if (mismatch.length > 0) throw new RemoteRequestRefused(mismatch);
+  const authorised = authoriseRemoteRun(admitted, evidence, trusted, caller.now ?? new Date());
+  const replayed = authorised.snapshots
+    // Every snapshot is claimed, so a second attempt is refused whichever one it reuses.
+    .map((snapshot) => ({ snapshot, fresh: caller.ledger.claim(sha256Hex(`releaseproof-approval-use-v1\n${snapshot.authority.signature}`)) }))
+    .filter(({ fresh }) => !fresh)
+    .map(({ snapshot }) => `the approval for criteria snapshot "${snapshot.id}" has already been used for a run`);
+  if (replayed.length > 0) throw new RemoteRequestRefused(replayed);
+  return authorised;
 }

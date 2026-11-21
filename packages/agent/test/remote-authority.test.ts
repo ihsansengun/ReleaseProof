@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { authoriseRemoteRun, loadTrustedKeys, scopeSha256, signedStatement, type Approval, type TrustedKeys } from "../src/remote/authority.ts";
+import { authoriseForExecution, authoriseRemoteRun, directoryLedger, loadTrustedKeys, memoryLedger, scopeSha256, signedStatement, type Approval, type TrustedKeys } from "../src/remote/authority.ts";
 import { admitRemoteRun, RemoteRequestRefused, sha256Hex } from "../src/remote/request.ts";
 
 const NOW = new Date("2026-11-21T12:00:00Z");
@@ -87,7 +87,61 @@ test("KAN-16 criterion 2: a snapshot with a valid approval for this run is autho
     approvedAt: "2026-11-20T09:30:00Z",
     issuedAt: "2026-11-21T11:55:00Z",
     expiresAt: "2026-11-21T13:55:00Z",
+    signature: approval().signature,
   });
+});
+
+// ---- replay: an approval starts one run, the one the caller asked for ----------
+
+const EXPECTED = { runId: RUN, workspaceId: WORKSPACE, projectId: PROJECT };
+
+test("KAN-16 criterion 4: a request and approval presented a second time are refused", () => {
+  const ledger = memoryLedger();
+  const start = () => authoriseForExecution(admitRemoteRun(request(), NOW), [approval()], trusted, { expected: EXPECTED, ledger, now: NOW });
+  assert.equal(start().snapshots.length, 1);
+  assert.throws(start, /has already been used for a run/);
+  assert.throws(start, RemoteRequestRefused);
+});
+
+test("KAN-16 criterion 4: a used approval stays used across processes when the ledger is a directory", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "rp-ledger-"));
+  const start = () =>
+    authoriseForExecution(admitRemoteRun(request(), NOW), [approval()], trusted, { expected: EXPECTED, ledger: directoryLedger(dir), now: NOW });
+  assert.equal(start().snapshots.length, 1);
+  assert.throws(start, /has already been used for a run/);
+});
+
+test("a refused attempt uses no approval up", () => {
+  const ledger = memoryLedger();
+  const forged = () => authoriseForExecution(admitRemoteRun(request(), NOW), [approval({}, someoneElse.privateKey)], trusted, { expected: EXPECTED, ledger, now: NOW });
+  assert.throws(forged, /does not verify/);
+  // The genuine approval still starts its one run afterwards.
+  assert.equal(authoriseForExecution(admitRemoteRun(request(), NOW), [approval()], trusted, { expected: EXPECTED, ledger, now: NOW }).snapshots.length, 1);
+});
+
+for (const [what, expected, reason] of [
+  ["another run", { ...EXPECTED, runId: OTHER }, /a run this engine was not asked to do/],
+  ["another workspace", { ...EXPECTED, workspaceId: OTHER }, /another workspace than the caller named/],
+  ["another project", { ...EXPECTED, projectId: OTHER }, /another project than the caller named/],
+] as const) {
+  test(`KAN-16 criterion 4: a genuine request and approval replayed into ${what} are refused, and nothing is used up`, () => {
+    const ledger = memoryLedger();
+    // Everything here is genuine and consistent with itself. Only the caller's own statement differs.
+    assert.throws(
+      () => authoriseForExecution(admitRemoteRun(request(), NOW), [approval()], trusted, { expected, ledger, now: NOW }),
+      reason,
+    );
+    assert.equal(authoriseForExecution(admitRemoteRun(request(), NOW), [approval()], trusted, { expected: EXPECTED, ledger, now: NOW }).snapshots.length, 1);
+  });
+}
+
+test("KAN-16 criterion 2: a matching hash and an approver's name, with no signature that verifies, grant nothing", () => {
+  // The request carries the right text, the right hash and a plausible approver. That is all it carries.
+  const admitted = admitRemoteRun(request(), NOW);
+  assert.equal(admitted.snapshots[0].approverVerified, false);
+  for (const evidence of [undefined, [], [{ approvedBy: "owner-a@releaseproof.test", snapshotSha256: sha256Hex(CRITERIA) }], [{ ...approval(), signature: "A".repeat(86) }]]) {
+    assert.throws(() => authoriseForExecution(admitted, evidence, trusted, { expected: EXPECTED, ledger: memoryLedger(), now: NOW }), RemoteRequestRefused);
+  }
 });
 
 test("KAN-16 criterion 2: every snapshot needs its own approval", () => {
@@ -311,8 +365,9 @@ test("the command authorises a run only with approvals that verify against the k
   };
   const requestFile = file("request.json", request());
   const keys = file("keys.json", { keys: [{ keyId: "control-plane-2026-11", publicKeyPem: controlPlane.publicKey.export({ type: "spki", format: "pem" }).toString() }] });
+  const EXPECT = ["--expect-run", RUN, "--expect-workspace", WORKSPACE, "--expect-project", PROJECT];
   const run = (approvals: string) =>
-    promisify(execFile)(process.execPath, ["--import", "tsx", cli, "check-remote-request", requestFile, "--approvals", approvals, "--authority-keys", keys], { env }).then(
+    promisify(execFile)(process.execPath, ["--import", "tsx", cli, "check-remote-request", requestFile, "--approvals", approvals, "--authority-keys", keys, ...EXPECT], { env }).then(
       (out) => ({ code: 0, text: out.stdout + out.stderr }),
       (error: { code: number; stdout: string; stderr: string }) => ({ code: error.code, text: error.stdout + error.stderr }),
     );
@@ -347,7 +402,15 @@ test("the command authorises a run only with approvals that verify against the k
   assert.equal(integrity.code, 0, integrity.text);
   assert.match(integrity.text, /authority was NOT checked/);
 
-  const unreadable = await bare("--approvals", file("broken.json", "x").replace("broken.json", "absent.json"), "--authority-keys", keys);
+  const good2 = file("good2.json", [approval({ issuedAt, expiresAt })]);
+  const noExpectation = await bare("--approvals", good2, "--authority-keys", keys);
+  assert.equal(noExpectation.code, 2, noExpectation.text);
+  assert.match(noExpectation.text, /needs --expect-run, --expect-workspace and --expect-project/);
+  const otherRun = await bare("--approvals", good2, "--authority-keys", keys, "--expect-run", OTHER, "--expect-workspace", WORKSPACE, "--expect-project", PROJECT);
+  assert.equal(otherRun.code, 2, otherRun.text);
+  assert.match(otherRun.text, /a run this engine was not asked to do/);
+
+  const unreadable = await bare("--approvals", file("broken.json", "x").replace("broken.json", "absent.json"), "--authority-keys", keys, ...EXPECT);
   assert.equal(unreadable.code, 2, unreadable.text);
   assert.match(unreadable.text, /approvals file could not be read/);
 });

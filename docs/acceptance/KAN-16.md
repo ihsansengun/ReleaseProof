@@ -68,10 +68,18 @@ says authority was not checked.
 Not built yet: the control plane's side (issuing approvals), and handing an
 authoritative snapshot to the planner as a source.
 
-Still open, for the change that adds `run-remote`: the engine's caller must
-state which run and workspace it asked for, from outside the request, and a
-run id must be accepted once. Today a valid request and approval pair can be
-presented again until the approval expires (at most 24 hours).
+**Replay.** A run starts only through `authoriseForExecution`. The caller
+states, from outside the request, which run, workspace and project it asked
+for; a genuine request and approval for any other are refused. Each approval
+is then claimed in a ledger and can start one run: presenting the same request
+and approvals again is refused. A refused attempt claims nothing.
+`check-remote-request` requires the caller's expectation (`--expect-run`,
+`--expect-workspace`, `--expect-project`) and claims nothing, because it is a
+check and not a start.
+
+Still open, for the change that adds `run-remote`: that command must call
+`authoriseForExecution` with a ledger kept where a run cannot write. Until it
+exists, no remote run can start at all, so nothing can be replayed into one.
 
 ## The run-level verdict (decided 21 November 2026)
 

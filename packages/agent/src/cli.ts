@@ -19,7 +19,7 @@ import { Budget, DEFAULT_LIMITS, DEFAULT_PRICES } from "./budget.ts";
 import { RecordedDriver } from "./drivers/recorded.ts";
 import { headline } from "./report/readiness.ts";
 import { coverage } from "./report/run.ts";
-import { authoriseRemoteRun, loadTrustedKeys } from "./remote/authority.ts";
+import { authoriseRemoteRun, loadTrustedKeys, unexpected } from "./remote/authority.ts";
 import { loadRemoteRequest, RemoteRequestRefused } from "./remote/request.ts";
 import { Scenario, Step, type RunReport, type ScenarioResult } from "./schema.ts";
 
@@ -165,6 +165,9 @@ async function main(): Promise<number> {
       approvals: { type: "string" },
       "authority-keys": { type: "string" },
       "integrity-only": { type: "boolean", default: false },
+      "expect-run": { type: "string" },
+      "expect-workspace": { type: "string" },
+      "expect-project": { type: "string" },
     },
   });
   const [command, scenarioFile] = positionals;
@@ -196,6 +199,14 @@ async function main(): Promise<number> {
         console.error("check-remote-request needs --approvals and --authority-keys, each naming a file. To check integrity alone, give --integrity-only.");
         return 2;
       }
+      // Which run the caller asked for is stated by the caller, never read from the request.
+      const expected = { runId: values["expect-run"], workspaceId: values["expect-workspace"], projectId: values["expect-project"] };
+      if (!expected.runId || !expected.workspaceId || !expected.projectId) {
+        console.error("check-remote-request needs --expect-run, --expect-workspace and --expect-project: the run its caller asked for.");
+        return 2;
+      }
+      const mismatch = unexpected(admitted, expected as { runId: string; workspaceId: string; projectId: string });
+      if (mismatch.length > 0) throw new RemoteRequestRefused(mismatch);
       // The keys come from this command's caller, never from the request.
       let trusted: Awaited<ReturnType<typeof loadTrustedKeys>>;
       let evidence: unknown;
@@ -216,6 +227,7 @@ async function main(): Promise<number> {
       for (const snapshot of authorised.snapshots) {
         console.log(`  criteria ${snapshot.id}  sha256 ${snapshot.sha256}  approved by ${snapshot.authority.approvedBy}, signed by key ${snapshot.authority.keyId}`);
       }
+      console.log("This is a check. It uses no approval up: a run claims its approvals when it starts, and each can start one run.");
       return 0;
     } catch (error) {
       if (!(error instanceof RemoteRequestRefused)) throw error;
