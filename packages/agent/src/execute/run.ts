@@ -126,14 +126,24 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
     session.page.on("framenavigated", (frame) => {
       if (frame !== session.page.mainFrame() || session.leftTo !== undefined) return;
       const address = frame.url();
-      if (address === "about:blank") return;
       let seen: string;
       try {
         seen = new URL(address).origin;
       } catch {
         seen = "an address that could not be read";
       }
-      if (seen !== origin) session.leftTo = seen;
+      if (seen === origin) {
+        session.arrived = true;
+        return;
+      }
+      // A blank page is where a browser starts. After the application was
+      // open it is somewhere else: another window can put a blank page in
+      // this one's place and write into it.
+      if (address === "about:blank") {
+        if (session.arrived) session.leftTo = "a blank page";
+        return;
+      }
+      session.leftTo = seen;
     });
   }
 
@@ -187,7 +197,14 @@ export async function closeSession(
   await open.browser.close();
 
   const outcome = session.outcome ?? { kind: "stopped" as const, reason: "No outcome recorded." };
-  const { verdict, reason } = computeVerdict(session.scenario.assertions, session.assertionResults, outcome);
+  const computed = computeVerdict(session.scenario.assertions, session.assertionResults, outcome);
+  // A confined session whose page was somewhere else at any moment does not
+  // pass, also when every comparison had been made before it left. A recorded
+  // mismatch stays a failure.
+  const { verdict, reason } =
+    session.leftTo !== undefined && computed.verdict === "passed"
+      ? { verdict: "blocked" as const, reason: `${outcome.reason} The comparisons made before that matched.` }
+      : computed;
   const result: ScenarioResult = {
     scenarioId: session.scenario.id,
     title: session.scenario.title,

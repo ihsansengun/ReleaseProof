@@ -426,7 +426,7 @@ async function leaky(): Promise<{ baseUrl: string; close: () => void; elsewhere:
     response.setHeader("content-type", "text/html");
     // A page that sends the browser straight back to where it came from.
     const back = new URL(request.url ?? "/", "http://other").searchParams.get("back");
-    response.end(`<html><body><span data-testid="loyalty-balance">160</span>${back ? `<script>location.replace(${JSON.stringify(back)})</script>` : ""}</body></html>`);
+    response.end(`<html><body><span data-testid="loyalty-balance">160</span>${back ? `<script>location.replace(${JSON.stringify(back)})</script>` : ""}${request.url?.includes("blank=1") ? `<script>opener.location = "about:blank"; setTimeout(() => opener.document.write('<span data-testid="loyalty-balance">160</span>'), 300);</script>` : ""}</body></html>`);
   });
   other.on("upgrade", (request, socket) => {
     elsewhere.push(`UPGRADE ${request.url}`);
@@ -439,7 +439,19 @@ async function leaky(): Promise<{ baseUrl: string; close: () => void; elsewhere:
       response.writeHead(302, { location: `http://${away}/landed` });
       return response.end();
     }
-    if (request.url === "/bounce") {
+    if (request.url === "/window") {
+      response.setHeader("content-type", "text/html");
+      return response.end(`<html><body><p>No balance here.</p><a target="_blank" rel="opener" href="/redirect-blank">Continue</a></body></html>`);
+    }
+    if (request.url === "/redirect-blank") {
+      response.writeHead(302, { location: `http://${away}/landed?blank=1` });
+      return response.end();
+    }
+    if (request.url === "/late") {
+      response.setHeader("content-type", "text/html");
+      return response.end(`<html><body><span data-testid="loyalty-balance">160</span><a href="/redirect">Leave</a></body></html>`);
+    }
+        if (request.url === "/bounce") {
       response.writeHead(302, { location: `http://${away}/landed?back=${encodeURIComponent(`http://${request.headers.host}/account`)}` });
       return response.end();
     }
@@ -576,5 +588,44 @@ test("a scenario id that is not a short plain name is refused before anything st
 test("other names for this machine are refused too", () => {
   for (const host of ["localhost.localdomain:4010", "localhost.example.com:4010"]) {
     assert.throws(() => admitRemoteRun(request(`http://${host}`)), RemoteRequestRefused, host);
+  }
+});
+
+test("another window cannot put a blank page in the application's place and have it read", async () => {
+  const target = await leaky();
+  try {
+    const steps = [
+      { ...STEPS[0]!, input: { path: "/window" } },
+      { tool: "click", input: { element: { by: "role", role: "link", value: "Continue" } }, ok: true, summary: "recorded" },
+      STEPS[1]!,
+      STEPS[2]!,
+    ];
+    const result = await runRemote({ run: startable(target.baseUrl), recording: recording({ steps: { S1: steps } }), outDir: out() });
+    const [scenarioResult] = result.results;
+    assert.ok(target.elsewhere.some((hit) => hit.includes("blank=1")), "the other window did open the other origin");
+    assert.equal(scenarioResult!.verdict, "blocked", JSON.stringify([scenarioResult!.reason, scenarioResult!.steps]));
+    assert.match(scenarioResult!.reason, /a blank page/);
+    assert.deepEqual(scenarioResult!.assertionResults, []);
+  } finally {
+    target.close();
+  }
+});
+
+test("a scenario whose page left the application after every comparison was made does not pass", async () => {
+  const target = await leaky();
+  try {
+    const steps = [
+      { ...STEPS[0]!, input: { path: "/late" } },
+      STEPS[1]!,
+      { tool: "click", input: { element: { by: "role", role: "link", value: "Leave" } }, ok: true, summary: "recorded" },
+      STEPS[2]!,
+    ];
+    const result = await runRemote({ run: startable(target.baseUrl), recording: recording({ steps: { S1: steps } }), outDir: out() });
+    const [scenarioResult] = result.results;
+    assert.equal(scenarioResult!.verdict, "blocked", JSON.stringify([scenarioResult!.reason, scenarioResult!.steps, target.elsewhere]));
+    assert.match(scenarioResult!.reason, /not on the application under test/);
+    assert.equal(scenarioResult!.assertionResults.length, 1, "the comparison made on the application is kept");
+  } finally {
+    target.close();
   }
 });

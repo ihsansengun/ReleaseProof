@@ -52,6 +52,8 @@ export type Session = {
   outcome?: Outcome;
   /** The first other origin the page was on at any moment, in a session confined to the application's own. */
   leftTo?: string;
+  /** Whether the page has been on the application at all, in a confined session. A blank page after that is somewhere else. */
+  arrived?: boolean;
   vault: SecretVault;
   /**
    * Which state-changing requests may leave the browser: all of them, none,

@@ -121,9 +121,14 @@ expectation, a ledger directory and a **recording**, and writes
   page opens to another host is closed. Every address the page commits to is
   watched: if it was on another origin at any moment (a redirect took it
   there), also if it came back before the step ended, the comparisons,
-  observations and step summary of that step are dropped, the scenario is
-  blocked, and the page is not trusted again. The browser trace of the
-  scenario still holds what the browser saw.
+  observations, error notes and step summary of that step are dropped and
+  the replay stops. A blank page counts as another origin once the
+  application has been open, because another window can put one in the
+  application's place and write into it. Such a scenario never passes: it is
+  blocked, or failed if a comparison made on the application had already
+  not matched. The browser trace, and a screenshot taken during that step,
+  stay in the scenario's directory and can show the other page; the result
+  does not refer to them.
 - **Not stopped by the engine:** what a redirect fetches, and a WebSocket
   opened from a worker script. The browser follows a redirect before the
   engine's request filter sees it. So:
@@ -154,7 +159,7 @@ expectation, a ledger directory and a **recording**, and writes
   `--allow-local-target`, for a trial against an application on the same
   machine. The worker never passes it, and the record says `localTarget` when
   it was used. Any other name with a `localhost` label, such as
-  `shop.localhost` or `localhost.localdomain`, is refused always.
+  `shop.localhost`, and any name ending in `.localdomain`, is refused always.
 
 Known and not changed here, because the pull-request path shares it: a quote
 is matched to a source loosely (ignoring case, spacing and some punctuation,

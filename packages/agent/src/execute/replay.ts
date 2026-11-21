@@ -20,7 +20,7 @@ function strayed(session: Session, confineTo: string | undefined): string | unde
   // Once elsewhere, always counted: a page that came back is not trusted again.
   if (session.leftTo !== undefined) return session.leftTo;
   const address = session.page.url();
-  if (address === "about:blank") return undefined;
+  if (address === "about:blank") return session.arrived ? "a blank page" : undefined;
   let origin: string;
   try {
     origin = new URL(address).origin;
@@ -53,6 +53,8 @@ export async function replaySteps(session: Session, recorded: Step[], limits: Re
     const taken = session.steps.length;
     const observations = { ...session.observations };
     const texts = session.texts ? { ...session.texts } : undefined;
+    const signals = session.errorSignals?.length ?? 0;
+    const errors = session.appErrors?.length ?? 0;
     const { ok, output } = await runTool(session, step.tool, step.input);
     const after = strayed(session, limits.confineTo);
     if (after !== undefined) {
@@ -60,6 +62,8 @@ export async function replaySteps(session: Session, recorded: Step[], limits: Re
       session.assertionResults.length = compared;
       session.observations = observations;
       session.texts = texts;
+      if (session.errorSignals) session.errorSignals.length = signals;
+      if (session.appErrors) session.appErrors.length = errors;
       for (const kept of session.steps.slice(taken)) kept.summary = "Not kept: the page was not on the application under test during this step.";
       return left(after, `during ${step.tool}`);
     }
