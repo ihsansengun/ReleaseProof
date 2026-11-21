@@ -19,6 +19,7 @@ import { Budget, DEFAULT_LIMITS, DEFAULT_PRICES } from "./budget.ts";
 import { RecordedDriver } from "./drivers/recorded.ts";
 import { headline } from "./report/readiness.ts";
 import { coverage } from "./report/run.ts";
+import { authoriseRemoteRun, loadTrustedKeys, unexpected } from "./remote/authority.ts";
 import { loadRemoteRequest, RemoteRequestRefused } from "./remote/request.ts";
 import { Scenario, Step, type RunReport, type ScenarioResult } from "./schema.ts";
 
@@ -31,9 +32,14 @@ const USAGE = `Usage:
         execute one scenario with a model
   releaseproof replay <scenario.json> --steps <file> --manifest <file>
         re-run recorded steps, no model
-  releaseproof check-remote-request <request.json>
-        decide whether a remote run request may run: its format, its target and
-        every criteria snapshot against its hash. No model, no browser
+  releaseproof check-remote-request <request.json> --approvals <file> --authority-keys <file>
+        --expect-run <id> --expect-workspace <id> --expect-project <id>
+        check whether a remote run request is sound and approved: its format,
+        its target, every criteria snapshot against its hash, that it is the
+        run the caller asked for, and that the control plane approved each
+        snapshot for this run. No model, no browser. It starts nothing
+  releaseproof check-remote-request <request.json> --integrity-only
+        format, target and hashes only. Authority is NOT checked
 
 Options:
   --driver api|bridge|recorded   how the model is attached (default api)
@@ -159,6 +165,12 @@ async function main(): Promise<number> {
       concurrency: { type: "string", default: "3" },
       "base-ref": { type: "string" },
       "trust-local-docs": { type: "boolean", default: false },
+      approvals: { type: "string" },
+      "authority-keys": { type: "string" },
+      "integrity-only": { type: "boolean", default: false },
+      "expect-run": { type: "string" },
+      "expect-workspace": { type: "string" },
+      "expect-project": { type: "string" },
     },
   });
   const [command, scenarioFile] = positionals;
@@ -170,12 +182,55 @@ async function main(): Promise<number> {
       return 2;
     }
     try {
-      const { request, snapshots } = await loadRemoteRequest(scenarioFile);
-      console.log(`Run ${request.runId} against ${request.target.baseUrl}: the request is well formed and every snapshot matches its hash.`);
-      for (const snapshot of snapshots) {
-        console.log(`  criteria ${snapshot.id}  sha256 ${snapshot.sha256}  approver as claimed: ${snapshot.approvedBy} at ${snapshot.approvedAt} (not verified)`);
+      const admitted = await loadRemoteRequest(scenarioFile);
+      const { request } = admitted;
+      // Authority is checked unless the caller says, in so many words, not to.
+      // A flag that is absent or empty is never read as that.
+      if (values["integrity-only"]) {
+        if (values.approvals !== undefined || values["authority-keys"] !== undefined) {
+          console.error("--integrity-only is not given together with --approvals or --authority-keys");
+          return 2;
+        }
+        console.log(`Run ${request.runId} against ${request.target.baseUrl}: the request is well formed and every snapshot matches its hash.`);
+        for (const snapshot of admitted.snapshots) {
+          console.log(`  criteria ${snapshot.id}  sha256 ${snapshot.sha256}  approver as claimed: ${snapshot.approvedBy} at ${snapshot.approvedAt} (not verified)`);
+        }
+        console.log("Integrity only: authority was NOT checked. Nothing here says the control plane approved these criteria.");
+        return 0;
       }
-      console.log("Integrity only. Whether the approver may approve requirements for this target is not checked here.");
+      if (!values.approvals || !values["authority-keys"]) {
+        console.error("check-remote-request needs --approvals and --authority-keys, each naming a file. To check integrity alone, give --integrity-only.");
+        return 2;
+      }
+      // Which run the caller asked for is stated by the caller, never read from the request.
+      const expected = { runId: values["expect-run"], workspaceId: values["expect-workspace"], projectId: values["expect-project"] };
+      if (!expected.runId || !expected.workspaceId || !expected.projectId) {
+        console.error("check-remote-request needs --expect-run, --expect-workspace and --expect-project: the run its caller asked for.");
+        return 2;
+      }
+      const mismatch = unexpected(admitted, expected as { runId: string; workspaceId: string; projectId: string });
+      if (mismatch.length > 0) throw new RemoteRequestRefused(mismatch);
+      // The keys come from this command's caller, never from the request.
+      let trusted: Awaited<ReturnType<typeof loadTrustedKeys>>;
+      let evidence: unknown;
+      try {
+        trusted = await loadTrustedKeys(values["authority-keys"]);
+      } catch (error) {
+        console.error(`The trusted keys could not be read: ${error instanceof Error ? error.message.split("\n")[0] : "unknown error"}`);
+        return 2;
+      }
+      try {
+        evidence = JSON.parse(await readFile(values.approvals, "utf8")) as unknown;
+      } catch {
+        console.error("The approvals file could not be read as JSON.");
+        return 2;
+      }
+      const authorised = authoriseRemoteRun(admitted, evidence, trusted);
+      console.log(`Run ${request.runId} against ${request.target.baseUrl}: every snapshot matches its hash and is approved for this run.`);
+      for (const snapshot of authorised.snapshots) {
+        console.log(`  criteria ${snapshot.id}  sha256 ${snapshot.sha256}  approved by ${snapshot.authority.approvedBy}, signed by key ${snapshot.authority.keyId}`);
+      }
+      console.log("This is a check. It starts nothing and claims nothing: a run is claimed when it starts, and starts once.");
       return 0;
     } catch (error) {
       if (!(error instanceof RemoteRequestRefused)) throw error;

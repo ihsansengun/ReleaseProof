@@ -19,13 +19,13 @@ the worker and uploads a result.
 
 | Criterion | Status | Checked by |
 | --- | --- | --- |
-| 1 | part: the request is defined and admitted; nothing runs from it yet | `packages/agent/test/remote-request.test.ts` |
-| 2 | part: a snapshot's integrity is established (text matches hash). **Its authority is not**: the approver is only a claim until checked against the source's owners | same |
-| 3 | checked for the gate itself | same |
-| 4 | not started | |
+| 1 | part: the request is defined, admitted and authorised; nothing runs from it yet | `packages/agent/test/remote-request.test.ts`, `packages/agent/test/remote-authority.test.ts` |
+| 2 | part: a snapshot is authoritative only with a valid approval signed by the control plane for this run. It does not yet reach the planner as a source | `packages/agent/test/remote-authority.test.ts` |
+| 3 | checked for both gates: integrity and authority are decided before any model call | both |
+| 4 | part: a request, a snapshot's text, or unsigned evidence cannot grant authority. Not yet shown for text met during a run | `packages/agent/test/remote-authority.test.ts` |
 | 5 | not started | |
 | 6 | not started | |
-| 7 | part: a request has no place for a pull request or ticket | same |
+| 7 | part: a request has no place for a pull request or ticket | `packages/agent/test/remote-request.test.ts` |
 | 8 | checked so far: the existing suite passes unchanged | `npm test` |
 | KAN-15 criterion 7 | not started | |
 
@@ -34,10 +34,58 @@ the worker and uploads a result.
 A matching hash shows a snapshot's text is unchanged. It does not show that
 the named approver may approve requirements for the target: the request, hash
 and approver's name all come from the same place. Criterion 2 is met only when
-the approver has been checked against the owners of the source, taken from a
-list the request cannot influence. Until that check exists, an admitted
-snapshot is marked `integrity: "hash-matched"`, `approverVerified: false`, and
-nothing in a remote run may set an expected value.
+the control plane's signed approval for the snapshot verifies against a key
+the request cannot influence. Until that check has passed, an admitted
+snapshot is marked `integrity: "hash-matched"`, `approverVerified: false`. Only
+the authority check below can change that.
+
+## How authority is established (decided 21 November 2026)
+
+The dashboard's control plane is the only source of authority. After it has
+authenticated the user, checked their permission in the workspace and project,
+and confirmed they approved the exact text, it signs an **approval**: one
+statement binding the snapshot's hash to the workspace, project, run, target
+and approver, with a short validity. Snapshots are immutable and versioned;
+an edit is a new snapshot with a new hash and needs a new approval.
+
+The engine holds only the control plane's **public** keys, given by its caller
+from outside the request. It refuses, before any model call, an approval that
+is missing, malformed, signed by an unknown key, forged, expired, or genuine
+but for another run, workspace, project, target, text or approver. A ticket, a
+pull request or a page cannot approve itself: nothing but a verifying
+signature counts. The signing key never enters the engine or a run machine.
+
+An approval also covers what the run is: it carries a digest of the request's
+target address, allowed hosts, limits and exact set of criteria snapshots.
+Whoever writes a request cannot add a host, change the path, raise a limit, or
+leave out or add criteria, and keep the approval.
+
+`check-remote-request` checks authority by default and needs `--approvals` and
+`--authority-keys`. A flag left out or empty is refused, never read as "skip".
+Checking integrity alone takes an explicit `--integrity-only`, and its output
+says authority was not checked.
+
+Not built yet: the control plane's side (issuing approvals), and handing an
+authoritative snapshot to the planner as a source.
+
+**Replay.** A run starts only through `authoriseForExecution`, the one
+function that returns a `StartableRun`. The type alone can be cast, so the
+code that starts a run must also ask `isStartable`, which only that function's
+own result satisfies. The caller states, from outside the
+request, which run, workspace and project it asked for; a genuine request and
+approval for any other are refused. The run is then claimed in a ledger with a
+single claim and starts once: a second start of the same run is refused,
+whatever request or re-issued approvals it brings. The claim is made only
+after every other check has passed, so a refused attempt claims nothing.
+`check-remote-request` requires the caller's expectation (`--expect-run`,
+`--expect-workspace`, `--expect-project`) and claims nothing, because it is a
+check and not a start.
+
+Still open, for the change that adds `run-remote`: that command must accept
+only a `StartableRun` that passes `isStartable`, with a ledger directory created by the operator where a
+run cannot write. A run that is claimed and then crashes before starting stays
+claimed: it needs a new run id. Until `run-remote` exists, no remote run can
+start at all.
 
 ## The run-level verdict (decided 21 November 2026)
 

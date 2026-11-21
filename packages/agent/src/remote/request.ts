@@ -16,9 +16,9 @@
  * a claim made by whoever wrote the request; a matching hash says nothing
  * about whether that person may approve requirements for this target. A
  * snapshot becomes authoritative, and able to set expected values, only when
- * the approver has also been checked against the owners of the source, from a
- * list this request cannot influence. That check is separate and comes after
- * this one. Until it exists, nothing admitted here is authoritative.
+ * the control plane's signed approval for it verifies (`authority.ts`). That
+ * check is separate and comes after this one. Nothing admitted here is
+ * authoritative.
  */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -41,7 +41,12 @@ export const CriteriaSnapshot = z.strictObject({
   /** SHA-256 of `content` as UTF-8, in lowercase hexadecimal. */
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   /** Who approved it. Required: an unapproved text is not a requirement. */
-  approvedBy: z.string().trim().min(1).max(200),
+  approvedBy: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(/^[^\u0000-\u001f\u007f-\u009f\u2028\u2029]+$/, "must not contain control characters"),
   approvedAt: z.iso.datetime({ offset: true }),
 });
 export type CriteriaSnapshot = z.infer<typeof CriteriaSnapshot>;
@@ -50,6 +55,9 @@ export const RemoteRunRequest = z.strictObject({
   requestVersion: z.literal(REMOTE_REQUEST_VERSION),
   /** The run this request is for. It is written into the result unchanged. */
   runId: z.uuid(),
+  /** The workspace and project the run belongs to. Approval evidence is bound to both. */
+  workspaceId: z.uuid(),
+  projectId: z.uuid(),
   target: z.strictObject({
     baseUrl: z.url({ protocol: /^https?$/ }),
     /** Hosts the run may navigate and write to. The target's own host must be among them. */
@@ -70,7 +78,7 @@ export type RemoteRunRequest = z.infer<typeof RemoteRunRequest>;
  */
 export type IntactSnapshot = CriteriaSnapshot & {
   readonly integrity: "hash-matched";
-  /** Always false here. Only the ownership check may say otherwise. */
+  /** Always false here. Only the authority check (`authority.ts`) may say otherwise. */
   readonly approverVerified: false;
 };
 
@@ -83,9 +91,12 @@ export type AdmittedRun = {
 export class RemoteRequestRefused extends Error {
   readonly reasons: string[];
   constructor(reasons: string[]) {
-    super(`The remote run request was refused:\n${reasons.map((reason) => `  - ${reason}`).join("\n")}`);
+    // Reasons can quote what a request said. Control characters are replaced, so
+    // a refusal cannot be made to print a line of its own or drive a terminal.
+    const printable = reasons.map((reason) => reason.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, "?"));
+    super(`The remote run request was refused:\n${printable.map((reason) => `  - ${reason}`).join("\n")}`);
     this.name = "RemoteRequestRefused";
-    this.reasons = reasons;
+    this.reasons = printable;
   }
 }
 
@@ -127,6 +138,10 @@ export function admitRemoteRun(raw: unknown, now: Date = new Date()): AdmittedRu
   }
 
   const base = new URL(request.target.baseUrl);
+  // One reading only: nothing a different URL parser could take for another host.
+  if (!/^[\x21-\x7e]+$/.test(request.target.baseUrl) || request.target.baseUrl.includes("\\")) {
+    reasons.push("target.baseUrl must be plain ASCII with no backslash or space");
+  }
   if (base.username !== "" || base.password !== "") {
     reasons.push("target.baseUrl must not carry credentials");
   }

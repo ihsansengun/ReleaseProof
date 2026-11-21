@@ -29,6 +29,8 @@ function request(overrides: Record<string, unknown> = {}) {
   return {
     requestVersion: 1,
     runId: "a0000000-0000-4000-8000-000000000401",
+    workspaceId: "a0000000-0000-4000-8000-00000000000a",
+    projectId: "a0000000-0000-4000-8000-000000000101",
     target: { baseUrl: "https://shop.releaseproof.test/", allowedHosts: ["shop.releaseproof.test"] },
     criteria: [snapshot()],
     limits: { maxUsd: 1, maxScenarios: 5, maxMinutes: 10 },
@@ -52,7 +54,7 @@ test("KAN-16 criterion 1: a target address and one snapshot are a complete reque
   const admitted = admitRemoteRun(request(), NOW);
   assert.equal(admitted.request.target.baseUrl, "https://shop.releaseproof.test/");
   assert.equal(admitted.snapshots.length, 1);
-  assert.deepEqual(Object.keys(admitted.request).sort(), ["criteria", "limits", "requestVersion", "runId", "target"]);
+  assert.deepEqual(Object.keys(admitted.request).sort(), ["criteria", "limits", "projectId", "requestVersion", "runId", "target", "workspaceId"]);
 });
 
 test("KAN-16 criterion 1: several snapshots are admitted together, in the order given", () => {
@@ -166,7 +168,7 @@ test("KAN-16 criterion 3: the command refuses a tampered request with no model k
   const cli = path.resolve(import.meta.dirname, "../src/cli.ts");
   const env = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" };
   const run = (file: string) =>
-    promisify(execFile)(process.execPath, ["--import", "tsx", cli, "check-remote-request", file], { env }).then(
+    promisify(execFile)(process.execPath, ["--import", "tsx", cli, "check-remote-request", file, "--integrity-only"], { env }).then(
       (out) => ({ code: 0, text: out.stdout + out.stderr }),
       (error: { code: number; stdout: string; stderr: string }) => ({ code: error.code, text: error.stdout + error.stderr }),
     );
@@ -228,4 +230,13 @@ test("a file that is not JSON is refused with a reason, not a crash", async () =
   writeFileSync(path.join(dir, "broken.json"), "{ not json");
   await assert.rejects(loadRemoteRequest(path.join(dir, "broken.json"), NOW), RemoteRequestRefused);
   await assert.rejects(loadRemoteRequest(path.join(dir, "missing.json"), NOW), RemoteRequestRefused);
+});
+
+test("a target address that another URL parser could read differently is refused", () => {
+  for (const baseUrl of ["https://shop.releaseproof.test\\@evil.releaseproof.test/", "https://ｓhop.releaseproof.test/"]) {
+    assert.throws(
+      () => admitRemoteRun(request({ target: { baseUrl, allowedHosts: ["shop.releaseproof.test"] } }), NOW),
+      /plain ASCII with no backslash/,
+    );
+  }
 });
