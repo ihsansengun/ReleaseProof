@@ -29,6 +29,8 @@ function request(overrides: Record<string, unknown> = {}) {
   return {
     requestVersion: 1,
     runId: "a0000000-0000-4000-8000-000000000401",
+    workspaceId: "a0000000-0000-4000-8000-00000000000a",
+    projectId: "a0000000-0000-4000-8000-000000000101",
     target: { baseUrl: "https://shop.releaseproof.test/", allowedHosts: ["shop.releaseproof.test"] },
     criteria: [snapshot()],
     limits: { maxUsd: 1, maxScenarios: 5, maxMinutes: 10 },
@@ -52,7 +54,7 @@ test("KAN-16 criterion 1: a target address and one snapshot are a complete reque
   const admitted = admitRemoteRun(request(), NOW);
   assert.equal(admitted.request.target.baseUrl, "https://shop.releaseproof.test/");
   assert.equal(admitted.snapshots.length, 1);
-  assert.deepEqual(Object.keys(admitted.request).sort(), ["criteria", "limits", "requestVersion", "runId", "target"]);
+  assert.deepEqual(Object.keys(admitted.request).sort(), ["criteria", "limits", "projectId", "requestVersion", "runId", "target", "workspaceId"]);
 });
 
 test("KAN-16 criterion 1: several snapshots are admitted together, in the order given", () => {

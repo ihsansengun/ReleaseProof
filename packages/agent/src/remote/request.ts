@@ -50,6 +50,9 @@ export const RemoteRunRequest = z.strictObject({
   requestVersion: z.literal(REMOTE_REQUEST_VERSION),
   /** The run this request is for. It is written into the result unchanged. */
   runId: z.uuid(),
+  /** The workspace and project the run belongs to. Approval evidence is bound to both. */
+  workspaceId: z.uuid(),
+  projectId: z.uuid(),
   target: z.strictObject({
     baseUrl: z.url({ protocol: /^https?$/ }),
     /** Hosts the run may navigate and write to. The target's own host must be among them. */
