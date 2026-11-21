@@ -56,6 +56,10 @@ async function app(): Promise<{ baseUrl: string; server: Server; state: { nickna
          <button onclick="document.querySelector('[data-testid=details]').textContent = 'Tier: 60 points'">Show details</button>
          <p data-testid="details"></p>
          <a href="/export">Export orders</a>
+         <a href="/profile">Profile</a>
+         <label>Live <input name="live" oninput="const next = this.cloneNode(); next.value = this.value; next.oninput = this.oninput; this.replaceWith(next)"></label>
+         <label>Digits <input name="digits" oninput="this.value = this.value.replace(/\\D/g, '')"></label>
+         <div data-testid="note-wrap"><div role="textbox" aria-label="Note" contenteditable="true"></div></div>
          <button onclick="fetch('/noop', { method: 'POST' })">Save draft</button>`,
       );
     }
@@ -66,6 +70,8 @@ async function app(): Promise<{ baseUrl: string; server: Server; state: { nickna
       return html(`<h1>Customers</h1><ul>${found.map((name) => `<li data-testid="customer">${name}</li>`).join("")}</ul>`);
     }
     if (url.pathname === "/noop") return json({ ok: true });
+    // A page that sends the browser back where it came from.
+    if (url.pathname === "/done") return html("<p>Done.</p><script>history.back()</script>");
     // A file to save: the browser asks for it and stays on the page it was on.
     if (url.pathname === "/export") {
       response.writeHead(200, { "content-type": "text/csv", "content-disposition": "attachment; filename=orders.csv" });
@@ -82,7 +88,8 @@ async function app(): Promise<{ baseUrl: string; server: Server; state: { nickna
       return html(
         `<h1>Profile</h1><p>Nickname shown: <span data-testid="nickname">${safe(state.nickname)}</span></p>
          <form method="post" action="/profile"><label>Nickname <input name="nickname" value="${safe(state.nickname)}"></label><button>Save</button></form>
-         <form method="post" action="/said"><label>Scratch <input name="scratch"></label><button>Send</button></form>`,
+         <form method="post" action="/said"><label>Scratch <input name="scratch"></label><button>Send</button></form>
+         <button onclick="history.back()">Back</button>`,
       );
     }
     if (url.pathname === "/profile" && request.method === "POST") {
@@ -187,6 +194,26 @@ test("every run: a mismatch read from the executor's own field is not recorded e
   assert.ok(!JSON.stringify({ ...result, steps: [] }).includes("a-secret-77"));
 });
 
+const everyRun = (title: string, steps: Step[], why = /a field the executor itself put a value into/) =>
+  test(`every run: ${title}`, async () => {
+    for (const mode of ["own", "untrusted"] as const) {
+      const { result } = await replay(mode, steps);
+      assert.notEqual(result.verdict, "passed", `${mode}: ${JSON.stringify(result.steps.map((s) => s.summary))}`);
+      assert.deepEqual(result.assertionResults, [], mode);
+      if (mode === "own") assert.match(result.reason, why);
+    }
+  });
+
+everyRun("a line break at the end of what was typed does not make the field the application's", [open("/account"), step("fill", { element: textbox("Preview"), text: "160\n" }), check(label("Preview")), FINISH]);
+everyRun("a field that lets only digits through still holds the executor's digits", [open("/account"), step("fill", { element: textbox("Digits"), text: "x160" }), check(label("Digits")), FINISH]);
+everyRun("a field the page builds anew on every keystroke is still the same field", [open("/account"), step("fill", { element: textbox("Live"), text: "160" }), check(label("Live")), FINISH]);
+everyRun("the element around an editable text holds that text", [open("/account"), step("fill", { element: textbox("Note"), text: "160" }), check(testid("note-wrap")), FINISH], /contains a field the executor itself put a value into/);
+everyRun(
+  "a typed value the browser puts back after going back in its history is still the executor's",
+  [open("/account"), step("fill", { element: textbox("Search orders"), text: "160" }), step("click", { element: { by: "role", role: "link", value: "Profile" } }), step("click", { element: button("Back") }), check(label("Search orders")), FINISH],
+  /a browser puts typed values back/,
+);
+
 test("every run: a number field moved with a key is the executor's own input too", async () => {
   for (const mode of ["own", "untrusted"] as const) {
     const spin = { by: "role", role: "spinbutton", value: "Points to redeem" };
@@ -248,6 +275,11 @@ attack(
   "a mirror, after a link that makes the browser fetch a file and stay where it is",
   [open("/account"), step("fill", { element: textbox("Preview"), text: "160" }), step("click", { element: { by: "role", role: "link", value: "Export orders" } }), check(testid("mirror")), FINISH],
   /the executor has acted in this page/,
+);
+attack(
+  "opening a page that sends the browser back to the one typed into",
+  [open("/account"), step("fill", { element: textbox("Search orders"), text: "160" }), open("/done"), check(label("Search orders")), FINISH],
+  /going back or forward in the browser's history|a browser puts typed values back|holds something other than what the application served/,
 );
 attack("a page that shows what the fragment of its address says", [open("/app#/search/160"), check(testid("route")), FINISH], /an address with a query or a fragment/);
 attack("the same after opening the page by its plain address first", [open("/app"), open("/app#/search/160"), check(testid("route")), FINISH], /an address with a query or a fragment/);
@@ -412,6 +444,12 @@ test("an expected value is quoted only if the approved text states it", () => {
     assert.match(notQuoted({ literal: quote.startsWith("2.") ? 2 : 160 }, quote, "plain") ?? "", /the number/, quote);
   }
   assert.match(notQuoted({ literal: 1.6 }, QUOTE, "currency-units") ?? "", /the number 1.6/);
+  // Other hyphens and dashes are hyphens too.
+  for (const quote of ["see KAN\u2011160", "see KAN\u2013160", "from 100\u2013160 items"]) assert.match(notQuoted({ literal: 160 }, quote, "plain") ?? "", /the number/, quote);
+  // An amount in hundredths is one written with two decimals, not any number with a point.
+  assert.match(notQuoted({ literal: 160 }, "multiplied by 1.6", "currency-hundredths") ?? "", /the number 160/);
+  // A number ending a line is not a list marker.
+  assert.equal(notQuoted({ literal: 160 }, "the balance is\n160.\n", "plain"), undefined);
   // Hundredths of an amount written with a decimal point, and of nothing else.
   assert.equal(notQuoted({ literal: 6000 }, QUOTE, "currency-hundredths"), undefined);
   assert.match(notQuoted({ literal: 300 }, "At most 3 attempts", "currency-hundredths") ?? "", /the number 300/);

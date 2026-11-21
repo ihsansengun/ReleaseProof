@@ -179,11 +179,21 @@ application. Two rules, in the comparison code every run shares
 
 **In every run**, also for a pull request with a live model: a field the
 executor itself typed into, chose in, pressed keys in or gave a file to is
-not compared while the page that was typed into is still shown, whether the
-comparison would match or not. If the executor only typed into it and the
-application changed what was last typed, the field shows the application's
-answer and may be read. Nothing else changes for these runs: search, filter
-and before-and-after checks work as they did.
+not compared, whether the comparison would match or not, and is not taken as
+an error message either.
+
+- The field is known again by its position in the page and by its name, so a
+  page that builds the field anew is not another field, and the element
+  around it is not another place.
+- While the page typed into is still shown, there is no exception: also not
+  when the page changed what was typed (a field that lets only digits
+  through still holds the executor's digits).
+- In a page loaded later, the same field is the application's if it holds
+  what the page was served with, and the executor's if it holds anything
+  else: a browser puts typed values back when it goes back in its history.
+
+Nothing else changes for these runs: search, filter and before-and-after
+checks work as they did.
 
 **In a run whose plan is not the engine's own** (`untrustedPlan`; every
 remote run sets it), the question is where the text read came from, not what
@@ -196,7 +206,10 @@ matching comparison, and any observation, is taken only from:
   fragment), which the application answered to a GET with a status from 200
   to 299, which ended up at a plain address, and in which the executor has
   done nothing since (no typing, choosing, key, file or click) and which is
-  still at that address; or
+  still at that address. The page must have been reached by that request, not
+  by the browser going back in its history or reloading. A field that holds
+  anything other than what the page was served with, and a text the page lets
+  a user edit, are never read; or
 - the answer to a GET the executor made itself, with a plain address, no
   body, and a status from 200 to 299. How the application answered (the
   status) may be read from any request.
@@ -233,19 +246,28 @@ What a remote run cannot do yet, because of these rules:
 - read what a page shows after a click, a form or a key, without the page
   being opened again: a view built in the page, a message shown once after
   saving, a form answered in place;
-- read the body of the answer to a change (only its status);
-- expect a calculated value.
+- read the body of the answer to a change (only its status), or of a read
+  request with a query in its address;
+- expect a calculated value, or a text shorter than four characters ("OK");
+- check presence by a test id, or by wording shorter than four characters;
+- credit one comparison to more than the requirement it cites.
 
 What these rules do not establish:
 
 - **Which element is the right one to read, and which number of the approved
   text it should show.** A value the executor saved where the application
-  keeps it (on the server, or in the browser's own storage for that site), or
-  made it keep by a request with side effects, can be read back from there in
-  a page opened later. A plan can expect one stated number where the text
+  keeps it, or made it keep by a request with side effects, can be read back
+  from there in a page opened later. "Keeps" includes the server, cookies,
+  the browser's storage for the site, and what a page itself carries from one
+  load to the next (the window's name, the history entry's state). A plan can expect one stated number where the text
   means another. This is why `verdictsTrusted` stays false.
 - An application that shows a part of a plain address in a page it answers
-  with status 200 would show back what the executor asked for.
+  with status 200 would show back what the executor asked for. So would a
+  page that is sent on to an address with a query and then removes the query
+  from its own address.
+- How the approved text means a number. "Must never be 160" states 160, and
+  so do a date and a telephone number. A version "1.60" states an amount of
+  160 hundredths.
 - On the pull-request path, a page that shows back what was typed somewhere
   else than in the field typed into, or an answer that repeats its request,
   can still be read, and so can a calculation that cancels itself. Refusing

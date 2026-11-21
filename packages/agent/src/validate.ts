@@ -202,7 +202,11 @@ export function validatePlan(
       assertionIds.add(a.id);
       // Further requirements the comparison is credited to. Only approved,
       // uncontested ones count; anything else is dropped and noted.
-      const alsoVerifies = [...new Set(a.alsoVerifies ?? [])].filter((id) => {
+      // Where the expected value must be stated by the text cited, a comparison is credited to that text alone.
+      if (options.quoted === true && (a.alsoVerifies ?? []).some((id) => id !== a.requirementId)) {
+        trimmed.push(`${where} lists further requirements as also verified. In this run a comparison counts for the requirement it cites and no other; the links were removed.`);
+      }
+      const alsoVerifies = [...new Set(options.quoted === true ? [] : (a.alsoVerifies ?? []))].filter((id) => {
         const other = requirement.get(id);
         const usable = id !== a.requirementId && other?.kind === "documented" && other.trust === "authoritative" && !other.contested;
         if (!usable && id !== a.requirementId) trimmed.push(`${where} lists "${id}" as also verified, which is not an approved requirement; the link was removed.`);
@@ -306,7 +310,11 @@ export function validatePlan(
 // Not a number the text states either: part of a reference ("KAN-160", "#160"), of a fraction, a range, a date or a time.
 const QUOTED_NUMBER = /(?<![\p{L}\p{N}_.,#/:]|[\p{L}\p{N}]-)-?\d+(?:,\d{3})*(?:\.\d+)?(?![\p{L}\p{N}_/:]|[.,]\d|-\d)/gu;
 /** A list marker at the start of a line ("2. After…") numbers the line; it states nothing. */
-const unnumbered = (quote: string) => quote.replace(/^\s*\d+[.)]\s+/gm, "");
+const unnumbered = (quote: string) =>
+  quote
+    // Every kind of hyphen and dash reads as one: "KAN‑160" and "100–160" are a reference and a range too.
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/^[ \t]*\d+[.)][ \t]+(?=\S)/gm, "");
 
 /**
  * Says what part of an expected value the quoted text does not state, if any.
@@ -322,7 +330,7 @@ export function notQuoted(expected: NonNullable<Assertion["expected"]>, quote: s
   if ("literal" in expected) {
     if (typeof expected.literal === "number") {
       // An amount in hundredths may be written in whole units, and only an amount: a number with a decimal point.
-      const amounts = (quote.match(QUOTED_NUMBER) ?? []).filter((n) => n.includes(".")).map((n) => Number(n.replace(/,/g, "")));
+      const amounts = (quote.match(QUOTED_NUMBER) ?? []).filter((n) => /\.\d{2}$/.test(n)).map((n) => Number(n.replace(/,/g, "")));
       const converted = unit === "currency-hundredths" && amounts.some((s) => Math.abs(s * 100 - Number(expected.literal)) < 1e-9);
       return has(expected.literal, [1]) || converted ? undefined : `the number ${expected.literal}`;
     }

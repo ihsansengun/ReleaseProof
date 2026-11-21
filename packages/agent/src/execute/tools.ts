@@ -5,7 +5,7 @@ import { evaluateFormula, formulaVariables } from "../formula.ts";
 import { reconcile, scaleUnclear } from "../units.ts";
 import { BlockedCause, type ApplicationError, type ErrorSignal, type AssertionResult, type Evidence, type Outcome, type Scenario, type Step } from "../schema.ts";
 import type { SecretVault } from "../secrets.ts";
-import { answerNotEvidence, newState, noteInput, noteOpened, ownField, pageNotEvidence, placeOf, type SuppliedState } from "./supplied.ts";
+import { answerNotEvidence, newState, noteInput, noteOpened, ownField, pageNotEvidence, placeOf, restoredField, type SuppliedState } from "./supplied.ts";
 
 /** Everything one scenario execution accumulates. */
 export type Session = {
@@ -687,7 +687,7 @@ async function requireEvidence(s: Session, what: string, target: Target, locator
     if (s.untrustedPlan && matched) why = answerNotEvidence(s.supplied?.requests[target.responseId], target.field === "status");
   } else {
     why = await ownField(s.supplied, locator);
-    if (!why && s.untrustedPlan && matched) why = pageNotEvidence(s.supplied, s.page.url());
+    if (!why && s.untrustedPlan && matched) why = pageNotEvidence(s.supplied, s.page.url()) ?? (await restoredField(locator));
   }
   if (why) throw new Error(`${what}: ${why} No result was recorded.`);
 }
@@ -1010,13 +1010,15 @@ const handlers: Handlers = {
     const response = await s.page.goto(new URL(p, s.baseUrl).toString(), { waitUntil: "load" });
     await settle(s.page);
     // Where the page ended up once it had settled, fragment included: a page may send itself on.
-    noteOpened(state, p, response ? { method: response.request().method(), status: response.status() } : undefined, s.page.url());
+    // How the page now shown was reached: a page may go back in the browser's history by itself.
+    const arrivedBy = await s.page.evaluate(() => (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "unknown").catch(() => "unknown");
+    noteOpened(state, p, response ? { method: response.request().method(), status: response.status() } : undefined, s.page.url(), arrivedBy);
     const part = await partOfAPage(response);
     return `${part ? `${part}\n` : ""}${await describePage(s)}`;
   },
 
   async click(s, { element }) {
-    noteInput(suppliedOf(s));
+    await noteInput(suppliedOf(s));
     await (await locate(s.page, element)).click();
     await settle(s.page);
     return describePage(s);
@@ -1024,7 +1026,7 @@ const handlers: Handlers = {
 
   async fill(s, { element, text }) {
     const field = await locate(s.page, element);
-    noteInput(suppliedOf(s), { handle: await field.elementHandle().catch(() => null), text });
+    await noteInput(suppliedOf(s), field);
     await field.fill(text);
     // Some pages move the caret when a field takes the focus, and the new text
     // then lands after the old. What the field holds is checked; if it is not
@@ -1047,7 +1049,7 @@ const handlers: Handlers = {
 
   async select(s, { element, option }) {
     const list = await locate(s.page, element);
-    noteInput(suppliedOf(s), { handle: await list.elementHandle().catch(() => null) });
+    await noteInput(suppliedOf(s), list);
     await list.selectOption({ label: option });
     await settle(s.page);
     return describePage(s);
@@ -1055,7 +1057,7 @@ const handlers: Handlers = {
 
   async press(s, { element, key }) {
     const pressed = await locate(s.page, element);
-    noteInput(suppliedOf(s), { handle: await pressed.elementHandle().catch(() => null) });
+    await noteInput(suppliedOf(s), pressed);
     await pressed.press(key);
     await settle(s.page);
     return describePage(s);
@@ -1065,7 +1067,7 @@ const handlers: Handlers = {
     if (new Set(files.map((f) => f.name.toLowerCase())).size !== files.length) throw new Error("Each file needs its own name. Nothing was chosen.");
     const made = files.map((f) => syntheticFile(f.name, f.kind));
     const control = await locate(s.page, element);
-    noteInput(suppliedOf(s), { handle: await control.elementHandle().catch(() => null) });
+    await noteInput(suppliedOf(s), control);
     // The file field itself takes the files directly. Anything else must open
     // the browser's file dialog when clicked; that dialog is the only way a
     // file enters the page, and it is given these synthetic files and no other.
@@ -1311,6 +1313,9 @@ const handlers: Handlers = {
       if (error) {
         // The executor says where the error is; code reads what it says.
         const read = await readTarget(s, error);
+        // The executor's own field is not an error message of the application, and what it holds may be a secret.
+        const own = await ownField(s.supplied, read.locator);
+        if (own) throw new Error(`The element pointed at as the error was not read: ${own}`);
         if (read.text.trim() === "") throw new Error("The element pointed at as the error shows no text. Point at the element that shows the error message.");
         const trail = trailOf(s);
         (s.appErrors ??= []).push({
