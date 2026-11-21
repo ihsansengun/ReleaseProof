@@ -177,11 +177,18 @@ What the executor itself puts into the application is not evidence about the
 application. Two rules, in the comparison code every run shares
 (`packages/agent/src/execute/supplied.ts`).
 
-**In every run**, also for a pull request with a live model: the very
-element the executor itself typed into, chose in, pressed keys in or gave a
-file to is not compared, whether the comparison would match or not, and is
-not taken as an error message. Whether that element is there may still be
-checked.
+**In every run**, also for a pull request with a live model: the element that
+took the executor's own input is not compared, whether the comparison would
+match or not, is not observed, and is not taken as an error message. That is
+the field typed into or chosen in (the field itself when the step pointed at
+its label) and the field a file was given to (also when a button opened the
+file dialog). It stays so for as long as that element exists, whatever
+address the executor asks for meanwhile. Whether the element is there may be
+checked, but text typed into it is not "found on the page" by a presence
+check that looks for that text.
+
+A key pressed on a control (Enter, Escape, Tab, an arrow) is not a value: the
+control may be read afterwards.
 
 This rule is a guard against a plain mistake, not against a plan that tries
 to get round it. It knows the element and nothing more, so that no other
@@ -194,9 +201,12 @@ by script. It therefore does **not** catch, on the pull-request path:
   after going back in its history;
 - the element around an editable text, or any other place that shows what
   was typed;
-- an answer that repeats its request, or a calculation that cancels itself.
+- a number field moved with arrow keys alone;
+- an answer that repeats its request, or a calculation that cancels itself
+  in a way the self-comparison rule below does not see.
 
-Nothing else changes for these runs.
+The self-comparison rule below also applies to every run. Nothing else
+changes for these runs.
 
 **In a run whose plan is not the engine's own** (`untrustedPlan`; every
 remote run sets it), the question is where the text read came from, not what
@@ -206,14 +216,17 @@ an independent review. So there is one way to a reading that counts. A
 matching comparison, and any observation, is taken only from:
 
 - a page the executor has just opened itself by a plain address (no query, no
-  fragment), which the application answered to a GET with a status from 200
-  to 299, which ended up at a plain address, and in which the executor has
+  fragment), where the application answered that request, a GET, with a
+  status from 200 to 299, and the page ended up at a plain address (the
+  status is that of the request made: a page that then sends itself on to
+  another plain address is read as it is), and in which the executor has
   done nothing since (no typing, choosing, key, file or click) and which is
   still at that address. The page must have been reached by that request, not
   by the browser going back in its history or reloading; this is asked when
-  the page is opened and again when the value is read. A field that holds
-  anything other than what the page was served with, and a text the page lets
-  a user edit or the element around one, are never read; or
+  the page is opened and again when the value is read. A field whose value
+  differs from the one in the page as served, and a text the page lets a user
+  edit or the element around one, are never read. There is one window: any
+  other the application opens is closed; or
 - the answer to a GET the executor made itself, with a plain address, no
   body, and a status from 200 to 299. How the application answered (the
   status) may be read from any request.
@@ -223,10 +236,11 @@ plain address**, and read. "Type it and read it back", in any spelling, does
 not count, and neither does the page a form or a link leads to.
 
 A **mismatch** is recorded wherever a match would be. In a run whose plan is
-the engine's own that is everywhere but the executor's own field. In other
-runs nothing is compared in a page the executor acted in, match or not, so
-what was typed cannot reach the result as a value read; a mismatch is
-recorded from a page opened again.
+the engine's own that is everywhere but the element that took the executor's
+input. In other runs nothing is compared, match or not, in a page the
+executor acted in or from an answer that does not count, and neither may be
+pointed at as an error message. So what was typed or sent does not reach the
+result as a value read; a mismatch is recorded from a page opened again.
 
 Also refused: an expected value calculated only from readings of the same
 place showing the same text as the value compared (or from the compared
@@ -239,8 +253,8 @@ In a remote run the plan is checked more strictly as well:
 
 - an expected number must be written whole in the approved text cited (not a
   part of a longer number, a reference such as "KAN-160", a list marker, a
-  fraction, a range or a time), and an expected text must be in it as whole
-  words;
+  fraction, a range or a time, as far as the common ways of writing those
+  go), and an expected text must be in it as whole words;
 - **calculated expected values are not accepted yet**: a calculation can
   cancel what it reads and arrive at any number;
 - "at least", "at most", "absent" and "present" must be worded that way by
@@ -269,7 +283,8 @@ What these rules do not establish:
   from there in a page opened later. "Keeps" includes the server, cookies,
   the browser's storage for the site, and what a page itself carries from one
   load to the next (the window's name, the history entry's state, the
-  browser's list of pages visited in the tab with their addresses). A plan can expect one stated number where the text
+  browser's list of pages visited in the tab with their addresses). A page
+  can also write a value into a field's markup so that it looks served. A plan can expect one stated number where the text
   means another. This is why `verdictsTrusted` stays false.
 - An application that shows a part of a plain address in a page it answers
   with status 200 would show back what the executor asked for. So would a

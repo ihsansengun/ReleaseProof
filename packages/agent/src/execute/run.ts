@@ -150,6 +150,13 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
     });
   }
 
+  if (options.untrustedPlan) {
+    // Another window can keep what was typed and hand it to a page opened later. There is one window.
+    context.on("page", (other) => {
+      if (other !== session.page) void other.close().catch(() => {});
+    });
+  }
+
   // What the application answers to a user's action is kept when it is an error.
   context.on("response", (response) => {
     noteResponse(session, response);

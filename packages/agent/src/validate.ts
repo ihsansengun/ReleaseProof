@@ -313,7 +313,8 @@ const QUOTED_NUMBER = /(?<![\p{L}\p{N}_.,#/:]|[\p{L}\p{N}]-)-?\d+(?:,\d{3})*(?:\
 const unnumbered = (quote: string) =>
   quote
     // Every kind of hyphen and dash reads as one: "KAN‑160" and "100–160" are a reference and a range too.
-    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D\u00AD\u2043\u058A~\u2026\u2192]/g, "-")
+    .replace(/[\u00A0\u2007\u202F]/g, " ")
     .replace(/^[ \t]*\d+[.)][ \t]+(?=\S)/gm, "");
 
 /**

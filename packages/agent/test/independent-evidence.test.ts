@@ -48,7 +48,7 @@ async function app(): Promise<{ baseUrl: string; server: Server; state: { nickna
       return html(
         `<h1>Your account</h1><p>Loyalty balance <span data-testid="loyalty-balance">60</span></p>
          <form action="/search"><label>Search orders <input name="q"></label><button>Search</button></form>
-         <label>Preview <input oninput="document.querySelector('[data-testid=mirror]').textContent = this.value"></label>
+         <label>Preview <input oninput="document.querySelector('[data-testid=mirror]').textContent = this.value; new BroadcastChannel('draft').postMessage({ say: this.value })"></label>
          <p>You typed: <span data-testid="mirror"></span></p>
          <label>Points to redeem <input type="number" value="0"></label>
          <label>Receipt <input type="file" onchange="document.querySelector('[data-testid=file]').textContent = this.files[0].name"></label>
@@ -56,6 +56,8 @@ async function app(): Promise<{ baseUrl: string; server: Server; state: { nickna
          <button onclick="document.querySelector('[data-testid=details]').textContent = 'Tier: 60 points'">Show details</button>
          <p data-testid="details"></p>
          <a href="/export">Export orders</a>
+         <button data-testid="toggle" onclick="this.textContent = this.textContent === 'Off' ? 'On' : 'Off'">Off</button>
+         <button onclick="window.open('/keeper')">Open helper</button>
          <a href="/profile">Profile</a>
          <label>Live <input name="live" oninput="const next = this.cloneNode(); next.value = this.value; next.oninput = this.oninput; this.replaceWith(next)"></label>
          <label>Digits <input name="digits" oninput="this.value = this.value.replace(/\\D/g, '')"></label>
@@ -70,6 +72,9 @@ async function app(): Promise<{ baseUrl: string; server: Server; state: { nickna
       return html(`<h1>Customers</h1><ul>${found.map((name) => `<li data-testid="customer">${name}</li>`).join("")}</ul>`);
     }
     if (url.pathname === "/noop") return json({ ok: true });
+    // A second window that remembers what it is told, and a page that asks it.
+    if (url.pathname === "/keeper") return html(`<script>let kept = ''; const channel = new BroadcastChannel('draft'); channel.onmessage = (e) => { if (e.data.say !== undefined) kept = e.data.say; if (e.data.ask) channel.postMessage({ answer: kept }); };</script>`);
+    if (url.pathname === "/shown") return html(`<p>Draft: <span data-testid="draft"></span></p><script>const channel = new BroadcastChannel('draft'); channel.onmessage = (e) => { if (e.data.answer !== undefined) document.querySelector('[data-testid=draft]').textContent = e.data.answer; }; channel.postMessage({ ask: true });</script>`);
     // A page that sends the browser back where it came from.
     if (url.pathname === "/done") return html("<p>Done.</p><script>history.back()</script>");
     // A file to save: the browser asks for it and stays on the page it was on.
@@ -231,12 +236,50 @@ test("own plan: another field, the element around a typed field, and whether the
   assert.equal(present.result.verdict, "passed", present.result.reason);
 });
 
-test("every run: a number field moved with a key is the executor's own input too", async () => {
+test("every run: a field filled by pointing at its label is the field that took the input", async () => {
   for (const mode of ["own", "untrusted"] as const) {
-    const spin = { by: "role", role: "spinbutton", value: "Points to redeem" };
-    const { result } = await replay(mode, [open("/account"), step("press", { element: spin, key: "ArrowUp" }), check(label("Points to redeem")), FINISH], [assertion({ expected: { literal: 1 } })]);
+    const { result } = await replay(mode, [open("/account"), step("fill", { element: { by: "text", value: "Search orders" }, text: "160" }), check(label("Search orders")), FINISH]);
     refused(result, /a field the executor itself put a value into/);
   }
+});
+
+test("own plan: asking for the same page again with a fragment does not make the typed field the application's", async () => {
+  const { result } = await replay("own", [open("/account"), step("fill", { element: textbox("Search orders"), text: "160" }), open("/account#top"), check(label("Search orders")), FINISH]);
+  refused(result, /a field the executor itself put a value into/);
+});
+
+test("own plan: text typed into an editable element is not found there as something the page shows", async () => {
+  const { result } = await replay("own", [open("/account"), step("fill", { element: textbox("Note"), text: "Order confirmed" }), check({ source: "page", by: "text", value: "Order confirmed" }), FINISH], [assertion({ kind: "present", expected: undefined, unit: undefined })]);
+  refused(result, /a field the executor itself put a value into/);
+});
+
+test("own plan: a control worked with a key may be read: a key is not a value", async () => {
+  const toggle = { by: "testid", value: "toggle" };
+  const { result } = await replay("own", [open("/account"), step("press", { element: toggle, key: "Enter" }), check(testid("toggle")), FINISH], [text("On")]);
+  assert.equal(result.verdict, "passed", result.reason);
+});
+
+test("untrusted plan: a second window cannot keep what was typed for a page opened later", async () => {
+  const { result } = await replay("untrusted", [open("/account"), step("click", { element: button("Open helper") }), step("fill", { element: textbox("Preview"), text: "160" }), open("/shown"), check(testid("draft")), FINISH]);
+  assert.notEqual(result.verdict, "passed", JSON.stringify(result.steps.map((s) => s.summary)));
+  assert.deepEqual(result.assertionResults, []);
+});
+
+test("untrusted plan: an answer that repeats its request is not compared, match or not", async () => {
+  const { result } = await replay("untrusted", [step("api_request", { method: "POST", path: "/api/echo", body: { v: "a-secret-77" } }), check({ source: "api", responseId: "R1", jsonPath: "received.v" }), FINISH], [text("something else")]);
+  assert.deepEqual(result.assertionResults, []);
+  assert.ok(!JSON.stringify({ ...result, steps: [] }).includes("a-secret-77"));
+});
+
+test("untrusted plan: what was typed cannot be handed in as an error message of the application", async () => {
+  const { result } = await replay("untrusted", [open("/account"), step("fill", { element: textbox("Preview"), text: "a-secret-77" }), step("finish", { outcome: "blocked", reason: "The page shows an error.", cause: "application-error", error: testid("mirror") })]);
+  assert.ok(!JSON.stringify({ ...result, steps: [] }).includes("a-secret-77"), JSON.stringify(result.applicationErrors));
+});
+
+test("untrusted plan: a number field moved with a key alone is not read", async () => {
+  const spin = { by: "role", role: "spinbutton", value: "Points to redeem" };
+  const { result } = await replay("untrusted", [open("/account"), step("press", { element: spin, key: "ArrowUp" }), check(label("Points to redeem")), FINISH], [assertion({ expected: { literal: 1 } })]);
+  refused(result, /the executor has acted in this page/);
 });
 
 test("every run: a file field holds the name of the file the executor gave it", async () => {
@@ -469,7 +512,7 @@ test("an expected value is quoted only if the approved text states it", () => {
   }
   assert.match(notQuoted({ literal: 1.6 }, QUOTE, "currency-units") ?? "", /the number 1.6/);
   // Other hyphens and dashes are hyphens too.
-  for (const quote of ["see KAN\u2011160", "see KAN\u2013160", "from 100\u2013160 items"]) assert.match(notQuoted({ literal: 160 }, quote, "plain") ?? "", /the number/, quote);
+  for (const quote of ["see KAN\u2011160", "see KAN\u2013160", "from 100\u2013160 items", "see KAN\uFF0D160", "from 100~160", "from 100\u2026160", "from 100\u2192160"]) assert.match(notQuoted({ literal: 160 }, quote, "plain") ?? "", /the number/, quote);
   // An amount in hundredths is one written with two decimals, not any number with a point.
   assert.match(notQuoted({ literal: 160 }, "multiplied by 1.6", "currency-hundredths") ?? "", /the number 160/);
   // A number ending a line is not a list marker.

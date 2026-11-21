@@ -6,7 +6,7 @@
  *
  * FOR EVERY RUN: the very element the executor itself filled, chose in,
  * pressed keys in or gave a file to is not a place to read a value from. It
- * holds the executor's own input. This is a guard against a plain mistake,
+ * holds the executor's own input, for as long as that element exists. This is a guard against a plain mistake,
  * not against a plan that tries to get round it: it knows the element and
  * nothing more, so that no other element is ever refused because of it.
  *
@@ -54,16 +54,19 @@ const AGAIN = "Open the page again by its plain address, with no query and no fr
 export const newState = (): SuppliedState => ({ fields: [], opened: { not: "no page has been opened yet" }, requests: {}, writes: 0 });
 
 /** The executor did something in the page: it is no longer as the application served it. */
-export async function noteInput(state: SuppliedState, field?: Locator): Promise<void> {
+export async function noteInput(state: SuppliedState, field?: Locator | ElementHandle): Promise<void> {
   state.opened = { not: "the executor has acted in this page since it was opened, so what it shows now may be the executor's own input" };
-  const handle = field ? await field.elementHandle().catch(() => null) : null;
+  if (!field) return;
+  // The element that takes the input, which is not always the one pointed at: a label passes it on to its field.
+  const resolve = (el: Element): Element => (el instanceof HTMLLabelElement && el.control ? el.control : el);
+  const handle = await ("elementHandle" in field ? field.evaluateHandle(resolve) : field.evaluateHandle(resolve))
+    .then((found) => found.asElement() as ElementHandle | null)
+    .catch(() => null);
   if (handle) state.fields.push(handle);
 }
 
 /** The executor opened a page by an address. Says whether it is one a value may be read from. */
 export function noteOpened(state: SuppliedState, asked: string, answer: { method: string; status: number } | undefined, endedAt: string, arrivedBy: string): void {
-  // The elements of the page left behind are gone.
-  state.fields = [];
   const plain = (address: string) => !address.includes("?") && !address.includes("#");
   state.opened = !plain(asked)
     ? { not: "the executor asked for this page by an address with a query or a fragment, which a page may show back" }

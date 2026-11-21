@@ -684,9 +684,9 @@ export const suppliedOf = (s: Session): SuppliedState => (s.supplied ??= newStat
 async function requireEvidence(s: Session, what: string, target: Target, locator: Locator | undefined, matched = true, value = true): Promise<void> {
   let why: string | undefined;
   if (target.source === "api") {
-    if (s.untrustedPlan && matched) why = answerNotEvidence(s.supplied?.requests[target.responseId], target.field === "status");
+    // Match or not: an answer that repeats its request would put what was sent into the result.
+    if (s.untrustedPlan) why = answerNotEvidence(s.supplied?.requests[target.responseId], target.field === "status");
   } else {
-    // Whether a field is there is not a reading of what it holds.
     if (value) why = await ownField(s.supplied, locator);
     // In such a run a page the executor acted in is not read at all, match or not: what it shows may be what was typed, and that may be a secret.
     if (!why && s.untrustedPlan) why = pageNotEvidence(s.supplied, s.page.url(), await arrival(s.page)) ?? (value ? await restoredField(locator) : undefined);
@@ -1059,7 +1059,8 @@ const handlers: Handlers = {
 
   async press(s, { element, key }) {
     const pressed = await locate(s.page, element);
-    await noteInput(suppliedOf(s), pressed);
+    // A key is not a value: the element is not marked as holding the executor's input, only the page as acted in.
+    await noteInput(suppliedOf(s));
     await pressed.press(key);
     await settle(s.page);
     return describePage(s);
@@ -1083,6 +1084,8 @@ const handlers: Handlers = {
       const dialog = s.page.waitForEvent("filechooser", { timeout: LOCATE_TIMEOUT_MS }).catch(() => undefined);
       await control.click();
       const chooser = await dialog;
+      // The field the files go into, which is not the element that was clicked.
+      if (chooser) await noteInput(suppliedOf(s), chooser.element());
       if (!chooser) {
         throw new Error(`${describeRef(element)} was clicked and opened no file dialog, so it is not a control for choosing files. Nothing was chosen.`);
       }
@@ -1303,7 +1306,9 @@ const handlers: Handlers = {
 
     // The executor's own field is never compared, match or not: what it holds is the executor's, and may be a secret.
     // Beyond that, a match counts only if what was read is evidence about the application. A mismatch always counts.
-    await requireEvidence(s, `Assertion ${assertionId} was not compared`, target, locator, pass, assertion.kind !== "present" && assertion.kind !== "absent");
+    // Whether an element is there is not a reading of what it holds, unless it was found by its text.
+    const reads = (assertion.kind !== "present" && assertion.kind !== "absent") || (target.source === "page" && target.by === "text");
+    await requireEvidence(s, `Assertion ${assertionId} was not compared`, target, locator, pass, reads);
     const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched, scope, ...counted });
     const shot = await screenshot(s, `check-${assertionId}`, locator);
     s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, screenshot: shot });
@@ -1316,8 +1321,7 @@ const handlers: Handlers = {
         // The executor says where the error is; code reads what it says.
         const read = await readTarget(s, error);
         // The executor's own field is not an error message of the application, and what it holds may be a secret.
-        const own = await ownField(s.supplied, read.locator);
-        if (own) throw new Error(`The element pointed at as the error was not read: ${own}`);
+        await requireEvidence(s, "The element pointed at as the error was not read", error, read.locator);
         if (read.text.trim() === "") throw new Error("The element pointed at as the error shows no text. Point at the element that shows the error message.");
         const trail = trailOf(s);
         (s.appErrors ??= []).push({
