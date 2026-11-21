@@ -19,7 +19,8 @@ import { Budget, DEFAULT_LIMITS, DEFAULT_PRICES } from "./budget.ts";
 import { RecordedDriver } from "./drivers/recorded.ts";
 import { headline } from "./report/readiness.ts";
 import { coverage } from "./report/run.ts";
-import { authoriseRemoteRun, loadTrustedKeys, unexpected } from "./remote/authority.ts";
+import { authoriseForExecution, authoriseRemoteRun, directoryLedger, loadTrustedKeys, unexpected } from "./remote/authority.ts";
+import { loadRemoteRecording, runRemote, unsupported } from "./remote/run.ts";
 import { loadRemoteRequest, RemoteRequestRefused } from "./remote/request.ts";
 import { Scenario, Step, type RunReport, type ScenarioResult } from "./schema.ts";
 
@@ -38,6 +39,13 @@ const USAGE = `Usage:
         its target, every criteria snapshot against its hash, that it is the
         run the caller asked for, and that the control plane approved each
         snapshot for this run. No model, no browser. It starts nothing
+  releaseproof run-remote <request.json> --approvals <file> --authority-keys <file>
+        --expect-run <id> --expect-workspace <id> --expect-project <id>
+        --ledger <dir> --recording <file> --out <dir> [--target-manifest <file>]
+        run an approved remote request against its target from a recording.
+        The run is claimed in the ledger and starts once. No model is called.
+        --allow-local-target accepts a target named "localhost", for a trial
+        against an application on this machine
   releaseproof check-remote-request <request.json> --integrity-only
         format, target and hashes only. Authority is NOT checked
 
@@ -168,12 +176,75 @@ async function main(): Promise<number> {
       approvals: { type: "string" },
       "authority-keys": { type: "string" },
       "integrity-only": { type: "boolean", default: false },
+      ledger: { type: "string" },
+      "allow-local-target": { type: "boolean", default: false },
+      "target-manifest": { type: "string" },
       "expect-run": { type: "string" },
       "expect-workspace": { type: "string" },
       "expect-project": { type: "string" },
     },
   });
   const [command, scenarioFile] = positionals;
+
+  // A remote run. It takes no model driver, so nothing here can call a model:
+  // decisions come from a recording, checked like any model's answer.
+  if (command === "run-remote") {
+    const need = ["approvals", "authority-keys", "expect-run", "expect-workspace", "expect-project", "ledger", "recording", "out"] as const;
+    const missing = need.filter((name) => !values[name]);
+    if (!scenarioFile || missing.length > 0) {
+      console.error(`run-remote needs a request file and ${need.map((name) => `--${name}`).join(", ")}. Missing: ${missing.map((name) => `--${name}`).join(", ") || "the request file"}.`);
+      if (missing.includes("recording")) console.error("A run from a remote request with a live model is not available yet.");
+      return 2;
+    }
+    try {
+      // A target on this machine is accepted only when asked for by name, for a trial here.
+      const local = values["allow-local-target"] === true;
+      const admitted = await loadRemoteRequest(scenarioFile, new Date(), { allowLocalTarget: local });
+      if (local) console.log("A target on this machine is allowed for this run. This is for trials here only.");
+      // Found before the run is claimed, so a refusal here uses nothing up.
+      const cannot = unsupported(admitted);
+      if (cannot.length > 0) throw new RemoteRequestRefused(cannot);
+      const recording = await loadRemoteRecording(values.recording!);
+      let trusted: Awaited<ReturnType<typeof loadTrustedKeys>>;
+      let evidence: unknown;
+      let ledger: ReturnType<typeof directoryLedger>;
+      try {
+        trusted = await loadTrustedKeys(values["authority-keys"]!);
+      } catch (error) {
+        console.error(`The trusted keys could not be read: ${error instanceof Error ? error.message.split("\n")[0] : "unknown error"}`);
+        return 2;
+      }
+      try {
+        evidence = JSON.parse(await readFile(values.approvals!, "utf8")) as unknown;
+      } catch {
+        console.error("The approvals file could not be read as JSON.");
+        return 2;
+      }
+      try {
+        ledger = directoryLedger(values.ledger!);
+      } catch (error) {
+        console.error(`The ledger could not be opened: ${error instanceof Error ? error.message.split("\n")[0] : "unknown error"}`);
+        return 2;
+      }
+      const startable = authoriseForExecution(admitted, evidence, trusted, {
+        expected: { runId: values["expect-run"]!, workspaceId: values["expect-workspace"]!, projectId: values["expect-project"]! },
+        ledger,
+      });
+      // Only now is anything about the target loaded.
+      // Never the default manifest of whatever directory this runs in: only one named for the target.
+      const targetManifest = values["target-manifest"] ? await loadManifest(values["target-manifest"], startable.request.target.baseUrl) : undefined;
+      const run = await runRemote({ run: startable, recording, manifest: targetManifest, outDir: values.out! });
+      console.log(`Run ${run.runId} against ${run.target.baseUrl}: ${run.results.length} ${run.results.length === 1 ? "scenario" : "scenarios"} recorded, from a recording, with no model.`);
+      for (const result of run.results) console.log(`  ${result.scenarioId}  ${result.verdict}  ${result.reason}`);
+      if (run.endedEarly) console.log(`Ended early: ${run.endedEarly.reason}`);
+      console.log(`Written to ${path.join(values.out!, "remote-run.json")}. No run-level verdict is stated yet.`);
+      return 0;
+    } catch (error) {
+      if (!(error instanceof RemoteRequestRefused)) throw error;
+      console.error(error.message);
+      return 2;
+    }
+  }
 
   // Decided before anything else is loaded: no manifest, no driver, no model.
   if (command === "check-remote-request") {

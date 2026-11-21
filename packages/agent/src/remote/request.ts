@@ -51,7 +51,16 @@ export const CriteriaSnapshot = z.strictObject({
 });
 export type CriteriaSnapshot = z.infer<typeof CriteriaSnapshot>;
 
-export const RemoteRunRequest = z.strictObject({
+/**
+ * This machine, by name. Never a valid target for a run that comes from the
+ * control plane. Accepted only when the engine's caller asks for it by name
+ * (`allowLocalTarget`), for a trial against an application on the same
+ * machine. An approval is still required, and still binds this address.
+ */
+const LocalHost = z.string().regex(/^localhost(:[0-9]{1,5})?$/);
+
+const requestWith = (host: z.ZodType<string>) =>
+  z.strictObject({
   requestVersion: z.literal(REMOTE_REQUEST_VERSION),
   /** The run this request is for. It is written into the result unchanged. */
   runId: z.uuid(),
@@ -61,7 +70,7 @@ export const RemoteRunRequest = z.strictObject({
   target: z.strictObject({
     baseUrl: z.url({ protocol: /^https?$/ }),
     /** Hosts the run may navigate and write to. The target's own host must be among them. */
-    allowedHosts: z.array(Host).min(1).max(20),
+    allowedHosts: z.array(host).min(1).max(20),
   }),
   criteria: z.array(CriteriaSnapshot).min(1).max(20),
   limits: z.strictObject({
@@ -70,6 +79,9 @@ export const RemoteRunRequest = z.strictObject({
     maxMinutes: z.number().int().min(1).max(120),
   }),
 });
+
+export const RemoteRunRequest = requestWith(Host);
+const RemoteRunRequestOnThisMachine = requestWith(z.union([Host, LocalHost]));
 export type RemoteRunRequest = z.infer<typeof RemoteRunRequest>;
 
 /**
@@ -109,8 +121,8 @@ export function sha256Hex(text: string): string {
  * snapshots, or throws `RemoteRequestRefused`. Pure: no network, no model, no
  * clock beyond comparing the approval time with `now`.
  */
-export function admitRemoteRun(raw: unknown, now: Date = new Date()): AdmittedRun {
-  const parsed = RemoteRunRequest.safeParse(raw);
+export function admitRemoteRun(raw: unknown, now: Date = new Date(), options: { allowLocalTarget?: boolean } = {}): AdmittedRun {
+  const parsed = (options.allowLocalTarget === true ? RemoteRunRequestOnThisMachine : RemoteRunRequest).safeParse(raw);
   if (!parsed.success) {
     throw new RemoteRequestRefused(
       parsed.error.issues.map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`),
@@ -166,12 +178,12 @@ export function admitRemoteRun(raw: unknown, now: Date = new Date()): AdmittedRu
 }
 
 /** Reads a request file and decides whether it may run. */
-export async function loadRemoteRequest(file: string, now: Date = new Date()): Promise<AdmittedRun> {
+export async function loadRemoteRequest(file: string, now: Date = new Date(), options: { allowLocalTarget?: boolean } = {}): Promise<AdmittedRun> {
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(file, "utf8"));
   } catch (error) {
     throw new RemoteRequestRefused([`${file} could not be read as JSON: ${(error as Error).message.split("\n")[0]}`]);
   }
-  return admitRemoteRun(raw, now);
+  return admitRemoteRun(raw, now, options);
 }

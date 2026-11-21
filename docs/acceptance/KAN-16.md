@@ -19,13 +19,13 @@ the worker and uploads a result.
 
 | Criterion | Status | Checked by |
 | --- | --- | --- |
-| 1 | part: the request is defined, admitted and authorised; nothing runs from it yet | `packages/agent/test/remote-request.test.ts`, `packages/agent/test/remote-authority.test.ts` |
-| 2 | part: a snapshot is authoritative only with a valid approval signed by the control plane for this run. It does not yet reach the planner as a source | `packages/agent/test/remote-authority.test.ts` |
-| 3 | checked for both gates: integrity and authority are decided before any model call | both |
-| 4 | part: a request, a snapshot's text, or unsigned evidence cannot grant authority. Not yet shown for text met during a run | `packages/agent/test/remote-authority.test.ts` |
-| 5 | not started | |
+| 1 | checked with recorded decisions: `run-remote` runs an approved request against its target with no pull request or ticket. A run with a live model is not available yet | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-request.test.ts`, `packages/agent/test/remote-authority.test.ts` |
+| 2 | checked: a snapshot with a valid approval for this run is the source of requirements, and sets expected values through the same checks as every other source | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
+| 3 | checked for both gates, and the remote run takes no model driver at all | all three |
+| 4 | checked: a quote not found in an approved snapshot, another source id, no source id, or text shown by the application sets no expected value | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
+| 5 | part: the run's record names every snapshot with its hash. The result file is not built yet | `packages/agent/test/remote-run.test.ts` |
 | 6 | not started | |
-| 7 | part: a request has no place for a pull request or ticket | `packages/agent/test/remote-request.test.ts` |
+| 7 | part: the run's record has no pull-request or ticket field and says "target". The result file and report are not built yet | `packages/agent/test/remote-run.test.ts` |
 | 8 | checked so far: the existing suite passes unchanged | `npm test` |
 | KAN-15 criterion 7 | not started | |
 
@@ -81,11 +81,38 @@ after every other check has passed, so a refused attempt claims nothing.
 `--expect-workspace`, `--expect-project`) and claims nothing, because it is a
 check and not a start.
 
-Still open, for the change that adds `run-remote`: that command must accept
-only a `StartableRun` that passes `isStartable`, with a ledger directory created by the operator where a
-run cannot write. A run that is claimed and then crashes before starting stays
+`run-remote` accepts only a `StartableRun` that passes `isStartable`. The ledger
+directory must be created by the operator where a run cannot write. A run that is claimed and then crashes before starting stays
 claimed: it needs a new run id. Until `run-remote` exists, no remote run can
 start at all.
+
+## Running from a request (`run-remote`)
+
+`run-remote` takes a request, its approvals, the trusted keys, the caller's
+expectation, a ledger directory and a **recording**, and writes
+`remote-run.json` and one directory per scenario.
+
+- It starts only from a `StartableRun` that passes `isStartable`. The run it
+  is given is a frozen copy, so what was authorised is what runs.
+- It takes no model driver. What a model would decide (how to read the
+  criteria, what to test, which steps to take) comes from the recording. A
+  recording is a proposal, like a model's answer: each requirement in it is
+  checked against the approved snapshots by the same code that checks a live
+  model, and an expected value that does not rest on approved text is removed
+  before anything runs.
+- The approved snapshots are the only sources, of kind `criteria-snapshot`.
+- The run goes to the request's target, whatever a target manifest says. A
+  target manifest is only read when named with `--target-manifest`.
+- A request naming hosts besides its target's own is turned away before the
+  run is claimed: a run can reach only its target's origin for now.
+- The request's scenario limit and time limit are the ones applied. A scenario
+  that did not run is recorded as not executed, never as passed.
+- A target named `localhost` is refused, as before, unless the caller passes
+  `--allow-local-target`, for a trial against an application on the same
+  machine. The worker never passes it.
+
+No run-level verdict is stated yet, and no result file in the dashboard's
+format is written. Those come next.
 
 ## The run-level verdict (decided 21 November 2026)
 
