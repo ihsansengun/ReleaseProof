@@ -35,7 +35,7 @@ A matching hash shows a snapshot's text is unchanged. It does not show that
 the named approver may approve requirements for the target: the request, hash
 and approver's name all come from the same place. Criterion 2 is met only when
 the control plane's signed approval for the snapshot verifies against a key
-the request cannot influence. Until that check exists, an admitted
+the request cannot influence. Until that check has passed, an admitted
 snapshot is marked `integrity: "hash-matched"`, `approverVerified: false`. Only
 the authority check below can change that.
 
@@ -69,7 +69,9 @@ Not built yet: the control plane's side (issuing approvals), and handing an
 authoritative snapshot to the planner as a source.
 
 **Replay.** A run starts only through `authoriseForExecution`, the one
-function that returns a `StartableRun`. The caller states, from outside the
+function that returns a `StartableRun`. The type alone can be cast, so the
+code that starts a run must also ask `isStartable`, which only that function's
+own result satisfies. The caller states, from outside the
 request, which run, workspace and project it asked for; a genuine request and
 approval for any other are refused. The run is then claimed in a ledger with a
 single claim and starts once: a second start of the same run is refused,
@@ -80,8 +82,10 @@ after every other check has passed, so a refused attempt claims nothing.
 check and not a start.
 
 Still open, for the change that adds `run-remote`: that command must accept
-only a `StartableRun`, with a ledger directory created by the operator where a
-run cannot write. Until it exists, no remote run can start at all.
+only a `StartableRun` that passes `isStartable`, with a ledger directory created by the operator where a
+run cannot write. A run that is claimed and then crashes before starting stays
+claimed: it needs a new run id. Until `run-remote` exists, no remote run can
+start at all.
 
 ## The run-level verdict (decided 21 November 2026)
 

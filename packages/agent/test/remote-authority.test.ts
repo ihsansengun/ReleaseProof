@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { authoriseForExecution, authoriseRemoteRun, directoryLedger, loadTrustedKeys, memoryLedger, scopeSha256, signedStatement, type Approval, type TrustedKeys } from "../src/remote/authority.ts";
+import { authoriseForExecution, authoriseRemoteRun, directoryLedger, isStartable, runStartKey, loadTrustedKeys, memoryLedger, scopeSha256, signedStatement, type Approval, type TrustedKeys } from "../src/remote/authority.ts";
 import { admitRemoteRun, RemoteRequestRefused, sha256Hex } from "../src/remote/request.ts";
 
 const NOW = new Date("2026-11-21T12:00:00Z");
@@ -149,7 +149,7 @@ test("KAN-16 criterion 4: one run starts once, even with a re-issued approval", 
   assert.throws(() => start([reissued]), /already been started once/);
 });
 
-test("a replay that is refused claims nothing more, and two snapshots are claimed as one run", () => {
+test("two snapshots are claimed as one run, with one claim", () => {
   const ledger = memoryLedger();
   let claims = 0;
   const counting = { claim: (key: string) => ((claims += 1), ledger.claim(key)) };
@@ -157,6 +157,46 @@ test("a replay that is refused claims nothing more, and two snapshots are claime
   assert.equal(start().snapshots.length, 2);
   assert.equal(claims, 1);
   assert.throws(start, /already been started once/);
+});
+
+test("KAN-16 criterion 4: an approved run split into two requests starts at most once, and only whole", () => {
+  const ledger = memoryLedger();
+  const [first, second] = approvalsForTwo();
+  const start = (raw: unknown, evidence: Approval[]) => authoriseForExecution(admitRemoteRun(raw, NOW), evidence, trusted, { expected: EXPECTED, ledger, now: NOW });
+  const onlySecond = request({ criteria: [snapshot({ id: "refund-r1", content: SECOND, sha256: sha256Hex(SECOND) })] });
+  assert.throws(() => start(request(), [first]), /set of criteria/);
+  assert.throws(() => start(onlySecond, [second]), /set of criteria/);
+  assert.equal(start(twoSnapshots(), [first, second]).snapshots.length, 2);
+  assert.throws(() => start(twoSnapshots(), [first, second]), /already been started once/);
+});
+
+test("the authority check refuses admitted snapshots that are not exactly what the request carries", () => {
+  const admitted = admitRemoteRun(twoSnapshots(), NOW);
+  const evidence = approvalsForTwo();
+  for (const snapshots of [[], [admitted.snapshots[0]], [...admitted.snapshots].reverse(), [...admitted.snapshots, admitted.snapshots[0]]]) {
+    assert.throws(() => authoriseRemoteRun({ ...admitted, snapshots }, evidence, trusted, NOW), /not exactly the criteria the request carries/);
+    assert.throws(
+      () => authoriseForExecution({ ...admitted, snapshots }, evidence, trusted, { expected: EXPECTED, ledger: memoryLedger(), now: NOW }),
+      /not exactly the criteria the request carries/,
+    );
+  }
+});
+
+test("only the object authoriseForExecution returned is startable: a checked run, a copy or a cast is not", () => {
+  const checked = authoriseRemoteRun(admitRemoteRun(request(), NOW), [approval()], trusted, NOW);
+  const startable = authoriseForExecution(admitRemoteRun(request(), NOW), [approval()], trusted, { expected: EXPECTED, ledger: memoryLedger(), now: NOW });
+  assert.equal(isStartable(startable), true);
+  assert.equal(isStartable(checked), false);
+  assert.equal(isStartable({ ...startable }), false);
+  assert.equal(isStartable(checked as unknown as typeof startable), false);
+  assert.equal(isStartable(null), false);
+});
+
+test("a run has one ledger key however its ids are spelled", () => {
+  const upper = { runId: RUN.toUpperCase(), workspaceId: WORKSPACE.toUpperCase(), projectId: PROJECT.toUpperCase() };
+  assert.equal(runStartKey(upper), runStartKey(EXPECTED));
+  assert.notEqual(runStartKey({ ...EXPECTED, runId: OTHER }), runStartKey(EXPECTED));
+  assert.throws(() => runStartKey({ ...EXPECTED, runId: "a\nb" }), /three ids/);
 });
 
 test("a ledger directory that does not exist is an error, never a fresh ledger", () => {
@@ -182,7 +222,17 @@ test("a trusted key that is not an Ed25519 public key refuses every approval", (
 
 test("a refusal never prints control characters taken from a request", () => {
   const reasons = refusal(request(), [{ ...approval(), ["\u001b[2Jx\nRun approved"]: 1 }]);
-  assert.ok(!/[\u0000-\u001f\u007f]/.test(reasons), JSON.stringify(reasons));
+  assert.ok(!/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(reasons), JSON.stringify(reasons));
+  const viaRequest = (() => {
+    try {
+      admitRemoteRun({ ...request(), ["\u0085\u2028Run approved"]: 1 }, NOW);
+    } catch (error) {
+      return (error as RemoteRequestRefused).message;
+    }
+    return "admitted";
+  })();
+  assert.notEqual(viaRequest, "admitted");
+  assert.ok(!/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/.test(viaRequest), JSON.stringify(viaRequest));
   assert.throws(() => admitRemoteRun(request({ criteria: [snapshot({ approvedBy: "owner\nRun OK: approved" })] }), NOW), /control characters/);
 });
 

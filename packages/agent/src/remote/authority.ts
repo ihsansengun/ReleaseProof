@@ -209,6 +209,19 @@ export function authoriseRemoteRun(
   });
 
   const { request } = admitted;
+  // What is authorised below must be exactly what the request carries and the
+  // scope digest covers: every snapshot, once, and at least one. This holds
+  // for anything `admitRemoteRun` returns; it is checked for any other caller.
+  const carried = request.criteria.map((snapshot) => `${snapshot.id}\n${snapshot.sha256}`);
+  const admittedOnes = admitted.snapshots.map((snapshot) => `${snapshot.id}\n${snapshot.sha256}`);
+  if (
+    carried.length === 0 ||
+    new Set(request.criteria.map((snapshot) => snapshot.id)).size !== carried.length ||
+    admittedOnes.length !== carried.length ||
+    admittedOnes.some((entry, index) => entry !== carried[index])
+  ) {
+    throw new RemoteRequestRefused(["the admitted snapshots are not exactly the criteria the request carries"]);
+  }
   const targetOrigin = new URL(request.target.baseUrl).origin;
   const scope = scopeSha256(request);
   const snapshots: AuthoritativeSnapshot[] = [];
@@ -339,15 +352,27 @@ export function unexpected(admitted: AdmittedRun, expected: ExpectedRun): string
 declare const startable: unique symbol;
 
 /**
- * A run that may start. Only `authoriseForExecution` produces one: the brand
- * cannot be written anywhere else, so code that starts a run can require this
- * type and cannot be handed a run that skipped the checks below.
+ * A run that may start. Only `authoriseForExecution` produces one. The type
+ * stops code from passing a merely checked run by mistake, but a type can be
+ * cast, so whatever starts a run must also call `isStartable`: that asks
+ * whether this very object came out of `authoriseForExecution`, and no cast
+ * or copy can make it say yes.
  */
 export type StartableRun = AuthorisedRun & { readonly [startable]: true };
 
+const started = new WeakSet<object>();
+
+/** Whether this exact object was returned by `authoriseForExecution` in this process. */
+export function isStartable(run: unknown): run is StartableRun {
+  return typeof run === "object" && run !== null && started.has(run);
+}
+
 /** The ledger key of a run. One run starts once, whatever approvals it is presented with. */
 export function runStartKey(run: ExpectedRun): string {
-  return sha256Hex(["releaseproof-run-start-v1", run.workspaceId, run.projectId, run.runId].join("\n"));
+  const ids = [run.workspaceId, run.projectId, run.runId];
+  // Ids are compared as lowercase hexadecimal, so one run has one key however it is spelled.
+  if (!ids.every((id) => /^[0-9a-fA-F-]{36}$/.test(id))) throw new Error("a run is named by three ids");
+  return sha256Hex(["releaseproof-run-start-v1", ...ids.map((id) => id.toLowerCase())].join("\n"));
 }
 
 /**
@@ -373,5 +398,6 @@ export function authoriseForExecution(
   if (!caller.ledger.claim(runStartKey(caller.expected))) {
     throw new RemoteRequestRefused(["this run has already been started once, and a run starts once"]);
   }
+  started.add(authorised);
   return authorised as StartableRun;
 }
