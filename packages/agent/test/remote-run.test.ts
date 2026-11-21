@@ -14,6 +14,8 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { authoriseForExecution, authoriseRemoteRun, memoryLedger, scopeSha256, signedStatement, type Approval, type StartableRun, type TrustedKeys } from "../src/remote/authority.ts";
 import { admitRemoteRun, RemoteRequestRefused, sha256Hex } from "../src/remote/request.ts";
+import { runScenario } from "../src/execute/run.ts";
+import { Manifest } from "../src/schema.ts";
 import { checkedRecording, MAX_RECORDED_STEPS, RemoteRecording, runRemote, snapshotSources, unsupported, type RemoteRun } from "../src/remote/run.ts";
 
 const RUN = "a0000000-0000-4000-8000-000000000410";
@@ -600,12 +602,33 @@ test("another window cannot put a blank page in the application's place and have
       STEPS[1]!,
       STEPS[2]!,
     ];
+    // In a remote run the other window is closed as it opens. Whether it got as far as replacing the
+    // page first depends on timing; either way nothing is read and nothing passes.
     const result = await runRemote({ run: startable(target.baseUrl), recording: recording({ steps: { S1: steps } }), outDir: out() });
-    const [scenarioResult] = result.results;
-    assert.ok(target.elsewhere.some((hit) => hit.includes("blank=1")), "the other window did open the other origin");
-    assert.equal(scenarioResult!.verdict, "blocked", JSON.stringify([scenarioResult!.reason, scenarioResult!.steps]));
-    assert.match(scenarioResult!.reason, /a blank page/);
-    assert.deepEqual(scenarioResult!.assertionResults, []);
+    assert.notEqual(result.results[0]!.verdict, "passed", JSON.stringify([result.results[0]!.reason, result.results[0]!.steps]));
+    assert.deepEqual(result.results[0]!.assertionResults, []);
+
+    // With the other window left open (a confined run with a plan of the engine's own), the blank page is what stops it.
+    const hitsBefore = target.elsewhere.length;
+    const confined = await runScenario({
+      scenario: {
+        id: "S1",
+        title: "Blank page",
+        basis: "requirement",
+        requirementIds: ["R1"],
+        intent: "Read the balance.",
+        fixtures: {},
+        assertions: [{ id: "A1", description: "Balance", kind: "number_equals", unit: "plain", expected: { literal: 160 }, requirementId: "R1" }],
+      },
+      manifest: Manifest.parse({ baseUrl: target.baseUrl }),
+      outDir: out(),
+      mode: { kind: "replay", steps: steps as never },
+      confine: true,
+    });
+    assert.ok(target.elsewhere.slice(hitsBefore).some((hit) => hit.includes("blank=1")), "the other window did open the other origin");
+    assert.equal(confined.verdict, "blocked", JSON.stringify([confined.reason, confined.steps]));
+    assert.match(confined.reason, /a blank page/);
+    assert.deepEqual(confined.assertionResults, []);
   } finally {
     target.close();
   }
