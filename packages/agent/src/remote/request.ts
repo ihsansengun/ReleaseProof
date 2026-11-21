@@ -9,9 +9,16 @@
  * reason given.
  *
  * The criteria arrive as snapshots. A snapshot is the exact text someone
- * approved, with the SHA-256 of that text and who approved it. A snapshot
- * whose text matches its hash and names its approver is authoritative: it can
- * set expected values. Nothing else in a remote run can.
+ * approved, with the SHA-256 of that text and who is said to have approved it.
+ *
+ * What this gate establishes is INTEGRITY: the text is the text the hash was
+ * taken of, unchanged. It does not establish AUTHORITY. The approver's name is
+ * a claim made by whoever wrote the request; a matching hash says nothing
+ * about whether that person may approve requirements for this target. A
+ * snapshot becomes authoritative, and able to set expected values, only when
+ * the approver has also been checked against the owners of the source, from a
+ * list this request cannot influence. That check is separate and comes after
+ * this one. Until it exists, nothing admitted here is authoritative.
  */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -57,12 +64,19 @@ export const RemoteRunRequest = z.strictObject({
 });
 export type RemoteRunRequest = z.infer<typeof RemoteRunRequest>;
 
-/** A snapshot that passed every check. Only these are ever handed on. */
-export type VerifiedSnapshot = CriteriaSnapshot & { readonly verified: true };
+/**
+ * A snapshot whose text matches its hash. Its integrity is established; its
+ * authority is not (see the note at the top of this file).
+ */
+export type IntactSnapshot = CriteriaSnapshot & {
+  readonly integrity: "hash-matched";
+  /** Always false here. Only the ownership check may say otherwise. */
+  readonly approverVerified: false;
+};
 
 export type AdmittedRun = {
   request: RemoteRunRequest;
-  snapshots: VerifiedSnapshot[];
+  snapshots: IntactSnapshot[];
 };
 
 /** Why a request was refused. Every reason is listed, not only the first. */
@@ -80,7 +94,7 @@ export function sha256Hex(text: string): string {
 }
 
 /**
- * Decides whether a request may run. Returns the request with its verified
+ * Decides whether a request may run. Returns the request with its intact
  * snapshots, or throws `RemoteRequestRefused`. Pure: no network, no model, no
  * clock beyond comparing the approval time with `now`.
  */
@@ -128,7 +142,11 @@ export function admitRemoteRun(raw: unknown, now: Date = new Date()): AdmittedRu
   if (reasons.length > 0) throw new RemoteRequestRefused(reasons);
   return {
     request,
-    snapshots: request.criteria.map((snapshot) => ({ ...snapshot, verified: true as const })),
+    snapshots: request.criteria.map((snapshot) => ({
+      ...snapshot,
+      integrity: "hash-matched" as const,
+      approverVerified: false as const,
+    })),
   };
 }
 

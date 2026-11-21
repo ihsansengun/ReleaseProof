@@ -171,10 +171,11 @@ async function main(): Promise<number> {
     }
     try {
       const { request, snapshots } = await loadRemoteRequest(scenarioFile);
-      console.log(`Run ${request.runId} against ${request.target.baseUrl} may run.`);
+      console.log(`Run ${request.runId} against ${request.target.baseUrl}: the request is well formed and every snapshot matches its hash.`);
       for (const snapshot of snapshots) {
-        console.log(`  criteria ${snapshot.id}  sha256 ${snapshot.sha256}  approved by ${snapshot.approvedBy} at ${snapshot.approvedAt}`);
+        console.log(`  criteria ${snapshot.id}  sha256 ${snapshot.sha256}  approver as claimed: ${snapshot.approvedBy} at ${snapshot.approvedAt} (not verified)`);
       }
+      console.log("Integrity only. Whether the approver may approve requirements for this target is not checked here.");
       return 0;
     } catch (error) {
       if (!(error instanceof RemoteRequestRefused)) throw error;

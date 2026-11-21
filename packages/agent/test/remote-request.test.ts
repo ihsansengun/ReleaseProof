@@ -74,12 +74,22 @@ test("KAN-16 criterion 1: a request has no place for a pull request, ticket or r
 
 // ---- criterion 2: a matching, approved snapshot is authoritative --------------
 
-test("KAN-16 criterion 2: a snapshot whose text matches its hash and names an approver is marked verified", () => {
-  const [verified] = admitRemoteRun(request(), NOW).snapshots;
-  assert.equal(verified.verified, true);
-  assert.equal(verified.sha256, sha256Hex(CRITERIA));
-  assert.equal(verified.approvedBy, "owner-a@releaseproof.test");
-  assert.equal(verified.content, CRITERIA);
+test("KAN-16 criterion 2: a snapshot whose text matches its hash is marked intact, with its approver as claimed", () => {
+  const [intact] = admitRemoteRun(request(), NOW).snapshots;
+  assert.equal(intact.integrity, "hash-matched");
+  assert.equal(intact.sha256, sha256Hex(CRITERIA));
+  assert.equal(intact.approvedBy, "owner-a@releaseproof.test");
+  assert.equal(intact.content, CRITERIA);
+});
+
+test("KAN-16 criterion 2: a matching hash does not make a snapshot authoritative", () => {
+  // Anyone can write a request with a correct hash and any approver's name.
+  const forged = snapshot({ approvedBy: "ceo@releaseproof.test" });
+  const [intact] = admitRemoteRun(request({ criteria: [forged] }), NOW).snapshots;
+  assert.equal(intact.integrity, "hash-matched");
+  assert.equal(intact.approverVerified, false, "the gate never vouches for the approver");
+  assert.equal("verified" in intact, false);
+  assert.equal("trust" in intact, false);
 });
 
 test("KAN-16 criterion 2: the hash is of the exact text, as UTF-8", () => {
