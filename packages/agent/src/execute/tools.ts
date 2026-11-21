@@ -5,7 +5,7 @@ import { evaluateFormula, formulaVariables } from "../formula.ts";
 import { reconcile, scaleUnclear } from "../units.ts";
 import { BlockedCause, type ApplicationError, type ErrorSignal, type AssertionResult, type Evidence, type Outcome, type Scenario, type Step } from "../schema.ts";
 import type { SecretVault } from "../secrets.ts";
-import { answerNotEvidence, arrival, newState, noteInput, noteOpened, ownField, pageNotEvidence, placeOf, restoredField, type SuppliedState } from "./supplied.ts";
+import { answerNotEvidence, arrival, foundInOwnText, newState, noteInput, noteOpened, ownField, pageNotEvidence, placeOf, restoredField, type SuppliedState } from "./supplied.ts";
 
 /** Everything one scenario execution accumulates. */
 export type Session = {
@@ -385,6 +385,9 @@ async function countIn(session: Session, target: z.infer<typeof PageTarget>): Pr
   // test id do not. Both are asked for in full, then narrowed to what shows.
   const every = buildIn(root, ref, true);
   const items = buildIn(root, ref).filter({ visible: true });
+  if (await foundInOwnText(session.supplied, items)) {
+    throw new Error("Not counted: some of what was found is in a text the executor itself typed. That counts what was typed, not what the application shows. Nothing was read.");
+  }
   // Items may still be arriving; give them a moment before calling the place empty.
   const deadline = Date.now() + 1_000;
   let count = await items.count();
@@ -681,7 +684,7 @@ export const suppliedOf = (s: Session): SuppliedState => (s.supplied ??= newStat
  * executor's own field, in every run; and in a run whose plan is not the
  * engine's own, anything but a page or an answer as the application served it.
  */
-async function requireEvidence(s: Session, what: string, target: Target, locator: Locator | undefined, matched = true, value = true): Promise<void> {
+async function requireEvidence(s: Session, what: string, target: Target, locator: Locator | undefined, value = true): Promise<void> {
   let why: string | undefined;
   if (target.source === "api") {
     // Match or not: an answer that repeats its request would put what was sent into the result.
@@ -1215,6 +1218,9 @@ const handlers: Handlers = {
         }
         if (count === 1) locator = found;
         matched = count;
+        if (count > 0 && (await foundInOwnText(s.supplied, found))) {
+          throw new Error(`Assertion ${assertionId} was not compared: what was found is in a text the executor itself typed. That shows what was typed, not what the application shows. No result was recorded.`);
+        }
         // A role or a label says what kind of element to look for. If nothing
         // of that kind is there while the same words are plainly on the page,
         // the kind was a wrong guess, and "absent" would be an answer about
@@ -1305,10 +1311,9 @@ const handlers: Handlers = {
     }
 
     // The executor's own field is never compared, match or not: what it holds is the executor's, and may be a secret.
-    // Beyond that, a match counts only if what was read is evidence about the application. A mismatch always counts.
-    // Whether an element is there is not a reading of what it holds, unless it was found by its text.
-    const reads = (assertion.kind !== "present" && assertion.kind !== "absent") || (target.source === "page" && target.by === "text");
-    await requireEvidence(s, `Assertion ${assertionId} was not compared`, target, locator, pass, reads);
+    // In a run whose plan is not the engine's own, the same goes for anything that is not evidence about the application.
+    // Whether an element is there is not a reading of what it holds.
+    await requireEvidence(s, `Assertion ${assertionId} was not compared`, target, locator, assertion.kind !== "present" && assertion.kind !== "absent");
     const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched, scope, ...counted });
     const shot = await screenshot(s, `check-${assertionId}`, locator);
     s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, screenshot: shot });

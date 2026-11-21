@@ -181,11 +181,13 @@ application. Two rules, in the comparison code every run shares
 took the executor's own input is not compared, whether the comparison would
 match or not, is not observed, and is not taken as an error message. That is
 the field typed into or chosen in (the field itself when the step pointed at
-its label) and the field a file was given to (also when a button opened the
-file dialog). It stays so for as long as that element exists, whatever
-address the executor asks for meanwhile. Whether the element is there may be
-checked, but text typed into it is not "found on the page" by a presence
-check that looks for that text.
+its label or at words inside its label) and the field a file was given to
+(also when a button opened the file dialog). It stays so for as long as that
+element exists, whatever address the executor asks for meanwhile. Whether
+the element is there may be checked. But where the element shows the typed
+text as its own content (a text edited in place, not a form field), words
+found in it by a presence check or a count are what was typed, and are not
+compared.
 
 A key pressed on a control (Enter, Escape, Tab, an arrow) is not a value: the
 control may be read afterwards.
@@ -241,6 +243,8 @@ input. In other runs nothing is compared, match or not, in a page the
 executor acted in or from an answer that does not count, and neither may be
 pointed at as an error message. So what was typed or sent does not reach the
 result as a value read; a mismatch is recorded from a page opened again.
+(The record of a request step still holds what the application answered,
+beside what was sent, as it does for every step.)
 
 Also refused: an expected value calculated only from readings of the same
 place showing the same text as the value compared (or from the compared
@@ -253,8 +257,11 @@ In a remote run the plan is checked more strictly as well:
 
 - an expected number must be written whole in the approved text cited (not a
   part of a longer number, a reference such as "KAN-160", a list marker, a
-  fraction, a range or a time, as far as the common ways of writing those
-  go), and an expected text must be in it as whole words;
+  fraction, a range or a time, where those are written with a hyphen, one of
+  the usual dashes, a slash or a colon and no spaces), and an expected text
+  must be in it as whole words. A range written with spaces ("100 - 160"), a
+  number grouped with spaces ("160 000") and rarer signs still state their
+  numbers;
 - **calculated expected values are not accepted yet**: a calculation can
   cancel what it reads and arrive at any number;
 - "at least", "at most", "absent" and "present" must be worded that way by

@@ -51,6 +51,7 @@ async function app(): Promise<{ baseUrl: string; server: Server; state: { nickna
          <label>Preview <input oninput="document.querySelector('[data-testid=mirror]').textContent = this.value; new BroadcastChannel('draft').postMessage({ say: this.value })"></label>
          <p>You typed: <span data-testid="mirror"></span></p>
          <label>Points to redeem <input type="number" value="0"></label>
+         <label><span>Nick name</span> <input name="nick"></label>
          <label>Receipt <input type="file" onchange="document.querySelector('[data-testid=file]').textContent = this.files[0].name"></label>
          <p>Selected file: <span data-testid="file"></span></p>
          <button onclick="document.querySelector('[data-testid=details]').textContent = 'Tier: 60 points'">Show details</button>
@@ -249,7 +250,15 @@ test("own plan: asking for the same page again with a fragment does not make the
 });
 
 test("own plan: text typed into an editable element is not found there as something the page shows", async () => {
-  const { result } = await replay("own", [open("/account"), step("fill", { element: textbox("Note"), text: "Order confirmed" }), check({ source: "page", by: "text", value: "Order confirmed" }), FINISH], [assertion({ kind: "present", expected: undefined, unit: undefined })]);
+  const typed = [open("/account"), step("fill", { element: textbox("Note"), text: "Order confirmed" })];
+  const present = await replay("own", [...typed, check({ source: "page", by: "text", value: "Order confirmed" }), FINISH], [assertion({ kind: "present", expected: undefined, unit: undefined })]);
+  refused(present.result, /in a text the executor itself typed/);
+  const counted = await replay("own", [...typed, check({ source: "page", by: "text", value: "Order confirmed", count: true }), FINISH], [assertion({ expected: { literal: 1 } })]);
+  refused(counted.result, /in a text the executor itself typed/);
+});
+
+test("every run: a field filled by pointing at words inside its label is the field that took the input", async () => {
+  const { result } = await replay("own", [open("/account"), step("fill", { element: { by: "text", value: "Nick name" }, text: "160" }), check(label("Nick name")), FINISH]);
   refused(result, /a field the executor itself put a value into/);
 });
 

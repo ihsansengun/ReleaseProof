@@ -4,8 +4,8 @@
  *
  * Two rules, of different reach.
  *
- * FOR EVERY RUN: the very element the executor itself filled, chose in,
- * pressed keys in or gave a file to is not a place to read a value from. It
+ * FOR EVERY RUN: the very element the executor itself filled, chose in or
+ * gave a file to is not a place to read a value from. It
  * holds the executor's own input, for as long as that element exists. This is a guard against a plain mistake,
  * not against a plan that tries to get round it: it knows the element and
  * nothing more, so that no other element is ever refused because of it.
@@ -58,8 +58,13 @@ export async function noteInput(state: SuppliedState, field?: Locator | ElementH
   state.opened = { not: "the executor has acted in this page since it was opened, so what it shows now may be the executor's own input" };
   if (!field) return;
   // The element that takes the input, which is not always the one pointed at: a label passes it on to its field.
-  const resolve = (el: Element): Element => (el instanceof HTMLLabelElement && el.control ? el.control : el);
-  const handle = await ("elementHandle" in field ? field.evaluateHandle(resolve) : field.evaluateHandle(resolve))
+  // As a browser does it: anything inside a label, or the label, stands for the label's field.
+  const resolve = (el: Element): Element => {
+    const takes = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || (el instanceof HTMLElement && el.isContentEditable);
+    return takes ? el : (el.closest("label")?.control ?? el);
+  };
+  const handle = await (field as Locator)
+    .evaluateHandle(resolve)
     .then((found) => found.asElement() as ElementHandle | null)
     .catch(() => null);
   if (handle) state.fields.push(handle);
@@ -92,6 +97,26 @@ export async function ownField(state: SuppliedState | undefined, locator: Locato
     }
   }
   return undefined;
+}
+
+/**
+ * Whether any of the elements found is, or is inside, an element the executor
+ * typed text into that shows that text as its content (an editable text, not
+ * a form field, whose value is no part of the page's text). Finding words
+ * there is finding what was typed.
+ */
+export async function foundInOwnText(state: SuppliedState | undefined, found: Locator): Promise<boolean> {
+  if (!state) return false;
+  for (const handle of state.fields) {
+    const inside = await found
+      .evaluateAll((els, own) => {
+        if (!own || own instanceof HTMLInputElement || own instanceof HTMLSelectElement || own instanceof HTMLTextAreaElement) return false;
+        return els.some((el) => el === own || own.contains(el));
+      }, handle)
+      .catch(() => false);
+    if (inside) return true;
+  }
+  return false;
 }
 
 /** How the page now shown was reached, as the browser records it: "navigate" for a request made for it. */
