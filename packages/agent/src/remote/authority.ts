@@ -54,7 +54,7 @@ export const Approval = z.strictObject({
 });
 export type Approval = z.infer<typeof Approval>;
 
-/** The exact bytes that are signed: every bound field, one per line, in a fixed order. */
+/** The exact bytes that are signed: every bound field, one per line, in a fixed sequence. */
 export function signedStatement(approval: Omit<Approval, "signature">): string {
   return [
     DOMAIN,
