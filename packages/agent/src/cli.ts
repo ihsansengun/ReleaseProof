@@ -19,6 +19,7 @@ import { Budget, DEFAULT_LIMITS, DEFAULT_PRICES } from "./budget.ts";
 import { RecordedDriver } from "./drivers/recorded.ts";
 import { headline } from "./report/readiness.ts";
 import { coverage } from "./report/run.ts";
+import { loadRemoteRequest, RemoteRequestRefused } from "./remote/request.ts";
 import { Scenario, Step, type RunReport, type ScenarioResult } from "./schema.ts";
 
 const USAGE = `Usage:
@@ -30,6 +31,9 @@ const USAGE = `Usage:
         execute one scenario with a model
   releaseproof replay <scenario.json> --steps <file> --manifest <file>
         re-run recorded steps, no model
+  releaseproof check-remote-request <request.json>
+        decide whether a remote run request may run: its format, its target and
+        every criteria snapshot against its hash. No model, no browser
 
 Options:
   --driver api|bridge|recorded   how the model is attached (default api)
@@ -158,6 +162,27 @@ async function main(): Promise<number> {
     },
   });
   const [command, scenarioFile] = positionals;
+
+  // Decided before anything else is loaded: no manifest, no driver, no model.
+  if (command === "check-remote-request") {
+    if (!scenarioFile) {
+      console.error("check-remote-request needs a request file");
+      return 2;
+    }
+    try {
+      const { request, snapshots } = await loadRemoteRequest(scenarioFile);
+      console.log(`Run ${request.runId} against ${request.target.baseUrl} may run.`);
+      for (const snapshot of snapshots) {
+        console.log(`  criteria ${snapshot.id}  sha256 ${snapshot.sha256}  approved by ${snapshot.approvedBy} at ${snapshot.approvedAt}`);
+      }
+      return 0;
+    } catch (error) {
+      if (!(error instanceof RemoteRequestRefused)) throw error;
+      console.error(error.message);
+      return 2;
+    }
+  }
+
   if (!command || !["run", "retest", "run-scenario", "replay"].includes(command)) {
     console.error(USAGE);
     return 2;
