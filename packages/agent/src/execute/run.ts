@@ -34,6 +34,16 @@ export type SessionOptions = {
   expectedSha?: string;
   /** State-changing requests allowed out of the browser. Default: all. */
   writes?: Session["writes"];
+  /**
+   * Keeps the page on the application's own origin: service workers are off,
+   * a WebSocket to any other host is closed, and a replay stops as soon as the
+   * page is found anywhere else. For runs whose target or steps are not the
+   * caller's own. It does not stop the request a redirect makes: that is for
+   * the network the browser runs on.
+   */
+  confine?: boolean;
+  /** Says whether the time allowed has run out. A replay asks before every step. */
+  expired?: () => boolean;
 };
 
 export type OpenSession = {
@@ -67,8 +77,22 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   // nothing the engine holds (model key, tokens) is in a process that parses
   // content from the application under test.
   const browser = await chromium.launch({ env: browserEnv(process.env) });
-  const context = await browser.newContext({ baseURL: manifest.baseUrl });
+  const context = await browser.newContext({ baseURL: manifest.baseUrl, ...(options.confine ? { serviceWorkers: "block" as const } : {}) });
   const origin = new URL(manifest.baseUrl).origin;
+  if (options.confine) {
+    // The request filter below does not see WebSockets. One to the application's own host goes through; any other is closed.
+    const host = new URL(manifest.baseUrl).host;
+    await context.routeWebSocket(/.*/, (socket) => {
+      let same = false;
+      try {
+        same = new URL(socket.url()).host === host;
+      } catch {
+        same = false;
+      }
+      if (same) socket.connectToServer();
+      else void socket.close({ code: 1008, reason: "not the application under test" });
+    });
+  }
   await context.tracing.start({ screenshots: true, snapshots: true });
 
   const session: Session = {
@@ -95,6 +119,33 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
       ? route.continue()
       : route.abort();
   });
+
+  if (options.confine) {
+    // Every address the page commits to is seen here, also one it left again
+    // before a step ended. The first that is elsewhere is remembered for good.
+    session.page.on("framenavigated", (frame) => {
+      if (frame !== session.page.mainFrame() || session.leftTo !== undefined) return;
+      const address = frame.url();
+      let seen: string;
+      try {
+        seen = new URL(address).origin;
+      } catch {
+        seen = "an address that could not be read";
+      }
+      if (seen === origin) {
+        session.arrived = true;
+        return;
+      }
+      // A blank page is where a browser starts. After the application was
+      // open it is somewhere else: another window can put a blank page in
+      // this one's place and write into it.
+      if (address === "about:blank") {
+        if (session.arrived) session.leftTo = "a blank page";
+        return;
+      }
+      session.leftTo = seen;
+    });
+  }
 
   // What the application answers to a user's action is kept when it is an error.
   context.on("response", (response) => noteResponse(session, response));
@@ -146,7 +197,14 @@ export async function closeSession(
   await open.browser.close();
 
   const outcome = session.outcome ?? { kind: "stopped" as const, reason: "No outcome recorded." };
-  const { verdict, reason } = computeVerdict(session.scenario.assertions, session.assertionResults, outcome);
+  const computed = computeVerdict(session.scenario.assertions, session.assertionResults, outcome);
+  // A confined session whose page was somewhere else at any moment does not
+  // pass, also when every comparison had been made before it left. A recorded
+  // mismatch stays a failure.
+  const { verdict, reason } =
+    session.leftTo !== undefined && computed.verdict === "passed"
+      ? { verdict: "blocked" as const, reason: `${outcome.reason} The comparisons made before that matched.` }
+      : computed;
   const result: ScenarioResult = {
     scenarioId: session.scenario.id,
     title: session.scenario.title,
@@ -230,7 +288,10 @@ export async function runScenario(options: RunOptions): Promise<ScenarioResult> 
           stage: options.mode.stage,
         });
       } else {
-        await replaySteps(open.session, options.mode.steps);
+        await replaySteps(open.session, options.mode.steps, {
+          confineTo: options.confine ? new URL(open.manifest.baseUrl).origin : undefined,
+          expired: options.expired,
+        });
       }
     } catch (error) {
       open.session.outcome = {

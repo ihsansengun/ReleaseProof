@@ -50,6 +50,10 @@ export type Session = {
   assertionResults: AssertionResult[];
   steps: Step[];
   outcome?: Outcome;
+  /** The first other origin the page was on at any moment, in a session confined to the application's own. */
+  leftTo?: string;
+  /** Whether the page has been on the application at all, in a confined session. A blank page after that is somewhere else. */
+  arrived?: boolean;
   vault: SecretVault;
   /**
    * Which state-changing requests may leave the browser: all of them, none,
@@ -663,6 +667,10 @@ async function readText(session: Session, target: Target): Promise<{ text: strin
 
 async function screenshot(session: Session, name: string, locator?: Locator): Promise<string> {
   const file = path.join(session.outDir, `${name}.png`);
+  // Evidence is written inside the scenario's own directory, whatever the name is made from.
+  if (path.dirname(path.resolve(file)) !== path.resolve(session.outDir)) {
+    throw new Error("The screenshot name is not a plain file name.");
+  }
   if (locator) {
     await locator.evaluate((el) => {
       (el as HTMLElement).style.outline = "3px solid #d6336c";

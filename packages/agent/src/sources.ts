@@ -19,7 +19,9 @@ export type SourceKind =
   | "approved-doc"
   | "amendment"
   | "pr-description"
-  | "pr-doc-change";
+  | "pr-doc-change"
+  /** The text of a criteria snapshot approved by the control plane for one remote run (remote/run.ts). */
+  | "criteria-snapshot";
 
 export type SourceRecord = {
   id: string;

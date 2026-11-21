@@ -214,6 +214,9 @@ export function authoriseRemoteRun(
   // for anything `admitRemoteRun` returns; it is checked for any other caller.
   const carried = request.criteria.map((snapshot) => `${snapshot.id}\n${snapshot.sha256}`);
   const admittedOnes = admitted.snapshots.map((snapshot) => `${snapshot.id}\n${snapshot.sha256}`);
+  if (request.criteria.some((snapshot) => sha256Hex(snapshot.content) !== snapshot.sha256)) {
+    throw new RemoteRequestRefused(["a criteria snapshot in the request does not match its hash"]);
+  }
   if (
     carried.length === 0 ||
     new Set(request.criteria.map((snapshot) => snapshot.id)).size !== carried.length ||
@@ -367,6 +370,17 @@ export function isStartable(run: unknown): run is StartableRun {
   return typeof run === "object" && run !== null && started.has(run);
 }
 
+function deepFreeze(value: unknown): void {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return;
+  // Only plain objects and arrays: freezing does not reach inside a Map, a Set or a Date.
+  const kind = Object.getPrototypeOf(value) as unknown;
+  if (kind !== Object.prototype && kind !== Array.prototype) {
+    throw new RemoteRequestRefused(["the request holds a value that is not plain data"]);
+  }
+  Object.freeze(value);
+  for (const inner of Object.values(value)) deepFreeze(inner);
+}
+
 /** The ledger key of a run. One run starts once, whatever approvals it is presented with. */
 export function runStartKey(run: ExpectedRun): string {
   const ids = [run.workspaceId, run.projectId, run.runId];
@@ -392,10 +406,18 @@ export function authoriseForExecution(
   trusted: TrustedKeys,
   caller: { readonly expected: ExpectedRun; readonly ledger: ApprovalLedger; readonly now?: Date },
 ): StartableRun {
-  const mismatch = unexpected(admitted, caller.expected);
+  // The run is checked and returned as a copy of its own, so that nothing the
+  // caller still holds can change it afterwards.
+  const own = structuredClone(admitted);
+  const mismatch = unexpected(own, caller.expected);
   if (mismatch.length > 0) throw new RemoteRequestRefused(mismatch);
-  const authorised = authoriseRemoteRun(admitted, evidence, trusted, caller.now ?? new Date());
-  if (!caller.ledger.claim(runStartKey(caller.expected))) {
+  const authorised = authoriseRemoteRun(own, evidence, trusted, caller.now ?? new Date());
+  // Frozen all the way down: what was authorised is what runs. Before the
+  // claim, so that a request that cannot be frozen uses nothing up.
+  deepFreeze(authorised);
+  // The key comes from the checked copy, which was just found to name the expected run.
+  const { runId, workspaceId, projectId } = own.request;
+  if (!caller.ledger.claim(runStartKey({ runId, workspaceId, projectId }))) {
     throw new RemoteRequestRefused(["this run has already been started once, and a run starts once"]);
   }
   started.add(authorised);
