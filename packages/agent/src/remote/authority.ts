@@ -372,6 +372,11 @@ export function isStartable(run: unknown): run is StartableRun {
 
 function deepFreeze(value: unknown): void {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return;
+  // Only plain objects and arrays: freezing does not reach inside a Map, a Set or a Date.
+  const kind = Object.getPrototypeOf(value) as unknown;
+  if (kind !== Object.prototype && kind !== Array.prototype) {
+    throw new RemoteRequestRefused(["the request holds a value that is not plain data"]);
+  }
   Object.freeze(value);
   for (const inner of Object.values(value)) deepFreeze(inner);
 }
@@ -407,11 +412,14 @@ export function authoriseForExecution(
   const mismatch = unexpected(own, caller.expected);
   if (mismatch.length > 0) throw new RemoteRequestRefused(mismatch);
   const authorised = authoriseRemoteRun(own, evidence, trusted, caller.now ?? new Date());
-  if (!caller.ledger.claim(runStartKey(caller.expected))) {
+  // Frozen all the way down: what was authorised is what runs. Before the
+  // claim, so that a request that cannot be frozen uses nothing up.
+  deepFreeze(authorised);
+  // The key comes from the checked copy, which was just found to name the expected run.
+  const { runId, workspaceId, projectId } = own.request;
+  if (!caller.ledger.claim(runStartKey({ runId, workspaceId, projectId }))) {
     throw new RemoteRequestRefused(["this run has already been started once, and a run starts once"]);
   }
-  // Frozen all the way down: what was authorised is what runs.
-  deepFreeze(authorised);
   started.add(authorised);
   return authorised as StartableRun;
 }

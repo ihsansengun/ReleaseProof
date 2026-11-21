@@ -663,6 +663,10 @@ async function readText(session: Session, target: Target): Promise<{ text: strin
 
 async function screenshot(session: Session, name: string, locator?: Locator): Promise<string> {
   const file = path.join(session.outDir, `${name}.png`);
+  // Evidence is written inside the scenario's own directory, whatever the name is made from.
+  if (path.dirname(path.resolve(file)) !== path.resolve(session.outDir)) {
+    throw new Error("The screenshot name is not a plain file name.");
+  }
   if (locator) {
     await locator.evaluate((el) => {
       (el as HTMLElement).style.outline = "3px solid #d6336c";

@@ -20,9 +20,9 @@ the worker and uploads a result.
 | Criterion | Status | Checked by |
 | --- | --- | --- |
 | 1 | checked with recorded decisions: `run-remote` runs an approved request against its target with no pull request or ticket. A run with a live model is not available yet | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-request.test.ts`, `packages/agent/test/remote-authority.test.ts` |
-| 2 | checked: a snapshot with a valid approval for this run is the source of requirements, and sets expected values through the same checks as every other source | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
+| 2 | part: a snapshot with a valid approval for this run is the only source of requirements, and a comparison must cite a requirement quoted from it. Not yet checked: that the expected value compared is the one the quoted text states. With recorded decisions that value is the recording's | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
 | 3 | checked for both gates, and the remote run takes no model driver at all | all three |
-| 4 | checked: a quote not found in an approved snapshot, another source id, no source id, or text shown by the application sets no expected value | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
+| 4 | part: a comparison citing a quote not found in an approved snapshot, another source id, or no source id is removed. Not yet checked: the expected value itself against the quoted text (see criterion 2) | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
 | 5 | part: the run's record names every snapshot with its hash. The result file is not built yet | `packages/agent/test/remote-run.test.ts` |
 | 6 | not started | |
 | 7 | part: the run's record has no pull-request or ticket field and says "target". The result file and report are not built yet | `packages/agent/test/remote-run.test.ts` |
@@ -98,18 +98,55 @@ expectation, a ledger directory and a **recording**, and writes
   criteria, what to test, which steps to take) comes from the recording. A
   recording is a proposal, like a model's answer: each requirement in it is
   checked against the approved snapshots by the same code that checks a live
-  model, and an expected value that does not rest on approved text is removed
-  before anything runs.
+  model, and a comparison that does not cite a requirement quoted from
+  approved text is removed before anything runs.
+- That check is about where a requirement comes from. It does not establish
+  that the expected value of a comparison is the one the quoted text states,
+  or that the element read is the right one: both are the recording's. A
+  result from a recording is evidence of what the application showed, not a
+  verdict on the criteria. Checking the expected value against the quoted text
+  comes before any run-level verdict is stated.
+- A recording is limited: 2,000,000 bytes, 60 steps for a scenario, and ids
+  that are plain names, each used once. An id that is not a plain name is
+  refused, and evidence is only ever written inside a scenario's own
+  directory.
 - The approved snapshots are the only sources, of kind `criteria-snapshot`.
 - The run goes to the request's target, whatever a target manifest says. A
   target manifest is only read when named with `--target-manifest`.
 - A request naming hosts besides its target's own is turned away before the
-  run is claimed: a run can reach only its target's origin for now.
-- The request's scenario limit and time limit are the ones applied. A scenario
-  that did not run is recorded as not executed, never as passed.
+  run is claimed, and again when the run starts: a run is for its target's
+  origin only for now.
+- The page is kept on the target's origin. Requests the page makes to any
+  other origin are stopped, service workers are off, and a WebSocket to
+  another host is closed. If the page is found on another origin before or
+  after a step (a redirect took it there), nothing read there is kept and the
+  scenario is blocked.
+- **Not stopped by the engine:** the request a redirect itself makes. The
+  browser follows a redirect before the engine's request filter sees it, so a
+  target, or a recording using an open redirect on it, can make the browser
+  send one GET to another host, although nothing from that host is read. Only
+  the network the browser runs on can stop that request. A worker must run
+  with outbound access limited to the target, and the engine's own per-run
+  restriction comes with the browser options, next.
+- The request's scenario limit is the one applied. The time limit is checked
+  before every scenario and before every step; a step already under way
+  finishes first, so a run can pass its limit by one step's own waiting time.
+  A scenario that did not run, or was stopped by the limit, is never passed.
+- Everything that can fail for a plain reason (the recording, the keys, the
+  approvals, the ledger, the target manifest, the output directory) is done
+  before the run is claimed.
+- The command exits 0 when the run was carried out, whatever the scenarios
+  found. Exit 0 is not a pass: there is no run-level verdict yet.
 - A target named `localhost` is refused, as before, unless the caller passes
   `--allow-local-target`, for a trial against an application on the same
-  machine. The worker never passes it.
+  machine. The worker never passes it, and the record says `localTarget` when
+  it was used. A name under `localhost`, such as `shop.localhost`, is refused
+  always.
+
+Known and not changed here, because the pull-request path shares it: a quote
+is matched to a source loosely (ignoring case, spacing and some punctuation,
+from 8 characters), and a public name that resolves to a private address is
+not detected by the request gate.
 
 No run-level verdict is stated yet, and no result file in the dashboard's
 format is written. Those come next.

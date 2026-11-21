@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { generateKeyPairSync, sign } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -14,7 +14,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { authoriseForExecution, authoriseRemoteRun, memoryLedger, scopeSha256, signedStatement, type Approval, type StartableRun, type TrustedKeys } from "../src/remote/authority.ts";
 import { admitRemoteRun, RemoteRequestRefused, sha256Hex } from "../src/remote/request.ts";
-import { RemoteRecording, runRemote, snapshotSources, unsupported, type RemoteRun } from "../src/remote/run.ts";
+import { checkedRecording, MAX_RECORDED_STEPS, RemoteRecording, runRemote, snapshotSources, unsupported, type RemoteRun } from "../src/remote/run.ts";
 
 const RUN = "a0000000-0000-4000-8000-000000000410";
 const WORKSPACE = "a0000000-0000-4000-8000-00000000000a";
@@ -263,7 +263,7 @@ test("what was authorised cannot be changed afterwards: the run is a frozen copy
 
 test("a request whose criteria text was swapped under an unchanged hash is refused", () => {
   const now = new Date();
-  const raw = request("http://shop.localhost:9");
+  const raw = request("http://shop.releaseproof.test:9");
   const admitted = admitRemoteRun(raw, now);
   admitted.request.criteria[0]!.content = "Everything is free.";
   assert.throws(() => authoriseRemoteRun(admitted, [approvalFor(raw, now)], trusted, now), /does not match its hash/);
@@ -283,10 +283,10 @@ test("the run goes to the approved target, whatever address a manifest carries",
 });
 
 test("a request that names hosts besides its target's own is turned away before the run is claimed", () => {
-  const raw = request("http://shop.localhost:4010", { target: { baseUrl: "http://shop.localhost:4010/", allowedHosts: ["shop.localhost:4010", "payments.releaseproof.test"] } });
+  const raw = request("http://shop.releaseproof.test:4010", { target: { baseUrl: "http://shop.releaseproof.test:4010/", allowedHosts: ["shop.releaseproof.test:4010", "payments.releaseproof.test"] } });
   assert.deepEqual(unsupported(admitRemoteRun(raw, new Date())).length, 1);
   assert.match(unsupported(admitRemoteRun(raw, new Date()))[0]!, /payments\.releaseproof\.test/);
-  assert.deepEqual(unsupported(admitRemoteRun(request("http://shop.localhost:4010"), new Date())), []);
+  assert.deepEqual(unsupported(admitRemoteRun(request("http://shop.releaseproof.test:4010"), new Date())), []);
 });
 
 // ---- limits and what did not run -------------------------------------------------
@@ -380,7 +380,7 @@ test("the command runs an approved request once, with no model key present, and 
 test("the command turns away a request with extra hosts without claiming the run", async () => {
   const dir = out();
   const cli = path.resolve(import.meta.dirname, "../src/cli.ts");
-  const raw = request("http://shop.localhost:4010", { target: { baseUrl: "http://shop.localhost:4010/", allowedHosts: ["shop.localhost:4010", "payments.releaseproof.test"] } });
+  const raw = request("http://shop.releaseproof.test:4010", { target: { baseUrl: "http://shop.releaseproof.test:4010/", allowedHosts: ["shop.releaseproof.test:4010", "payments.releaseproof.test"] } });
   const file = (name: string, value: unknown) => (writeFileSync(path.join(dir, name), JSON.stringify(value)), path.join(dir, name));
   const ledger = mkdtempSync(path.join(tmpdir(), "rp-ledger-"));
   const result = await promisify(execFile)(
@@ -393,7 +393,7 @@ test("the command turns away a request with extra hosts without claiming the run
   );
   assert.equal(result.code, 2, result.text);
   assert.match(result.text, /can reach only its target's origin/);
-  assert.throws(() => assert.ok(readFileSync(path.join(ledger, "anything"))), /ENOENT/);
+  assert.deepEqual(readdirSync(ledger), [], "nothing was claimed");
 });
 
 test("a refused request is a RemoteRequestRefused, for the command to print", async () => {
@@ -414,4 +414,128 @@ test("a target on this machine is refused unless the caller asks for it by name"
   } finally {
     server.close();
   }
+});
+
+// ---- what a recording and a target cannot do -----------------------------------------
+
+/** A target with pages that leave it: a redirect to another server, and a page that opens a WebSocket there. */
+async function leaky(): Promise<{ baseUrl: string; close: () => void; elsewhere: string[] }> {
+  const elsewhere: string[] = [];
+  const other = createServer((request, response) => {
+    elsewhere.push(`${request.method} ${request.url}`);
+    response.setHeader("content-type", "text/html");
+    response.end('<html><body><span data-testid="loyalty-balance">160</span></body></html>');
+  });
+  other.on("upgrade", (request, socket) => {
+    elsewhere.push(`UPGRADE ${request.url}`);
+    socket.destroy();
+  });
+  await new Promise<void>((resolve) => other.listen(0, "127.0.0.1", resolve));
+  const away = `127.0.0.1:${(other.address() as AddressInfo).port}`;
+  const server = createServer((request, response) => {
+    if (request.url === "/redirect") {
+      response.writeHead(302, { location: `http://${away}/landed` });
+      return response.end();
+    }
+    response.setHeader("content-type", "text/html");
+    response.end(`<html><body><span data-testid="loyalty-balance">160</span><script>try { new WebSocket("ws://${away}/socket"); } catch {}</script></body></html>`);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { baseUrl: `http://localhost:${(server.address() as AddressInfo).port}`, close: () => (server.close(), other.close()), elsewhere };
+}
+
+test("a page that a redirect took to another origin is never read: the scenario is blocked and nothing passes", async () => {
+  const target = await leaky();
+  try {
+    const steps = [{ ...STEPS[0]!, input: { path: "/redirect" } }, STEPS[1]!, STEPS[2]!];
+    const result = await runRemote({ run: startable(target.baseUrl), recording: recording({ steps: { S1: steps } }), outDir: out() });
+    const [scenarioResult] = result.results;
+    assert.equal(scenarioResult!.verdict, "blocked");
+    assert.match(scenarioResult!.reason, /not on the application under test/);
+    assert.deepEqual(scenarioResult!.assertionResults, [], "no comparison was made on the other origin");
+  } finally {
+    target.close();
+  }
+});
+
+test("a WebSocket from the target's page to another host does not get there", async () => {
+  const target = await leaky();
+  try {
+    const result = await runRemote({ run: startable(target.baseUrl), recording: recording(), outDir: out() });
+    assert.equal(result.results[0]!.verdict, "passed");
+    assert.deepEqual(target.elsewhere.filter((hit) => hit.startsWith("UPGRADE")), []);
+  } finally {
+    target.close();
+  }
+});
+
+test("an assertion id that is not a plain name is refused, so no file is written outside the output directory", async () => {
+  const id = "x/../../../../escaped";
+  const raw = JSON.parse(JSON.stringify(recording())) as { plan: { scenarios: { assertions: { id: string }[] }[] }; steps: Record<string, { input: Record<string, unknown> }[]> };
+  raw.plan.scenarios[0]!.assertions[0]!.id = id;
+  raw.steps["S1"]![1]!.input["assertionId"] = id;
+  assert.throws(() => checkedRecording(raw), /assertion id is not a plain name/);
+  const { baseUrl, server } = await app("160");
+  const dir = out();
+  try {
+    // Also when a caller hands the recording over without checking it first.
+    await assert.rejects(runRemote({ run: startable(baseUrl), recording: raw as never, outDir: path.join(dir, "a", "b", "c", "d") }), RemoteRequestRefused);
+    assert.deepEqual(readdirSync(dir), [], "nothing was written");
+  } finally {
+    server.close();
+  }
+});
+
+test("a recording that uses one requirement id twice, or holds more steps than a model would be allowed, is refused", () => {
+  const twice = JSON.parse(JSON.stringify(recording())) as { analysis: { requirements: unknown[] } };
+  twice.analysis.requirements.push(twice.analysis.requirements[0]);
+  assert.throws(() => checkedRecording(twice), /requirement id "R1" is used more than once/);
+  const long = JSON.parse(JSON.stringify(recording())) as { steps: Record<string, unknown[]> };
+  long.steps["S1"] = Array.from({ length: MAX_RECORDED_STEPS + 1 }, () => STEPS[0]);
+  assert.throws(() => checkedRecording(long), RemoteRequestRefused);
+});
+
+test("the time limit is applied inside a scenario too: it stops before its next step and nothing passes", async () => {
+  let clock = Date.parse("2026-11-21T12:00:00Z");
+  // The first reading of the clock starts the run; from the fourth on, the minute has passed.
+  let read = 0;
+  const now = () => (++read >= 4 ? clock + 61_000 : clock);
+  const { result } = await run("160", recording(), { limits: { maxUsd: 0, maxScenarios: 5, maxMinutes: 1 } }, { now });
+  assert.deepEqual(result.endedEarly, { reason: "The run reached its limit of 1 minute." });
+  assert.notEqual(result.results[0]!.verdict, "passed");
+  assert.match(result.results[0]!.reason, /reached its time limit/);
+});
+
+test("a run that is not only for its target's own host does not start, even without the command", async () => {
+  const { baseUrl, server } = await app("160");
+  try {
+    const host = new URL(baseUrl).host;
+    const run = startable(baseUrl, { target: { baseUrl: `${baseUrl}/`, allowedHosts: [host, "payments.releaseproof.test"] } });
+    await assert.rejects(runRemote({ run, recording: recording(), outDir: out() }), /can reach only its target's origin/);
+  } finally {
+    server.close();
+  }
+});
+
+test("the record says when the target was on the engine's own machine, and names evidence by its place in the output", async () => {
+  const { result } = await run("160");
+  assert.equal(result.target.localTarget, true);
+  assert.equal(result.results[0]!.evidence.dir, "scenarios/S1");
+});
+
+test("a name under localhost is a name for this machine, and is refused like localhost itself", () => {
+  const raw = request("http://shop.localhost:4010");
+  assert.throws(() => admitRemoteRun(raw), RemoteRequestRefused);
+  assert.throws(() => admitRemoteRun(raw, new Date(), LOCAL), RemoteRequestRefused);
+});
+
+test("a request that holds anything but plain data is refused before the run is claimed", () => {
+  const now = new Date();
+  const raw = request("http://localhost:4010");
+  const admitted = admitRemoteRun(raw, now, LOCAL);
+  (admitted.request as unknown as { extra: unknown }).extra = new Map([["a", 1]]);
+  const ledger = memoryLedger();
+  assert.throws(() => authoriseForExecution(admitted, [approvalFor(raw, now)], trusted, { expected: EXPECTED, ledger, now }), /not plain data/);
+  // The run can still start once: the refusal claimed nothing.
+  authoriseForExecution(admitRemoteRun(raw, now, LOCAL), [approvalFor(raw, now)], trusted, { expected: EXPECTED, ledger, now });
 });

@@ -31,7 +31,9 @@ const Host = z
   .string()
   .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?$/, "must be a lowercase host name, with an optional port")
   // A name, never an address: the last label of a name is not a number.
-  .refine((host) => /[a-z]/.test(host.replace(/:[0-9]+$/, "").split(".").at(-1) ?? ""), "must be a host name, not an IP address");
+  .refine((host) => /[a-z]/.test(host.replace(/:[0-9]+$/, "").split(".").at(-1) ?? ""), "must be a host name, not an IP address")
+  // Every name under "localhost" is this machine, to a browser.
+  .refine((host) => host.replace(/:[0-9]+$/, "").split(".").at(-1) !== "localhost", "must not be a name for this machine");
 
 export const CriteriaSnapshot = z.strictObject({
   /** Identifies the snapshot in the result. Unique within a request. */

@@ -3,7 +3,7 @@ import { parse as parseYaml } from "yaml";
 import type { AuthorityInputs } from "./ingest/context.ts";
 import { AUTHORITY_FILE, readProtectedRef, sameAsRevision } from "./protected.ts";
 import { Authority, NO_AUTHORITY } from "./sources.ts";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
@@ -226,13 +226,25 @@ async function main(): Promise<number> {
         console.error(`The ledger could not be opened: ${error instanceof Error ? error.message.split("\n")[0] : "unknown error"}`);
         return 2;
       }
+      // Everything that can fail for a plain reason is done before the run is claimed.
+      // Never the default manifest of whatever directory this runs in: only one named for the target.
+      let targetManifest: Awaited<ReturnType<typeof loadManifest>> | undefined;
+      try {
+        if (values["target-manifest"]) targetManifest = await loadManifest(values["target-manifest"], admitted.request.target.baseUrl);
+      } catch {
+        console.error("The target manifest could not be read.");
+        return 2;
+      }
+      try {
+        await mkdir(values.out!, { recursive: true });
+      } catch {
+        console.error("The output directory could not be created.");
+        return 2;
+      }
       const startable = authoriseForExecution(admitted, evidence, trusted, {
         expected: { runId: values["expect-run"]!, workspaceId: values["expect-workspace"]!, projectId: values["expect-project"]! },
         ledger,
       });
-      // Only now is anything about the target loaded.
-      // Never the default manifest of whatever directory this runs in: only one named for the target.
-      const targetManifest = values["target-manifest"] ? await loadManifest(values["target-manifest"], startable.request.target.baseUrl) : undefined;
       const run = await runRemote({ run: startable, recording, manifest: targetManifest, outDir: values.out! });
       console.log(`Run ${run.runId} against ${run.target.baseUrl}: ${run.results.length} ${run.results.length === 1 ? "scenario" : "scenarios"} recorded, from a recording, with no model.`);
       for (const result of run.results) console.log(`  ${result.scenarioId}  ${result.verdict}  ${result.reason}`);

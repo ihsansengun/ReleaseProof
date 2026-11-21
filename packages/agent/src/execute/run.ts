@@ -34,6 +34,16 @@ export type SessionOptions = {
   expectedSha?: string;
   /** State-changing requests allowed out of the browser. Default: all. */
   writes?: Session["writes"];
+  /**
+   * Keeps the page on the application's own origin: service workers are off,
+   * a WebSocket to any other host is closed, and a replay stops as soon as the
+   * page is found anywhere else. For runs whose target or steps are not the
+   * caller's own. It does not stop the request a redirect makes: that is for
+   * the network the browser runs on.
+   */
+  confine?: boolean;
+  /** Says whether the time allowed has run out. A replay asks before every step. */
+  expired?: () => boolean;
 };
 
 export type OpenSession = {
@@ -67,8 +77,22 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   // nothing the engine holds (model key, tokens) is in a process that parses
   // content from the application under test.
   const browser = await chromium.launch({ env: browserEnv(process.env) });
-  const context = await browser.newContext({ baseURL: manifest.baseUrl });
+  const context = await browser.newContext({ baseURL: manifest.baseUrl, ...(options.confine ? { serviceWorkers: "block" as const } : {}) });
   const origin = new URL(manifest.baseUrl).origin;
+  if (options.confine) {
+    // The request filter below does not see WebSockets. One to the application's own host goes through; any other is closed.
+    const host = new URL(manifest.baseUrl).host;
+    await context.routeWebSocket(/.*/, (socket) => {
+      let same = false;
+      try {
+        same = new URL(socket.url()).host === host;
+      } catch {
+        same = false;
+      }
+      if (same) socket.connectToServer();
+      else void socket.close({ code: 1008, reason: "not the application under test" });
+    });
+  }
   await context.tracing.start({ screenshots: true, snapshots: true });
 
   const session: Session = {
@@ -230,7 +254,10 @@ export async function runScenario(options: RunOptions): Promise<ScenarioResult> 
           stage: options.mode.stage,
         });
       } else {
-        await replaySteps(open.session, options.mode.steps);
+        await replaySteps(open.session, options.mode.steps, {
+          confineTo: options.confine ? new URL(open.manifest.baseUrl).origin : undefined,
+          expired: options.expired,
+        });
       }
     } catch (error) {
       open.session.outcome = {
