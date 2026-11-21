@@ -34,8 +34,8 @@ the worker and uploads a result.
 A matching hash shows a snapshot's text is unchanged. It does not show that
 the named approver may approve requirements for the target: the request, hash
 and approver's name all come from the same place. Criterion 2 is met only when
-the approver has been checked against the owners of the source, taken from a
-list the request cannot influence. Until that check exists, an admitted
+the control plane's signed approval for the snapshot verifies against a key
+the request cannot influence. Until that check exists, an admitted
 snapshot is marked `integrity: "hash-matched"`, `approverVerified: false`. Only
 the authority check below can change that.
 
@@ -55,10 +55,10 @@ but for another run, workspace, project, target, text or approver. A ticket, a
 pull request or a page cannot approve itself: nothing but a verifying
 signature counts. The signing key never enters the engine or a run machine.
 
-An approval also covers where the run may go and what it may spend: it carries
-a digest of the request's target address, allowed hosts and limits. Whoever
-writes a request cannot add a host, change the path or raise a limit and keep
-the approval.
+An approval also covers what the run is: it carries a digest of the request's
+target address, allowed hosts, limits and exact set of criteria snapshots.
+Whoever writes a request cannot add a host, change the path, raise a limit, or
+leave out or add criteria, and keep the approval.
 
 `check-remote-request` checks authority by default and needs `--approvals` and
 `--authority-keys`. A flag left out or empty is refused, never read as "skip".
@@ -68,18 +68,20 @@ says authority was not checked.
 Not built yet: the control plane's side (issuing approvals), and handing an
 authoritative snapshot to the planner as a source.
 
-**Replay.** A run starts only through `authoriseForExecution`. The caller
-states, from outside the request, which run, workspace and project it asked
-for; a genuine request and approval for any other are refused. Each approval
-is then claimed in a ledger and can start one run: presenting the same request
-and approvals again is refused. A refused attempt claims nothing.
+**Replay.** A run starts only through `authoriseForExecution`, the one
+function that returns a `StartableRun`. The caller states, from outside the
+request, which run, workspace and project it asked for; a genuine request and
+approval for any other are refused. The run is then claimed in a ledger with a
+single claim and starts once: a second start of the same run is refused,
+whatever request or re-issued approvals it brings. The claim is made only
+after every other check has passed, so a refused attempt claims nothing.
 `check-remote-request` requires the caller's expectation (`--expect-run`,
 `--expect-workspace`, `--expect-project`) and claims nothing, because it is a
 check and not a start.
 
-Still open, for the change that adds `run-remote`: that command must call
-`authoriseForExecution` with a ledger kept where a run cannot write. Until it
-exists, no remote run can start at all, so nothing can be replayed into one.
+Still open, for the change that adds `run-remote`: that command must accept
+only a `StartableRun`, with a ledger directory created by the operator where a
+run cannot write. Until it exists, no remote run can start at all.
 
 ## The run-level verdict (decided 21 November 2026)
 

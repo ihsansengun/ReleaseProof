@@ -21,7 +21,7 @@
  * approve itself: only a signature made with the control plane's key counts.
  */
 import { createPublicKey, verify, type KeyObject } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { statSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -38,20 +38,22 @@ const KeyId = z.string().regex(/^[A-Za-z0-9._-]{1,100}$/, "must be letters, digi
 const MAX_APPROVALS = 40;
 
 /**
- * A digest of where the run may go and how much it may spend: the target
- * address, the hosts it may reach and its limits. An approval is bound to it,
- * so whoever writes a request cannot widen an approved run. The hosts are
- * sorted, so their sequence in the request does not matter.
+ * A digest of what the run is: its target address, the hosts it may reach, its
+ * limits, and the exact set of criteria snapshots it carries. An approval is
+ * bound to it, so whoever writes a request cannot widen an approved run, and
+ * cannot leave out or add criteria either. Hosts and snapshots are sorted, so
+ * their sequence in the request does not matter.
  */
-export function scopeSha256(request: Pick<RemoteRunRequest, "target" | "limits">): string {
+export function scopeSha256(request: Pick<RemoteRunRequest, "target" | "limits" | "criteria">): string {
   return sha256Hex(
     JSON.stringify([
-      "releaseproof-run-scope-v1",
+      "releaseproof-run-scope-v2",
       new URL(request.target.baseUrl).href,
       [...request.target.allowedHosts].sort(),
       request.limits.maxUsd,
       request.limits.maxScenarios,
       request.limits.maxMinutes,
+      request.criteria.map((snapshot) => [snapshot.id, snapshot.sha256]).sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0)),
     ]),
   );
 }
@@ -63,9 +65,11 @@ export const Approval = z.strictObject({
   workspaceId: z.uuid(),
   projectId: z.uuid(),
   runId: z.uuid(),
-  /** The scheme and host the run is allowed to target, as an origin. */
-  targetOrigin: z.url({ protocol: /^https?$/ }),
-  /** `scopeSha256` of the request this approval is for: its address, allowed hosts and limits. */
+  /** The scheme and host the run is allowed to target, as an origin and in exactly that spelling. */
+  targetOrigin: z
+    .url({ protocol: /^https?$/ })
+    .refine((value) => new URL(value).origin === value, "must be an origin: scheme and host, nothing else"),
+  /** `scopeSha256` of the request this approval is for: its address, allowed hosts, limits and set of criteria. */
   scopeSha256: z.string().regex(/^[0-9a-f]{64}$/),
   snapshotId: Line.max(64),
   snapshotSha256: z.string().regex(/^[0-9a-f]{64}$/),
@@ -143,8 +147,6 @@ export type AuthoritativeSnapshot = Omit<IntactSnapshot, "approverVerified"> & {
     readonly approvedAt: string;
     readonly issuedAt: string;
     readonly expiresAt: string;
-    /** The signature that was verified. It identifies this approval in the ledger of used ones. */
-    readonly signature: string;
   };
 };
 
@@ -164,6 +166,12 @@ export function authoriseRemoteRun(
   const reasons: string[] = [];
   if (trusted.size === 0) {
     throw new RemoteRequestRefused(["no trusted approval key was given, so no approval can be checked"]);
+  }
+  for (const [keyId, key] of trusted) {
+    // Checked here as well as where keys are loaded: a caller may build the map itself.
+    if (key.type !== "public" || key.asymmetricKeyType !== "ed25519") {
+      throw new RemoteRequestRefused([`trusted key "${keyId.replace(/[^A-Za-z0-9._-]/g, "?")}" is not an Ed25519 public key, so no approval can be checked`]);
+    }
   }
   const list = z.array(z.unknown()).safeParse(evidence);
   if (!list.success) {
@@ -224,7 +232,7 @@ export function authoriseRemoteRun(
       if (approval.workspaceId !== request.workspaceId) found.push("it is for another workspace");
       if (approval.projectId !== request.projectId) found.push("it is for another project");
       if (new URL(approval.targetOrigin).origin !== targetOrigin) found.push("it is for another target");
-      if (approval.scopeSha256 !== scope) found.push("it is for a different target address, set of allowed hosts or limits");
+      if (approval.scopeSha256 !== scope) found.push("it is for a different target address, set of allowed hosts, limits or set of criteria");
       if (approval.approvedBy !== snapshot.approvedBy) found.push("it names a different approver than the snapshot does");
       if (Date.parse(approval.approvedAt) !== Date.parse(snapshot.approvedAt)) found.push("it gives a different approval time than the snapshot does");
       const approvedAt = Date.parse(approval.approvedAt);
@@ -255,7 +263,6 @@ export function authoriseRemoteRun(
         approvedAt: fitting.approvedAt,
         issuedAt: fitting.issuedAt,
         expiresAt: fitting.expiresAt,
-        signature: fitting.signature,
       },
     });
   }
@@ -276,8 +283,8 @@ export interface ExpectedRun {
 }
 
 /**
- * Remembers which approvals have been used. `claim` returns true the first
- * time it is given a key and false ever after. It must be kept outside
+ * Remembers which runs have started. `claim` returns true the first time it
+ * is given a key and false ever after. It must be kept outside
  * anything a request can write to.
  */
 export interface ApprovalLedger {
@@ -296,14 +303,20 @@ export function memoryLedger(): ApprovalLedger {
   };
 }
 
-/** A ledger kept as one file per used approval. Creating the file is the claim, so two claims cannot both succeed. */
+/**
+ * A ledger kept as one file per claim. Creating the file is the claim, so two
+ * claims cannot both succeed. The directory must already exist: a mistyped or
+ * wiped path is an error, never a fresh, empty ledger.
+ */
 export function directoryLedger(directory: string): ApprovalLedger {
-  mkdirSync(directory, { recursive: true });
+  if (!statSync(directory, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error("the ledger directory does not exist. It is created once, by whoever operates the engine, and never by a run.");
+  }
   return {
     claim(key) {
       if (!/^[0-9a-f]{64}$/.test(key)) throw new Error("a ledger key is a SHA-256 in hexadecimal");
       try {
-        writeFileSync(path.join(directory, key), "", { flag: "wx" });
+        writeFileSync(path.join(directory, key), "", { flag: "wx", mode: 0o600, flush: true });
         return true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
@@ -323,30 +336,42 @@ export function unexpected(admitted: AdmittedRun, expected: ExpectedRun): string
   return reasons;
 }
 
+declare const startable: unique symbol;
+
 /**
- * The check a run must pass before it may start: the only way to an
- * `AuthorisedRun` that is allowed to reach a model or a browser.
+ * A run that may start. Only `authoriseForExecution` produces one: the brand
+ * cannot be written anywhere else, so code that starts a run can require this
+ * type and cannot be handed a run that skipped the checks below.
+ */
+export type StartableRun = AuthorisedRun & { readonly [startable]: true };
+
+/** The ledger key of a run. One run starts once, whatever approvals it is presented with. */
+export function runStartKey(run: ExpectedRun): string {
+  return sha256Hex(["releaseproof-run-start-v1", run.workspaceId, run.projectId, run.runId].join("\n"));
+}
+
+/**
+ * The check a run must pass before it may start, and the only way to a
+ * `StartableRun`. `authoriseRemoteRun` alone is a check: it says whether the
+ * approvals are valid, and what it returns cannot start anything.
  *
- * On top of `authoriseRemoteRun` it requires that the run is the one the
- * caller asked for, and that none of its approvals was used before. An
- * approval is claimed only once everything else has passed, so a refused
- * attempt uses nothing up. Presenting the same request and approvals a second
- * time is refused.
+ * On top of that check it requires that the run is the one the caller asked
+ * for, and that this run has not started before. The run is claimed in the
+ * ledger with one claim, made only after everything else has passed: a refused
+ * attempt claims nothing, and a second start of the same run is refused
+ * whatever request and approvals it brings, including re-issued ones.
  */
 export function authoriseForExecution(
   admitted: AdmittedRun,
   evidence: unknown,
   trusted: TrustedKeys,
   caller: { readonly expected: ExpectedRun; readonly ledger: ApprovalLedger; readonly now?: Date },
-): AuthorisedRun {
+): StartableRun {
   const mismatch = unexpected(admitted, caller.expected);
   if (mismatch.length > 0) throw new RemoteRequestRefused(mismatch);
   const authorised = authoriseRemoteRun(admitted, evidence, trusted, caller.now ?? new Date());
-  const replayed = authorised.snapshots
-    // Every snapshot is claimed, so a second attempt is refused whichever one it reuses.
-    .map((snapshot) => ({ snapshot, fresh: caller.ledger.claim(sha256Hex(`releaseproof-approval-use-v1\n${snapshot.authority.signature}`)) }))
-    .filter(({ fresh }) => !fresh)
-    .map(({ snapshot }) => `the approval for criteria snapshot "${snapshot.id}" has already been used for a run`);
-  if (replayed.length > 0) throw new RemoteRequestRefused(replayed);
-  return authorised;
+  if (!caller.ledger.claim(runStartKey(caller.expected))) {
+    throw new RemoteRequestRefused(["this run has already been started once, and a run starts once"]);
+  }
+  return authorised as StartableRun;
 }

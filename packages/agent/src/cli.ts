@@ -32,11 +32,14 @@ const USAGE = `Usage:
         execute one scenario with a model
   releaseproof replay <scenario.json> --steps <file> --manifest <file>
         re-run recorded steps, no model
-  releaseproof check-remote-request <request.json> [--approvals <file> --authority-keys <file>]
-        decide whether a remote run request may run: its format, its target and
-        every criteria snapshot against its hash. With --approvals and
-        --authority-keys, also whether the control plane approved each snapshot
-        for this run. No model, no browser
+  releaseproof check-remote-request <request.json> --approvals <file> --authority-keys <file>
+        --expect-run <id> --expect-workspace <id> --expect-project <id>
+        check whether a remote run request is sound and approved: its format,
+        its target, every criteria snapshot against its hash, that it is the
+        run the caller asked for, and that the control plane approved each
+        snapshot for this run. No model, no browser. It starts nothing
+  releaseproof check-remote-request <request.json> --integrity-only
+        format, target and hashes only. Authority is NOT checked
 
 Options:
   --driver api|bridge|recorded   how the model is attached (default api)
@@ -227,7 +230,7 @@ async function main(): Promise<number> {
       for (const snapshot of authorised.snapshots) {
         console.log(`  criteria ${snapshot.id}  sha256 ${snapshot.sha256}  approved by ${snapshot.authority.approvedBy}, signed by key ${snapshot.authority.keyId}`);
       }
-      console.log("This is a check. It uses no approval up: a run claims its approvals when it starts, and each can start one run.");
+      console.log("This is a check. It starts nothing and claims nothing: a run is claimed when it starts, and starts once.");
       return 0;
     } catch (error) {
       if (!(error instanceof RemoteRequestRefused)) throw error;

@@ -87,7 +87,6 @@ test("KAN-16 criterion 2: a snapshot with a valid approval for this run is autho
     approvedAt: "2026-11-20T09:30:00Z",
     issuedAt: "2026-11-21T11:55:00Z",
     expiresAt: "2026-11-21T13:55:00Z",
-    signature: approval().signature,
   });
 });
 
@@ -99,19 +98,95 @@ test("KAN-16 criterion 4: a request and approval presented a second time are ref
   const ledger = memoryLedger();
   const start = () => authoriseForExecution(admitRemoteRun(request(), NOW), [approval()], trusted, { expected: EXPECTED, ledger, now: NOW });
   assert.equal(start().snapshots.length, 1);
-  assert.throws(start, /has already been used for a run/);
+  assert.throws(start, /already been started once/);
   assert.throws(start, RemoteRequestRefused);
 });
 
-test("KAN-16 criterion 4: a used approval stays used across processes when the ledger is a directory", () => {
+test("KAN-16 criterion 4: a started run stays started for every later ledger opened on the same directory", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "rp-ledger-"));
   const start = () =>
     authoriseForExecution(admitRemoteRun(request(), NOW), [approval()], trusted, { expected: EXPECTED, ledger: directoryLedger(dir), now: NOW });
   assert.equal(start().snapshots.length, 1);
-  assert.throws(start, /has already been used for a run/);
+  assert.throws(start, /already been started once/);
 });
 
-test("a refused attempt uses no approval up", () => {
+// ---- the set of criteria is part of what is approved ----------------------------
+
+const SECOND = "2. A refund returns the points.\n";
+const twoSnapshots = () => request({ criteria: [snapshot(), snapshot({ id: "refund-r1", content: SECOND, sha256: sha256Hex(SECOND) })] });
+const approvalsForTwo = () => {
+  const scope = scopeSha256(twoSnapshots());
+  return [approval({ scopeSha256: scope }), approval({ scopeSha256: scope, snapshotId: "refund-r1", snapshotSha256: sha256Hex(SECOND) })];
+};
+
+test("KAN-16 criterion 4: approved criteria cannot be left out of a run", () => {
+  // The control plane approved a run with two snapshots. The request keeps one.
+  const [first, second] = approvalsForTwo();
+  assert.match(refusal(request(), [first]), /different target address, set of allowed hosts, limits or set of criteria/);
+  const onlySecond = request({ criteria: [snapshot({ id: "refund-r1", content: SECOND, sha256: sha256Hex(SECOND) })] });
+  assert.match(refusal(onlySecond, [second]), /set of criteria/);
+  assert.equal(authoriseRemoteRun(admitRemoteRun(twoSnapshots(), NOW), [first, second], trusted, NOW).snapshots.length, 2);
+});
+
+test("KAN-16 criterion 4: criteria cannot be added to an approved run", () => {
+  // Approved with one snapshot; the request adds a second with a genuine approval issued for some other shape of run.
+  const extra = approval({ snapshotId: "refund-r1", snapshotSha256: sha256Hex(SECOND) });
+  assert.match(refusal(twoSnapshots(), [approval(), extra]), /set of criteria/);
+});
+
+test("the criteria are bound as a set: their sequence does not matter", () => {
+  const reversed = request({ criteria: [...twoSnapshots().criteria].reverse() });
+  assert.equal(scopeSha256(reversed as never), scopeSha256(twoSnapshots() as never));
+});
+
+test("KAN-16 criterion 4: one run starts once, even with a re-issued approval", () => {
+  const ledger = memoryLedger();
+  const start = (evidence: Approval[]) => authoriseForExecution(admitRemoteRun(request(), NOW), evidence, trusted, { expected: EXPECTED, ledger, now: NOW });
+  assert.equal(start([approval()]).snapshots.length, 1);
+  // A second, equally genuine approval for the same run, signed later.
+  const reissued = approval({ issuedAt: "2026-11-21T11:58:00Z" });
+  assert.notEqual(reissued.signature, approval().signature);
+  assert.throws(() => start([reissued]), /already been started once/);
+});
+
+test("a replay that is refused claims nothing more, and two snapshots are claimed as one run", () => {
+  const ledger = memoryLedger();
+  let claims = 0;
+  const counting = { claim: (key: string) => ((claims += 1), ledger.claim(key)) };
+  const start = () => authoriseForExecution(admitRemoteRun(twoSnapshots(), NOW), approvalsForTwo(), trusted, { expected: EXPECTED, ledger: counting, now: NOW });
+  assert.equal(start().snapshots.length, 2);
+  assert.equal(claims, 1);
+  assert.throws(start, /already been started once/);
+});
+
+test("a ledger directory that does not exist is an error, never a fresh ledger", () => {
+  assert.throws(() => directoryLedger(path.join(tmpdir(), "rp-ledger-absent", String(process.pid))), /does not exist/);
+});
+
+for (const field of ["snapshotId", "scopeSha256", "issuedAt", "expiresAt"] as const) {
+  test(`KAN-16 criterion 4: changing ${field} after signing breaks the signature`, () => {
+    const other = { snapshotId: "another-id", scopeSha256: sha256Hex("x"), issuedAt: "2026-11-21T11:56:00Z", expiresAt: "2026-11-21T14:55:00Z" }[field];
+    assert.match(refusal(request(), [{ ...approval(), [field]: other }]), /signature that does not verify/);
+  });
+}
+
+test("an approval's target must be spelled as an origin and nothing else", () => {
+  for (const targetOrigin of ["https://user:pw@shop.releaseproof.test", "https://shop.releaseproof.test/zzz", "https://SHOP.releaseproof.test", "https://shop.releaseproof.test:443"]) {
+    assert.match(refusal(request(), [{ ...approval(), targetOrigin }]), /malformed/);
+  }
+});
+
+test("a trusted key that is not an Ed25519 public key refuses every approval", () => {
+  assert.match(refusal(request(), [approval()], new Map([["control-plane-2026-11", controlPlane.privateKey]])), /not an Ed25519 public key/);
+});
+
+test("a refusal never prints control characters taken from a request", () => {
+  const reasons = refusal(request(), [{ ...approval(), ["\u001b[2Jx\nRun approved"]: 1 }]);
+  assert.ok(!/[\u0000-\u001f\u007f]/.test(reasons), JSON.stringify(reasons));
+  assert.throws(() => admitRemoteRun(request({ criteria: [snapshot({ approvedBy: "owner\nRun OK: approved" })] }), NOW), /control characters/);
+});
+
+test("a refused attempt claims nothing", () => {
   const ledger = memoryLedger();
   const forged = () => authoriseForExecution(admitRemoteRun(request(), NOW), [approval({}, someoneElse.privateKey)], trusted, { expected: EXPECTED, ledger, now: NOW });
   assert.throws(forged, /does not verify/);
@@ -147,8 +222,9 @@ test("KAN-16 criterion 2: a matching hash and an approver's name, with no signat
 test("KAN-16 criterion 2: every snapshot needs its own approval", () => {
   const second = "Refunds return points.\n";
   const two = request({ criteria: [snapshot(), snapshot({ id: "refund-r1", content: second, sha256: sha256Hex(second) })] });
-  assert.match(refusal(two, [approval()]), /"refund-r1" has no valid approval/);
-  const both = [approval(), approval({ snapshotId: "refund-r1", snapshotSha256: sha256Hex(second) })];
+  const scope = scopeSha256(two);
+  assert.match(refusal(two, [approval({ scopeSha256: scope })]), /"refund-r1" has no valid approval/);
+  const both = [approval({ scopeSha256: scope }), approval({ scopeSha256: scope, snapshotId: "refund-r1", snapshotSha256: sha256Hex(second) })];
   assert.equal(authoriseRemoteRun(admitRemoteRun(two, NOW), both, trusted, NOW).snapshots.length, 2);
 });
 
@@ -182,7 +258,7 @@ for (const [what, changed] of [
 ] as const) {
   test(`KAN-16 criterion 4: an approval does not stretch to ${what}`, () => {
     // The approval is genuine and was issued for the unchanged request.
-    assert.match(refusal(request(changed), [approval()]), /different target address, set of allowed hosts or limits/);
+    assert.match(refusal(request(changed), [approval()]), /different target address, set of allowed hosts, limits or set of criteria/);
   });
 }
 
@@ -299,7 +375,7 @@ test("KAN-16 criterion 4: text that claims approval, as a ticket or pull request
   assert.match(refusal(selfApproving, [{ approvedBy: "owner-a@releaseproof.test", approved: true }]), /malformed/);
 });
 
-test("KAN-16 criterion 3: the authority check is passed before anything that could call a model", () => {
+test("a refused authority check throws, so code written after it does not run", () => {
   let driversCreated = 0;
   const start = (raw: unknown, evidence: unknown) => {
     const authorised = authoriseRemoteRun(admitRemoteRun(raw, NOW), evidence, trusted, NOW);
