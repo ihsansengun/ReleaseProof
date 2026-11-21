@@ -120,6 +120,23 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
       : route.abort();
   });
 
+  if (options.confine) {
+    // Every address the page commits to is seen here, also one it left again
+    // before a step ended. The first that is elsewhere is remembered for good.
+    session.page.on("framenavigated", (frame) => {
+      if (frame !== session.page.mainFrame() || session.leftTo !== undefined) return;
+      const address = frame.url();
+      if (address === "about:blank") return;
+      let seen: string;
+      try {
+        seen = new URL(address).origin;
+      } catch {
+        seen = "an address that could not be read";
+      }
+      if (seen !== origin) session.leftTo = seen;
+    });
+  }
+
   // What the application answers to a user's action is kept when it is an error.
   context.on("response", (response) => noteResponse(session, response));
 

@@ -68,6 +68,7 @@ export function recordingProblems(recording: RemoteRecording): string[] {
     requirements.add(requirement.id);
   }
   for (const scenario of recording.plan.scenarios) {
+    if (!plain.test(scenario.id)) problems.push("recording: a scenario id is not a plain name of at most 64 letters, digits, hyphens or underscores");
     for (const assertion of scenario.assertions) {
       if (!plain.test(assertion.id)) problems.push("recording: an assertion id is not a plain name of at most 64 letters, digits, hyphens or underscores");
     }
@@ -221,6 +222,7 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
   const limitReached = `The run reached its limit of ${request.limits.maxMinutes} ${request.limits.maxMinutes === 1 ? "minute" : "minutes"}.`;
   const results: ScenarioResult[] = [];
   let endedEarly: RemoteRun["endedEarly"];
+  let ranOut = false;
 
   for (const planned of checked.plan.scenarios) {
     if (planned.status !== "runnable") continue;
@@ -242,9 +244,10 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
       mode: { kind: "replay", steps },
       // The target and the steps are not this engine's own: the page stays on the target.
       confine: true,
-      expired: () => now() >= deadline,
+      expired: () => (ranOut ||= now() >= deadline),
     });
-    if (/reached its time limit/.test(result.reason)) endedEarly ??= { reason: limitReached };
+    // From the clock, never from what a result says about itself.
+    if (ranOut) endedEarly ??= { reason: limitReached };
     // The record names evidence by where it is in the output, not by where that is on this machine.
     results.push({ ...result, evidence: { ...result.evidence, dir: path.posix.join("scenarios", scenario.id) } });
   }

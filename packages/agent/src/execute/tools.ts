@@ -50,6 +50,8 @@ export type Session = {
   assertionResults: AssertionResult[];
   steps: Step[];
   outcome?: Outcome;
+  /** The first other origin the page was on at any moment, in a session confined to the application's own. */
+  leftTo?: string;
   vault: SecretVault;
   /**
    * Which state-changing requests may leave the browser: all of them, none,

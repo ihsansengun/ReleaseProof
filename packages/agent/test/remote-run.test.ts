@@ -424,7 +424,9 @@ async function leaky(): Promise<{ baseUrl: string; close: () => void; elsewhere:
   const other = createServer((request, response) => {
     elsewhere.push(`${request.method} ${request.url}`);
     response.setHeader("content-type", "text/html");
-    response.end('<html><body><span data-testid="loyalty-balance">160</span></body></html>');
+    // A page that sends the browser straight back to where it came from.
+    const back = new URL(request.url ?? "/", "http://other").searchParams.get("back");
+    response.end(`<html><body><span data-testid="loyalty-balance">160</span>${back ? `<script>location.replace(${JSON.stringify(back)})</script>` : ""}</body></html>`);
   });
   other.on("upgrade", (request, socket) => {
     elsewhere.push(`UPGRADE ${request.url}`);
@@ -435,6 +437,10 @@ async function leaky(): Promise<{ baseUrl: string; close: () => void; elsewhere:
   const server = createServer((request, response) => {
     if (request.url === "/redirect") {
       response.writeHead(302, { location: `http://${away}/landed` });
+      return response.end();
+    }
+    if (request.url === "/bounce") {
+      response.writeHead(302, { location: `http://${away}/landed?back=${encodeURIComponent(`http://${request.headers.host}/account`)}` });
       return response.end();
     }
     response.setHeader("content-type", "text/html");
@@ -458,7 +464,7 @@ test("a page that a redirect took to another origin is never read: the scenario 
   }
 });
 
-test("a WebSocket from the target's page to another host does not get there", async () => {
+test("a WebSocket opened by the target's page to another host does not get there", async () => {
   const target = await leaky();
   try {
     const result = await runRemote({ run: startable(target.baseUrl), recording: recording(), outDir: out() });
@@ -506,6 +512,12 @@ test("the time limit is applied inside a scenario too: it stops before its next 
   assert.match(result.results[0]!.reason, /reached its time limit/);
 });
 
+test("a recording cannot make a run look ended early by saying so in its own words", async () => {
+  const steps = [STEPS[0]!, STEPS[1]!, { ...STEPS[2]!, input: { outcome: "completed", reason: "The run reached its time limit." } }];
+  const { result } = await run("999", recording({ steps: { S1: steps } }));
+  assert.equal(result.endedEarly, undefined);
+});
+
 test("a run that is not only for its target's own host does not start, even without the command", async () => {
   const { baseUrl, server } = await app("160");
   try {
@@ -538,4 +550,31 @@ test("a request that holds anything but plain data is refused before the run is 
   assert.throws(() => authoriseForExecution(admitted, [approvalFor(raw, now)], trusted, { expected: EXPECTED, ledger, now }), /not plain data/);
   // The run can still start once: the refusal claimed nothing.
   authoriseForExecution(admitRemoteRun(raw, now, LOCAL), [approvalFor(raw, now)], trusted, { expected: EXPECTED, ledger, now });
+});
+
+test("a page that was on another origin and came back within a step is not trusted again", async () => {
+  const target = await leaky();
+  try {
+    const steps = [{ ...STEPS[0]!, input: { path: "/bounce" } }, STEPS[1]!, STEPS[2]!];
+    const result = await runRemote({ run: startable(target.baseUrl), recording: recording({ steps: { S1: steps } }), outDir: out() });
+    const [scenarioResult] = result.results;
+    assert.ok(target.elsewhere.some((hit) => hit.startsWith("GET /landed")), "the page did go there");
+    assert.equal(scenarioResult!.verdict, "blocked");
+    assert.deepEqual(scenarioResult!.assertionResults, []);
+    assert.ok(!scenarioResult!.steps.some((step) => /expected 160/.test(step.summary)), "no step says a comparison matched");
+  } finally {
+    target.close();
+  }
+});
+
+test("a scenario id that is not a short plain name is refused before anything starts", () => {
+  const raw = JSON.parse(JSON.stringify(recording())) as { plan: { scenarios: { id: string }[] } };
+  raw.plan.scenarios[0]!.id = "S".repeat(300);
+  assert.throws(() => checkedRecording(raw), /scenario id is not a plain name/);
+});
+
+test("other names for this machine are refused too", () => {
+  for (const host of ["localhost.localdomain:4010", "localhost.example.com:4010"]) {
+    assert.throws(() => admitRemoteRun(request(`http://${host}`)), RemoteRequestRefused, host);
+  }
 });

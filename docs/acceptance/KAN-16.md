@@ -116,32 +116,45 @@ expectation, a ledger directory and a **recording**, and writes
 - A request naming hosts besides its target's own is turned away before the
   run is claimed, and again when the run starts: a run is for its target's
   origin only for now.
-- The page is kept on the target's origin. Requests the page makes to any
-  other origin are stopped, service workers are off, and a WebSocket to
-  another host is closed. If the page is found on another origin before or
-  after a step (a redirect took it there), nothing read there is kept and the
-  scenario is blocked.
-- **Not stopped by the engine:** the request a redirect itself makes. The
-  browser follows a redirect before the engine's request filter sees it, so a
-  target, or a recording using an open redirect on it, can make the browser
-  send one GET to another host, although nothing from that host is read. Only
-  the network the browser runs on can stop that request. A worker must run
-  with outbound access limited to the target, and the engine's own per-run
+- The page is kept on the target's origin. A request the page addresses to
+  another origin is stopped, service workers are off, and a WebSocket the
+  page opens to another host is closed. Every address the page commits to is
+  watched: if it was on another origin at any moment (a redirect took it
+  there), also if it came back before the step ended, the comparisons,
+  observations and step summary of that step are dropped, the scenario is
+  blocked, and the page is not trusted again. The browser trace of the
+  scenario still holds what the browser saw.
+- **Not stopped by the engine:** what a redirect fetches, and a WebSocket
+  opened from a worker script. The browser follows a redirect before the
+  engine's request filter sees it. So:
+  - a recording using an open redirect on the target can make the browser
+    send a GET to another host for each navigation it records;
+  - a hostile or compromised target can go further: its pages can load
+    scripts and send data (a redirected POST keeps its body) to other hosts
+    through redirects of its own, any number of times, and open a WebSocket
+    elsewhere from a worker. Such a target could show any value itself, so
+    this adds nothing to what it can make a result say; it is traffic leaving
+    the worker.
+
+  Only the network the browser runs on can stop this. A worker must run with
+  outbound access limited to the target, and the engine's own per-run
   restriction comes with the browser options, next.
 - The request's scenario limit is the one applied. The time limit is checked
   before every scenario and before every step; a step already under way
-  finishes first, so a run can pass its limit by one step's own waiting time.
+  finishes first, so a run can pass its limit by one step's own waiting time
+  (about 45 seconds at most for a navigation) plus closing the browser.
   A scenario that did not run, or was stopped by the limit, is never passed.
-- Everything that can fail for a plain reason (the recording, the keys, the
-  approvals, the ledger, the target manifest, the output directory) is done
-  before the run is claimed.
+- The recording, the keys, the approvals, the ledger, the target manifest and
+  the output directory are read or made before the run is claimed, so a
+  mistake in any of them uses nothing up. A failure after that, such as the
+  browser not starting or the disk filling, does use the run's one start.
 - The command exits 0 when the run was carried out, whatever the scenarios
   found. Exit 0 is not a pass: there is no run-level verdict yet.
 - A target named `localhost` is refused, as before, unless the caller passes
   `--allow-local-target`, for a trial against an application on the same
   machine. The worker never passes it, and the record says `localTarget` when
-  it was used. A name under `localhost`, such as `shop.localhost`, is refused
-  always.
+  it was used. Any other name with a `localhost` label, such as
+  `shop.localhost` or `localhost.localdomain`, is refused always.
 
 Known and not changed here, because the pull-request path shares it: a quote
 is matched to a source loosely (ignoring case, spacing and some punctuation,
