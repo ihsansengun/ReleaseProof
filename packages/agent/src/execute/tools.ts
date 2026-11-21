@@ -1218,7 +1218,8 @@ const handlers: Handlers = {
         }
         if (count === 1) locator = found;
         matched = count;
-        if (count > 0 && (await foundInOwnText(s.supplied, found))) {
+        // By a test id the element is found for what it is, not for the words in it.
+        if (count > 0 && target.by !== "testid" && (await foundInOwnText(s.supplied, found))) {
           throw new Error(`Assertion ${assertionId} was not compared: what was found is in a text the executor itself typed. That shows what was typed, not what the application shows. No result was recorded.`);
         }
         // A role or a label says what kind of element to look for. If nothing

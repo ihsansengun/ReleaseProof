@@ -110,7 +110,8 @@ export async function foundInOwnText(state: SuppliedState | undefined, found: Lo
   for (const handle of state.fields) {
     const inside = await found
       .evaluateAll((els, own) => {
-        if (!own || own instanceof HTMLInputElement || own instanceof HTMLSelectElement || own instanceof HTMLTextAreaElement) return false;
+        // Only a text edited in place shows what was typed as its content: not a form field, and not a button clicked to choose a file.
+        if (!(own instanceof HTMLElement) || !own.isContentEditable) return false;
         return els.some((el) => el === own || own.contains(el));
       }, handle)
       .catch(() => false);

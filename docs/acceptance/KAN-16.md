@@ -184,10 +184,10 @@ the field typed into or chosen in (the field itself when the step pointed at
 its label or at words inside its label) and the field a file was given to
 (also when a button opened the file dialog). It stays so for as long as that
 element exists, whatever address the executor asks for meanwhile. Whether
-the element is there may be checked. But where the element shows the typed
-text as its own content (a text edited in place, not a form field), words
-found in it by a presence check or a count are what was typed, and are not
-compared.
+a form field is there may be checked. A text edited in place shows what was
+typed as its own content, so a presence check that finds that element, or
+anything in it, by text, label or role is not compared (by test id it is),
+and a count that includes it or anything in it is refused whole.
 
 A key pressed on a control (Enter, Escape, Tab, an arrow) is not a value: the
 control may be read afterwards.
