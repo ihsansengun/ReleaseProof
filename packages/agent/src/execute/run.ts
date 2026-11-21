@@ -10,7 +10,8 @@ import type { Manifest, Scenario, ScenarioResult, Step, Usage } from "../schema.
 import { SecretVault } from "../secrets.ts";
 import { briefing, SYSTEM } from "./briefing.ts";
 import { replaySteps } from "./replay.ts";
-import { ALL_TOOLS, noteResponse, noteTraffic, requestAllowed, type Session } from "./tools.ts";
+import { noteDocument } from "./supplied.ts";
+import { ALL_TOOLS, noteResponse, requestAllowed, suppliedOf, type Session } from "./tools.ts";
 import { computeVerdict } from "./verdict.ts";
 
 /** What the caller provides about the application beyond its manifest. Built by trusted code. */
@@ -42,8 +43,8 @@ export type SessionOptions = {
    * the network the browser runs on.
    */
   confine?: boolean;
-  /** A presence check must look for wording the approved text states. For runs whose plan is not the engine's own. */
-  quotedOnly?: boolean;
+  /** For a run whose plan is not the engine's own: see `Session.untrustedPlan`. */
+  untrustedPlan?: boolean;
   /** Says whether the time allowed has run out. A replay asks before every step. */
   expired?: () => boolean;
 };
@@ -109,7 +110,7 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
     steps: [],
     vault: new SecretVault(),
     writes: options.writes ?? "all",
-    ...(options.quotedOnly ? { quotedOnly: true } : {}),
+    ...(options.untrustedPlan ? { untrustedPlan: true } : {}),
   };
 
   // The executor may only talk to the application under test, and only send
@@ -153,8 +154,19 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   // What the application answers to a user's action is kept when it is an error.
   context.on("response", (response) => {
     noteResponse(session, response);
-    // And for what it says about values the executor entered: whether the application holds them.
-    noteTraffic(session, response);
+    // And how the page now shown was obtained, and whether the application accepted a change.
+    try {
+      const request = response.request();
+      if (new URL(response.url()).origin !== origin) return;
+      const state = suppliedOf(session);
+      const method = request.method();
+      if (method !== "GET" && method !== "HEAD" && response.status() < 400) state.writes += 1;
+      if (request.isNavigationRequest() && request.frame() === session.page.mainFrame()) {
+        noteDocument(state, { method, status: response.status(), url: response.url() });
+      }
+    } catch {
+      // A response whose request or frame is already gone says nothing here.
+    }
   });
 
   let sha: string | undefined;

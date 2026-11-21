@@ -22,7 +22,7 @@ the worker and uploads a result.
 | 1 | checked with recorded decisions: `run-remote` runs an approved request against its target with no pull request or ticket. A run with a live model is not available yet | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-request.test.ts`, `packages/agent/test/remote-authority.test.ts` |
 | 2 | part: a snapshot with a valid approval for this run is the only source of requirements; a comparison must cite a requirement quoted from it, and its expected value must itself be stated in that quoted text. Not established: that the element read is the one the text is about. That is still the plan's choice, so `verdictsTrusted` is false | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
 | 3 | checked for both gates, and the remote run takes no model driver at all | all three |
-| 4 | checked for expected values: a comparison citing a quote not found in an approved snapshot, another source id, or no source id is removed, and so is one whose expected value the quoted text does not state. A value the executor itself entered is not evidence (see "Independent evidence") | `packages/agent/test/independent-evidence.test.ts`, `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
+| 4 | part: a comparison citing a quote not found in an approved snapshot, another source id, or no source id is removed, and so is one whose expected number, text or kind of comparison the quoted text does not state. What the executor itself entered is not evidence (see "Independent evidence"). Not established: what a calculation means, and which element is read | `packages/agent/test/independent-evidence.test.ts`, `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
 | 5 | part: the run's record names every snapshot with its hash. The result file is not built yet | `packages/agent/test/remote-run.test.ts` |
 | 6 | not started | |
 | 7 | part: the run's record has no pull-request or ticket field and says "target". The result file and report are not built yet | `packages/agent/test/remote-run.test.ts` |
@@ -101,11 +101,8 @@ expectation, a ledger directory and a **recording**, and writes
   model, and a comparison that does not cite a requirement quoted from
   approved text is removed before anything runs.
 - In a remote run the expected value must also be stated by the quoted text
-  itself: a number written in it (in the unit expected), a text found in it
-  word for word, or a calculation whose written numbers are all in it. A
-  presence check must look for wording the text states. Anything else is
-  removed or refused. See "Independent evidence" for what the executor's own
-  input can and cannot show.
+  itself, and values are read only from pages and answers as the application
+  served them. See "Independent evidence".
 - What is still not established: that the element a comparison reads is the
   one the approved text is about. That remains the recording's choice. So the
   record carries `verdictsTrusted: false`, and a scenario's "passed" in a
@@ -176,47 +173,74 @@ format is written. Those come next.
 
 ## Independent evidence
 
-A value the executor itself put into the application is not evidence about
-the application. This holds for every run, with a model or from a recording,
-for a pull request or a remote request: it is in the comparison code they
-share (`packages/agent/src/execute/supplied.ts`).
+What the executor itself puts into the application is not evidence about the
+application. Two rules, in the comparison code every run shares
+(`packages/agent/src/execute/supplied.ts`).
 
-The executor's own values are: what it typed into a field, chose in a list,
-wrote into an address (a query value, or a path segment holding a digit), or
-sent in a request (its address and every value in its body).
+**In every run**, also for a pull request with a live model: a field the
+executor itself typed into, chose in, pressed keys in or gave a file to is
+not a place to read a value from while the page that was typed into is still
+shown. If the application changed what was typed, the field shows the
+application's answer and may be read. Nothing else changes for these runs:
+search, filter and before-and-after checks work as they did.
 
-A comparison that **matches** such a value, or an observation of one, is
-recorded only if:
+**In a run whose plan is not the engine's own** (`untrustedPlan`; every
+remote run sets it), the question is where the text read came from, not what
+it looks like. An earlier attempt compared values and could be passed by
+typing `x160`, cutting a number with a pattern, pressing keys, naming a file,
+and more. So a matching comparison, and any observation, counts only if it is
+read from:
 
-- for a value entered on a page: the application accepted a change afterwards
-  (a request other than a read, answered without an error), and then answered
-  a read (a page, or data a page asked for) that contains the value while the
-  address of that read does not;
-- for a value in an address or a request: a later read contains it without
-  carrying it. The answer to the request that carried it never counts, also
-  not for a change: a saved value is verified by reading it back;
-- the element read is not a field the executor filled, in the page it typed
-  into. After saving and opening the page again it may be.
+- a page the application served in answer to a GET with a status from 200 to
+  299, in which the executor has done nothing since it loaded (no typing,
+  choosing, key, file or click), and whose address holds nothing the executor
+  chose: no query or fragment when the executor asked for the address itself,
+  and nothing it typed when the application chose the address; or
+- the answer to a GET the executor made itself, with a status from 200 to 299
+  and no query in its address. How the application answered (the status) may
+  be read from any request.
 
-Otherwise nothing is recorded and the step says why. A **mismatch** is always
-recorded: the application not showing a value is evidence whatever was typed.
-When a comparison does match an entered value, its evidence says so
-(`entered`: the step, how, and the read that confirmed it).
+So "edit, save, look again" works, because the page after saving is one the
+application served afterwards. "Type it and read it back", in any spelling,
+does not. The answer to a request never counts for what that request carried.
 
-Also refused: an expected value calculated only from a reading of the same
-place as the value compared, with nothing done in between.
+A **mismatch** is always recorded: the application not showing a value is
+evidence whatever was typed.
 
-So "edit, save, look again" works, and "type it and read it back" does not.
+Also refused: an expected value calculated only from readings of the same
+place showing the same text as the value compared, with nothing changed in
+between. The place is the element's position in its page, or the request and
+field, whatever way the plan pointed at it. In a run whose plan is the
+engine's own, an action in between is taken to be what the comparison is
+about; otherwise only a change the application accepted is.
 
-What this does not do:
+In a remote run the plan is checked more strictly as well: an expected number
+must be written in the approved text cited, an expected text must be in it as
+whole words, a calculation must use a recorded value and may only write
+numbers the text states, "at least", "at most" and "absent" must be worded
+that way by the text, and a presence check must look for whole words the text
+states.
 
-- It does not decide which element is the right one to read. A value the
-  executor saved somewhere the application keeps it can be read back from
-  there. Which place a requirement is about is the plan's.
-- A small number is easily "contained" in a later page for other reasons, so
-  the confirmation is weak for values such as 1 or 2.
-- A page that shows back what is typed, while an unrelated change was accepted
-  and an unrelated read happens to contain the same value, would count.
+What a remote run cannot do yet, because of these rules:
+
+- read a search or filter result (its address holds what was searched for);
+- read a view the page builds only after a click, without a new page.
+
+What these rules do not establish:
+
+- **Which element is the right one to read.** A value the executor saved
+  where the application keeps it, or made it keep by a request with side
+  effects, can be read back from there in a later page. This is why
+  `verdictsTrusted` stays false.
+- That a calculation is the one the approved text means. Only its written
+  numbers are checked.
+- An application that shows a part of a plain address (no query, no digits
+  needed) in a page it answers with status 200 would show back what the
+  executor asked for.
+- On the pull-request path, a page that shows back what was typed somewhere
+  else than in the field typed into, or an answer that repeats its request,
+  can still be read. Refusing those by comparing values refused ordinary
+  search and filter checks too.
 
 ## Security checklist
 

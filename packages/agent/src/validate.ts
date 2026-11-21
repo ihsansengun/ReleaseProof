@@ -160,6 +160,23 @@ export function validatePlan(
         if (!a.expectedText) fault = "needs expectedText";
         else expected = { literal: a.expectedText };
       }
+      if (!fault && options.quoted === true) {
+        // The kind of comparison is part of what is expected. "At least", "at most" and
+        // "absent" are satisfied by many values, so the approved text must say so itself.
+        const said = source.quote.toLowerCase();
+        const bound =
+          a.kind === "number_at_least"
+            ? /\b(at least|or more|minimum|no less than|not less than|or greater|or above)\b/
+            : a.kind === "number_at_most"
+              ? /\b(at most|or less|maximum|no more than|not more than|up to|or fewer|or below)\b/
+              : a.kind === "absent"
+                ? /\b(not|no|never|without|hidden|removed|absent|cannot|can't|isn't|doesn't)\b/
+                : undefined;
+        if (bound && !bound.test(said)) {
+          problems.push(`${where} is a "${a.kind}" comparison, and the approved text it cites does not word the requirement that way ("${source.quote.slice(0, 200)}"). It was removed.`);
+          continue;
+        }
+      }
       if (!fault && options.quoted === true && expected) {
         // The expected value itself must be in the approved text the comparison
         // cites, not only the requirement. What a plan expects beyond that is its own.
@@ -277,7 +294,8 @@ export function validatePlan(
   return { plan, problems };
 }
 
-const QUOTED_NUMBER = /(?<![\p{L}\p{N}_.])-?\d[\d,]*(?:\.\d+)?(?![\p{L}_])/gu;
+// A number as the text writes it. It ends where its digits end: "160px" states no number, and neither does a part of "1600".
+const QUOTED_NUMBER = /(?<![\p{L}\p{N}_.,])-?\d+(?:,\d{3})*(?:\.\d+)?(?![\p{L}\p{N}_]|[.,]\d)/gu;
 
 /**
  * Says what part of an expected value the quoted text does not state, if any.
@@ -291,15 +309,22 @@ export function notQuoted(expected: NonNullable<Assertion["expected"]>, quote: s
   const has = (n: number, scales: number[]) => stated.some((s) => scales.some((scale) => Math.abs(s * scale - n) < 1e-9));
   if ("literal" in expected) {
     if (typeof expected.literal === "number") {
-      const scales = unit === "currency-hundredths" ? [1, 100] : unit === "currency-units" ? [1, 0.01] : [1];
-      return has(expected.literal, scales) ? undefined : `the number ${expected.literal}`;
+      // An amount in hundredths may be written in whole units, and only an amount: a number with a decimal point.
+      const amounts = (quote.match(QUOTED_NUMBER) ?? []).filter((n) => n.includes(".")).map((n) => Number(n.replace(/,/g, "")));
+      const converted = unit === "currency-hundredths" ? amounts.some((s) => Math.abs(s * 100 - Number(expected.literal)) < 1e-9) : unit === "currency-units" ? stated.some((s) => Math.abs(s * 0.01 - Number(expected.literal)) < 1e-9) : false;
+      return has(expected.literal, [1]) || converted ? undefined : `the number ${expected.literal}`;
     }
     const squash = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
     const wanted = squash(expected.literal);
-    return wanted !== "" && squash(quote).includes(wanted) ? undefined : `the text ${JSON.stringify(expected.literal.slice(0, 80))}`;
+    // Whole words, and enough of them to be a statement: "active" is not stated by "inactive".
+    const found = wanted.length >= 3 && new RegExp(`(?<![\\p{L}\\p{N}])${wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u").test(squash(quote));
+    return found ? undefined : `the text ${JSON.stringify(expected.literal.slice(0, 80))}`;
   }
+  // A calculation with no recorded value in it is a number of the plan's own making.
+  if (formulaVariables(expected.formula).length === 0) return "a calculation that uses no recorded value";
   // Numbers written in the formula. A name such as "total2" is a recorded value, not a number.
-  const written = (expected.formula.match(/(?<![\p{L}\p{N}_.])\d+(?:\.\d+)?(?![\p{L}_])/gu) ?? []).map(Number);
-  const absent = written.filter((n) => !has(n, [1, 0.01, 100]));
+  const written = (expected.formula.match(/(?<![\p{L}\p{N}_.])\d+(?:\.\d+)?(?![\p{L}\p{N}_.])/gu) ?? []).map(Number);
+  // As written, or as the fraction of a stated percentage (20 percent is 0.2).
+  const absent = written.filter((n) => !has(n, [1, 0.01]));
   return absent.length > 0 ? `a calculation with ${absent.join(", ")}` : undefined;
 }

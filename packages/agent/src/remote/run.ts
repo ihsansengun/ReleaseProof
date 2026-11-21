@@ -252,8 +252,8 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
       mode: { kind: "replay", steps },
       // The target and the steps are not this engine's own: the page stays on the target.
       confine: true,
-      // And the plan is not this engine's own: what is looked for must be worded by the approved text.
-      quotedOnly: true,
+      // And the plan is not this engine's own: values are read only from pages and answers as the application served them.
+      untrustedPlan: true,
       expired: () => (ranOut ||= now() >= deadline),
     });
     // From the clock, never from what a result says about itself.

@@ -650,7 +650,7 @@ test("in a remote run a presence check must look for wording the approved text s
   // "Your account" is on the page, and nowhere in the approved text.
   const own = await run("160", recording({ assertion: present, steps: { S1: check({ source: "page", by: "text", value: "Your account" }) } }));
   assert.notEqual(own.result.results[0]!.verdict, "passed");
-  assert.match(own.result.results[0]!.reason, /must look for wording the approved text states/);
+  assert.match(own.result.results[0]!.reason, /whole words the approved text states/);
   // "Loyalty balance" is on the page and in the approved text.
   const quoted = await run("160", recording({ assertion: present, steps: { S1: check({ source: "page", by: "text", value: "loyalty balance" }) } }));
   assert.equal(quoted.result.results[0]!.verdict, "passed", quoted.result.results[0]!.reason);
