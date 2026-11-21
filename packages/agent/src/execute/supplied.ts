@@ -4,14 +4,11 @@
  *
  * Two rules, of different reach.
  *
- * FOR EVERY RUN: a field the executor itself filled, chose in, pressed keys in
- * or gave a file to is not a place to read a value from. It holds the
- * executor's own input. A field is known again by its place in the page and
- * by its name, so a page that builds the field anew does not make it another
- * field, and neither does reading the element around it. In a page loaded
- * later, the same field is the executor's while it holds anything other than
- * what the application served it with: a browser puts typed values back when
- * it goes back in its history.
+ * FOR EVERY RUN: the very element the executor itself filled, chose in,
+ * pressed keys in or gave a file to is not a place to read a value from. It
+ * holds the executor's own input. This is a guard against a plain mistake,
+ * not against a plan that tries to get round it: it knows the element and
+ * nothing more, so that no other element is ever refused because of it.
  *
  * FOR A RUN WHOSE PLAN IS NOT THE ENGINE'S OWN (`untrustedPlan`): the question
  * is not what a value looks like but where the text read came from. Comparing
@@ -35,11 +32,11 @@
  * Neither rule decides which element is the right one to read. That is the
  * plan's.
  */
-import type { Locator } from "playwright";
+import type { ElementHandle, Locator, Page } from "playwright";
 
 export type SuppliedState = {
-  /** Fields the executor put something into: which page load, which page, where in it, and its name. */
-  fields: { load: number; page: string; position: string; key: string }[];
+  /** The elements the executor put something into. */
+  fields: ElementHandle[];
   /**
    * Set when the executor has just opened a page by a plain address and done
    * nothing in it since: the address the page ended up at. Otherwise the
@@ -56,54 +53,17 @@ const AGAIN = "Open the page again by its plain address, with no query and no fr
 
 export const newState = (): SuppliedState => ({ fields: [], opened: { not: "no page has been opened yet" }, requests: {}, writes: 0 });
 
-/**
- * What makes an element findable again: the load of the page it is in, the
- * page's path, its position, its name or id, and whether it holds anything
- * other than what the page was served with.
- */
-async function describe(locator: Locator): Promise<{ load: number; page: string; position: string; key: string; control: boolean; editable: boolean; dirty: boolean } | undefined> {
-  return locator
-    .evaluate((el) => {
-      const parts: string[] = [];
-      for (let node: Element | null = el; node && node.parentElement; node = node.parentElement) {
-        let index = 0;
-        for (let sibling = node.previousElementSibling; sibling; sibling = sibling.previousElementSibling) index += 1;
-        parts.unshift(`${node.tagName.toLowerCase()}[${index}]`);
-      }
-      const input = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
-      const select = el instanceof HTMLSelectElement;
-      const editable = el instanceof HTMLElement && el.isContentEditable;
-      const dirty = input
-        ? el.type === "checkbox" || el.type === "radio"
-          ? (el as HTMLInputElement).checked !== (el as HTMLInputElement).defaultChecked
-          : el.type === "file"
-            ? el.value !== ""
-            : el.value !== el.defaultValue
-        : select
-          ? el.selectedIndex !== Math.max(0, Array.from(el.options).findIndex((option) => option.defaultSelected))
-          : false;
-      return {
-        load: performance.timeOrigin,
-        page: location.pathname,
-        position: parts.join("/"),
-        key: el.getAttribute("name") || el.id || "",
-        control: input || select,
-        editable,
-        dirty,
-      };
-    })
-    .catch(() => undefined);
-}
-
 /** The executor did something in the page: it is no longer as the application served it. */
 export async function noteInput(state: SuppliedState, field?: Locator): Promise<void> {
   state.opened = { not: "the executor has acted in this page since it was opened, so what it shows now may be the executor's own input" };
-  const where = field ? await describe(field) : undefined;
-  if (where) state.fields.push({ load: where.load, page: where.page, position: where.position, key: where.key });
+  const handle = field ? await field.elementHandle().catch(() => null) : null;
+  if (handle) state.fields.push(handle);
 }
 
 /** The executor opened a page by an address. Says whether it is one a value may be read from. */
 export function noteOpened(state: SuppliedState, asked: string, answer: { method: string; status: number } | undefined, endedAt: string, arrivedBy: string): void {
+  // The elements of the page left behind are gone.
+  state.fields = [];
   const plain = (address: string) => !address.includes("?") && !address.includes("#");
   state.opened = !plain(asked)
     ? { not: "the executor asked for this page by an address with a query or a fragment, which a page may show back" }
@@ -120,50 +80,58 @@ export function noteOpened(state: SuppliedState, asked: string, answer: { method
               : { url: endedAt };
 }
 
-const OWN = "It holds what was entered, which shows nothing about the application. Save the change, open the page again, and read the value where the application shows it.";
-
-/**
- * Says why an element is not a place to read from, if it is, or contains, a
- * field the executor put its own input into.
- */
+/** Says why an element is not a place to read from, if it is the very one the executor put its own input into. */
 export async function ownField(state: SuppliedState | undefined, locator: Locator | undefined): Promise<string | undefined> {
-  if (!state || !locator || state.fields.length === 0) return undefined;
-  const target = await describe(locator);
-  if (!target) return undefined;
-  for (const field of state.fields) {
-    if (field.page !== target.page) continue;
-    const same = field.position === target.position || (field.key !== "" && field.key === target.key && target.control);
-    if (field.load === target.load) {
-      // The page that was typed into is still the one shown: the field, or anything around it.
-      if (same) return `the target is a field the executor itself put a value into, in the page now shown. ${OWN}`;
-      if (field.position.startsWith(`${target.position}/`)) return `the target contains a field the executor itself put a value into, in the page now shown, and what it reads may be that field. ${OWN}`;
-    } else if (same && (target.dirty || target.editable)) {
-      // A page loaded later: the application's, unless the field holds something the page was not served with.
-      return `the target is a field the executor itself put a value into earlier, and it holds something other than what the application served this page with: a browser puts typed values back when it goes back in its history. ${OWN}`;
+  if (!state || !locator) return undefined;
+  for (const handle of state.fields) {
+    if (await locator.evaluate((el, other) => el === other, handle).catch(() => false)) {
+      return "the target is a field the executor itself put a value into, in the page now shown. It holds what was entered, which shows nothing about the application. Save the change, open the page again, and read the value where the application shows it.";
     }
   }
   return undefined;
 }
 
+/** How the page now shown was reached, as the browser records it: "navigate" for a request made for it. */
+export const arrival = (page: Page): Promise<string> =>
+  page.evaluate(() => (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "unknown").catch(() => "unknown");
+
 /**
  * For a run whose plan is not the engine's own: says why a field is not read
  * at all when it holds something other than what the page was served with,
- * whoever put it there.
+ * whoever put it there. A browser puts typed values back when it goes back in
+ * its history, and a page can fill a field from anything it kept.
  */
 export async function restoredField(locator: Locator | undefined): Promise<string | undefined> {
   if (!locator) return undefined;
-  const target = await describe(locator);
-  if (!target) return undefined;
-  if (target.editable) return "the target is a text the page lets a user edit. In this run a value is not read from one: read it where the application shows it.";
-  if (target.control && target.dirty) return "the target is a field that holds something other than what the application served this page with. In this run a value is not read from one: read it where the application shows it.";
+  const state = await locator
+    .evaluate((el) => {
+      const input = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+      const select = el instanceof HTMLSelectElement;
+      const dirty = input
+        ? el.type === "checkbox" || el.type === "radio"
+          ? (el as HTMLInputElement).checked !== (el as HTMLInputElement).defaultChecked
+          : el.type === "file"
+            ? el.value !== ""
+            : el.value !== el.defaultValue
+        : select
+          ? el.selectedIndex !== Math.max(0, Array.from(el.options).findIndex((option) => option.defaultSelected))
+          : false;
+      return { editable: el instanceof HTMLElement && (el.isContentEditable || el.querySelector("[contenteditable]:not([contenteditable=false])") !== null), dirty };
+    })
+    .catch(() => undefined);
+  if (!state) return undefined;
+  if (state.editable) return "the target is, or contains, a text the page lets a user edit. In this run a value is not read from one: read it where the application shows it.";
+  if (state.dirty) return "the target is a field that holds something other than what the application served this page with. In this run a value is not read from one: read it where the application shows it.";
   return undefined;
 }
 
 /** Says why the page now shown is not a source of evidence for a run whose plan is not the engine's own. */
-export function pageNotEvidence(state: SuppliedState | undefined, shownAt: string): string | undefined {
+export function pageNotEvidence(state: SuppliedState | undefined, shownAt: string, arrivedBy: string): string | undefined {
   if (!state) return `no page has been opened yet. ${AGAIN}`;
   if ("not" in state.opened) return `${state.opened.not}. In this run a value is read only from a page the executor has just opened by a plain address. ${AGAIN}`;
   if (shownAt !== state.opened.url) return `the page has moved to another address since it was opened. ${AGAIN}`;
+  // Asked again when the value is read: a page may go back in the browser's history a while after it was opened.
+  if (arrivedBy !== "navigate") return `the page now shown was reached by going back or forward in the browser's history, or by a reload, and a browser puts typed values back then. ${AGAIN}`;
   return undefined;
 }
 

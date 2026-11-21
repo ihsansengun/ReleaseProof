@@ -206,13 +206,30 @@ const everyRun = (title: string, steps: Step[], why = /a field the executor itse
 
 everyRun("a line break at the end of what was typed does not make the field the application's", [open("/account"), step("fill", { element: textbox("Preview"), text: "160\n" }), check(label("Preview")), FINISH]);
 everyRun("a field that lets only digits through still holds the executor's digits", [open("/account"), step("fill", { element: textbox("Digits"), text: "x160" }), check(label("Digits")), FINISH]);
-everyRun("a field the page builds anew on every keystroke is still the same field", [open("/account"), step("fill", { element: textbox("Live"), text: "160" }), check(label("Live")), FINISH]);
-everyRun("the element around an editable text holds that text", [open("/account"), step("fill", { element: textbox("Note"), text: "160" }), check(testid("note-wrap")), FINISH], /contains a field the executor itself put a value into/);
-everyRun(
-  "a typed value the browser puts back after going back in its history is still the executor's",
+// The every-run rule knows the element typed into and nothing more. These three are left to it
+// on purpose: refusing them refused ordinary checks on other elements. A plan that is not the
+// engine's own does not get past them.
+const strictOnly = (title: string, steps: Step[]) =>
+  test(`untrusted plan: ${title}`, async () => {
+    const { result } = await replay("untrusted", steps);
+    assert.notEqual(result.verdict, "passed", JSON.stringify(result.steps.map((s) => s.summary)));
+    assert.deepEqual(result.assertionResults, []);
+  });
+strictOnly("a field the page builds anew on every keystroke", [open("/account"), step("fill", { element: textbox("Live"), text: "160" }), check(label("Live")), FINISH]);
+strictOnly("the element around an editable text", [open("/account"), step("fill", { element: textbox("Note"), text: "160" }), check(testid("note-wrap")), FINISH]);
+strictOnly("an editable text the page was opened with, and its surroundings, are not read either", [open("/account"), check(testid("note-wrap")), FINISH]);
+strictOnly(
+  "a typed value the browser puts back after going back in its history",
   [open("/account"), step("fill", { element: textbox("Search orders"), text: "160" }), step("click", { element: { by: "role", role: "link", value: "Profile" } }), step("click", { element: button("Back") }), check(label("Search orders")), FINISH],
-  /a browser puts typed values back/,
 );
+
+test("own plan: another field, the element around a typed field, and whether the typed field is there, are read as before", async () => {
+  const typed = [open("/account"), step("fill", { element: textbox("Search orders"), text: "abc" })];
+  const other = await replay("own", [...typed, check(label("Points to redeem")), FINISH], [assertion({ expected: { literal: 0 } })]);
+  assert.equal(other.result.verdict, "passed", other.result.reason);
+  const present = await replay("own", [...typed, check({ source: "page", by: "label", value: "Search orders" }), FINISH], [assertion({ kind: "present", expected: undefined, unit: undefined })]);
+  assert.equal(present.result.verdict, "passed", present.result.reason);
+});
 
 test("every run: a number field moved with a key is the executor's own input too", async () => {
   for (const mode of ["own", "untrusted"] as const) {
@@ -230,12 +247,19 @@ test("every run: a file field holds the name of the file the executor gave it", 
   }
 });
 
-test("every run: a mismatch is recorded as a failure, whatever the executor typed", async () => {
-  for (const mode of ["own", "untrusted"] as const) {
-    const { result } = await replay(mode, [open("/account"), step("fill", { element: textbox("Preview"), text: "160" }), check(testid("loyalty-balance")), FINISH]);
-    assert.equal(result.verdict, "failed", mode);
-    assert.equal(result.assertionResults[0]!.actual, 60);
-  }
+test("own plan: a mismatch is recorded as a failure, whatever the executor typed", async () => {
+  const { result } = await replay("own", [open("/account"), step("fill", { element: textbox("Preview"), text: "160" }), check(testid("loyalty-balance")), FINISH]);
+  assert.equal(result.verdict, "failed");
+  assert.equal(result.assertionResults[0]!.actual, 60);
+});
+
+test("untrusted plan: nothing is compared in a page the executor acted in, so what was typed cannot reach the result as a value read", async () => {
+  const { result } = await replay("untrusted", [open("/account"), step("fill", { element: textbox("Preview"), text: "a-secret-77" }), check(testid("mirror")), FINISH], [text("something else")]);
+  assert.deepEqual(result.assertionResults, []);
+  assert.ok(!JSON.stringify({ ...result, steps: [] }).includes("a-secret-77"));
+  // Read in a page opened again, a mismatch is a failure.
+  const again = await replay("untrusted", [open("/account"), step("fill", { element: textbox("Preview"), text: "160" }), open("/account"), check(testid("loyalty-balance")), FINISH]);
+  assert.equal(again.result.verdict, "failed");
 });
 
 // ---- untrusted plan: a value is read only from a page as the application served it ---

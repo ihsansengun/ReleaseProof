@@ -177,23 +177,26 @@ What the executor itself puts into the application is not evidence about the
 application. Two rules, in the comparison code every run shares
 (`packages/agent/src/execute/supplied.ts`).
 
-**In every run**, also for a pull request with a live model: a field the
-executor itself typed into, chose in, pressed keys in or gave a file to is
-not compared, whether the comparison would match or not, and is not taken as
-an error message either.
+**In every run**, also for a pull request with a live model: the very
+element the executor itself typed into, chose in, pressed keys in or gave a
+file to is not compared, whether the comparison would match or not, and is
+not taken as an error message. Whether that element is there may still be
+checked.
 
-- The field is known again by its position in the page and by its name, so a
-  page that builds the field anew is not another field, and the element
-  around it is not another place.
-- While the page typed into is still shown, there is no exception: also not
-  when the page changed what was typed (a field that lets only digits
-  through still holds the executor's digits).
-- In a page loaded later, the same field is the application's if it holds
-  what the page was served with, and the executor's if it holds anything
-  else: a browser puts typed values back when it goes back in its history.
+This rule is a guard against a plain mistake, not against a plan that tries
+to get round it. It knows the element and nothing more, so that no other
+element is ever refused because of it. Two attempts to make it wider (by the
+value typed, and by the field's position and name) each refused ordinary
+checks: a search result, another row's field, a saved value a page fills in
+by script. It therefore does **not** catch, on the pull-request path:
 
-Nothing else changes for these runs: search, filter and before-and-after
-checks work as they did.
+- a field the page builds anew after typing, or one the browser fills again
+  after going back in its history;
+- the element around an editable text, or any other place that shows what
+  was typed;
+- an answer that repeats its request, or a calculation that cancels itself.
+
+Nothing else changes for these runs.
 
 **In a run whose plan is not the engine's own** (`untrustedPlan`; every
 remote run sets it), the question is where the text read came from, not what
@@ -207,9 +210,10 @@ matching comparison, and any observation, is taken only from:
   to 299, which ended up at a plain address, and in which the executor has
   done nothing since (no typing, choosing, key, file or click) and which is
   still at that address. The page must have been reached by that request, not
-  by the browser going back in its history or reloading. A field that holds
+  by the browser going back in its history or reloading; this is asked when
+  the page is opened and again when the value is read. A field that holds
   anything other than what the page was served with, and a text the page lets
-  a user edit, are never read; or
+  a user edit or the element around one, are never read; or
 - the answer to a GET the executor made itself, with a plain address, no
   body, and a status from 200 to 299. How the application answered (the
   status) may be read from any request.
@@ -218,8 +222,11 @@ So the way to verify a change is: edit, save, **open the page again by its
 plain address**, and read. "Type it and read it back", in any spelling, does
 not count, and neither does the page a form or a link leads to.
 
-A **mismatch** is always recorded, except from the executor's own field: the
-application not showing a value is evidence whatever was typed.
+A **mismatch** is recorded wherever a match would be. In a run whose plan is
+the engine's own that is everywhere but the executor's own field. In other
+runs nothing is compared in a page the executor acted in, match or not, so
+what was typed cannot reach the result as a value read; a mismatch is
+recorded from a page opened again.
 
 Also refused: an expected value calculated only from readings of the same
 place showing the same text as the value compared (or from the compared
@@ -250,6 +257,8 @@ What a remote run cannot do yet, because of these rules:
   request with a query in its address;
 - expect a calculated value, or a text shorter than four characters ("OK");
 - check presence by a test id, or by wording shorter than four characters;
+- read a form field that a page fills in by script after loading, or any
+  text a user can edit in place;
 - credit one comparison to more than the requirement it cites.
 
 What these rules do not establish:
@@ -259,7 +268,8 @@ What these rules do not establish:
   keeps it, or made it keep by a request with side effects, can be read back
   from there in a page opened later. "Keeps" includes the server, cookies,
   the browser's storage for the site, and what a page itself carries from one
-  load to the next (the window's name, the history entry's state). A plan can expect one stated number where the text
+  load to the next (the window's name, the history entry's state, the
+  browser's list of pages visited in the tab with their addresses). A plan can expect one stated number where the text
   means another. This is why `verdictsTrusted` stays false.
 - An application that shows a part of a plain address in a page it answers
   with status 200 would show back what the executor asked for. So would a

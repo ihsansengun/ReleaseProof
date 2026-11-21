@@ -5,7 +5,7 @@ import { evaluateFormula, formulaVariables } from "../formula.ts";
 import { reconcile, scaleUnclear } from "../units.ts";
 import { BlockedCause, type ApplicationError, type ErrorSignal, type AssertionResult, type Evidence, type Outcome, type Scenario, type Step } from "../schema.ts";
 import type { SecretVault } from "../secrets.ts";
-import { answerNotEvidence, newState, noteInput, noteOpened, ownField, pageNotEvidence, placeOf, restoredField, type SuppliedState } from "./supplied.ts";
+import { answerNotEvidence, arrival, newState, noteInput, noteOpened, ownField, pageNotEvidence, placeOf, restoredField, type SuppliedState } from "./supplied.ts";
 
 /** Everything one scenario execution accumulates. */
 export type Session = {
@@ -681,13 +681,15 @@ export const suppliedOf = (s: Session): SuppliedState => (s.supplied ??= newStat
  * executor's own field, in every run; and in a run whose plan is not the
  * engine's own, anything but a page or an answer as the application served it.
  */
-async function requireEvidence(s: Session, what: string, target: Target, locator: Locator | undefined, matched = true): Promise<void> {
+async function requireEvidence(s: Session, what: string, target: Target, locator: Locator | undefined, matched = true, value = true): Promise<void> {
   let why: string | undefined;
   if (target.source === "api") {
     if (s.untrustedPlan && matched) why = answerNotEvidence(s.supplied?.requests[target.responseId], target.field === "status");
   } else {
-    why = await ownField(s.supplied, locator);
-    if (!why && s.untrustedPlan && matched) why = pageNotEvidence(s.supplied, s.page.url()) ?? (await restoredField(locator));
+    // Whether a field is there is not a reading of what it holds.
+    if (value) why = await ownField(s.supplied, locator);
+    // In such a run a page the executor acted in is not read at all, match or not: what it shows may be what was typed, and that may be a secret.
+    if (!why && s.untrustedPlan) why = pageNotEvidence(s.supplied, s.page.url(), await arrival(s.page)) ?? (value ? await restoredField(locator) : undefined);
   }
   if (why) throw new Error(`${what}: ${why} No result was recorded.`);
 }
@@ -1011,7 +1013,7 @@ const handlers: Handlers = {
     await settle(s.page);
     // Where the page ended up once it had settled, fragment included: a page may send itself on.
     // How the page now shown was reached: a page may go back in the browser's history by itself.
-    const arrivedBy = await s.page.evaluate(() => (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "unknown").catch(() => "unknown");
+    const arrivedBy = await arrival(s.page);
     noteOpened(state, p, response ? { method: response.request().method(), status: response.status() } : undefined, s.page.url(), arrivedBy);
     const part = await partOfAPage(response);
     return `${part ? `${part}\n` : ""}${await describePage(s)}`;
@@ -1301,7 +1303,7 @@ const handlers: Handlers = {
 
     // The executor's own field is never compared, match or not: what it holds is the executor's, and may be a secret.
     // Beyond that, a match counts only if what was read is evidence about the application. A mismatch always counts.
-    await requireEvidence(s, `Assertion ${assertionId} was not compared`, target, locator, pass);
+    await requireEvidence(s, `Assertion ${assertionId} was not compared`, target, locator, pass, assertion.kind !== "present" && assertion.kind !== "absent");
     const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched, scope, ...counted });
     const shot = await screenshot(s, `check-${assertionId}`, locator);
     s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, screenshot: shot });
