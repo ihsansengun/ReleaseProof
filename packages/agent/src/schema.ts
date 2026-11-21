@@ -254,6 +254,9 @@ export const Evidence = z.object({
     within: z.string().optional(),
     /** For a count: where it was counted and how many elements of that kind the place holds in all. */
     scope: z.string().optional(),
+    /** For a count: how many items were shown, which is what was counted, and how many were present in the page in all. */
+    shown: z.number().optional(),
+    present: z.number().optional(),
     matched: z.number().optional(),
     visible: z.boolean().optional(),
     element: z.object({ tag: z.string(), role: z.string().optional(), context: z.string().optional() }).optional(),

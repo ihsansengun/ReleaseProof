@@ -130,3 +130,82 @@ test("a count of 0 that is true still compares when the section is named", async
   assert.match(value.some.output, /expected 2, actual 2 -> match/);
   assert.equal(result.verdict, "passed");
 });
+
+// The two gaps left after the evaluation. A count took in what the page holds
+// but does not show; and inside a real container, a count of a kind of element
+// the page never uses for its items read 0 and could pass a "none shown" check.
+
+test("only items that are shown are counted, and how many are present goes on record", async () => {
+  const page = `<table aria-label="Orders"><tr><th>Ref</th></tr>
+    <tr><td>A-1</td></tr><tr><td>A-2</td></tr>
+    <tr hidden><td>A-3</td></tr><tr style="display:none"><td>A-4</td></tr></table>
+    <ul aria-label="Tags"><li>red</li><li>green</li><li>blue</li><li hidden>grey</li><li style="visibility:hidden">black</li></ul>`;
+  const hiddenWords = `<div aria-label="Alerts" role="group"><p data-testid="alert">Low stock</p><p data-testid="alert">Low stock</p><p data-testid="alert" hidden>Low stock</p></div>`;
+  const words = await withPage(hiddenWords, [n("A1", 2), n("A2", 2)], async (run) => ({
+    // Found by text or by test id, a hidden element used to be counted with the rest.
+    text: await check(run, "A1", count({ by: "text", value: "Low stock", within: { by: "role", role: "group", value: "Alerts" } })),
+    testid: await check(run, "A2", count({ by: "testid", value: "alert", within: { by: "role", role: "group", value: "Alerts" } })),
+  }));
+  assert.match(words.value.text.output, /expected 2, actual 2 -> match/);
+  assert.match(words.value.testid.output, /expected 2, actual 2 -> match/);
+  assert.deepEqual(words.result.assertionResults.map((r) => [r.evidence!.target.shown, r.evidence!.target.present]), [[2, 3], [2, 3]]);
+  const { value, result } = await withPage(page, [n("A1", 3), n("A2", 3)], async (run) => ({
+    // Header row and two shown rows; two more rows are in the page and hidden.
+    rows: await check(run, "A1", count({ by: "role", role: "row", value: "", within: { by: "role", role: "table", value: "Orders" } })),
+    items: await check(run, "A2", count({ by: "role", role: "listitem", value: "", within: { by: "role", role: "list", value: "Tags" } })),
+  }));
+  assert.match(value.rows.output, /expected 3, actual 3 -> match/);
+  assert.match(value.items.output, /expected 3, actual 3 -> match/);
+  const items = result.assertionResults.find((r) => r.assertionId === "A2")!.evidence!.target;
+  assert.equal(items.shown, 3);
+  assert.equal(items.present, 5);
+  assert.match(items.scope!, /2 more present in the page but not shown, and not counted/);
+  assert.equal(result.verdict, "passed");
+});
+
+test("where nothing is hidden, shown and present agree and the scope says nothing more", async () => {
+  const { result } = await withPage(TASK, [n("A1", 2)], async (run) => check(run, "A1", count({ by: "role", role: "link", value: "", within: { by: "role", role: "table", value: "Files" } })));
+  const target = result.assertionResults[0]!.evidence!.target;
+  assert.deepEqual([target.shown, target.present], [2, 2]);
+  assert.doesNotMatch(target.scope!, /not shown/);
+});
+
+// A results panel that draws its entries as cards, not as rows or list items.
+const CARDS = `<section aria-label="Results"><h2>Results</h2>
+  <div class="card"><b>Ada</b> <span>admin</span></div>
+  <div class="card"><b>Grace</b> <span>member</span></div></section>`;
+
+test("a zero for a kind of element never seen in the place is not a reading, and is not compared", async () => {
+  const { value, result } = await withPage(CARDS, [n("A1", 0), n("A2", 0)], async (run) => ({
+    rows: await check(run, "A1", count({ by: "role", role: "row", value: "", within: { by: "role", role: "region", value: "Results" } })),
+    named: await check(run, "A2", count({ by: "role", role: "listitem", value: "Ada", within: { by: "role", role: "region", value: "Results" } })),
+  }));
+  assert.match(value.rows.output, /Not counted: role region "Results" shows content, but no element of role row was seen in it/);
+  assert.match(value.named.output, /Not counted: .* no element of role listitem was seen in it/);
+  assert.equal(value.rows.ok, false);
+  // Nothing was compared, so nothing passed: the "none shown" check did not go through.
+  assert.deepEqual(result.assertionResults, []);
+  assert.notEqual(result.verdict, "passed");
+});
+
+test("a zero stands where the place says it is empty, holds only its headings, or held such items earlier", async () => {
+  const page = `<section aria-label="Results"><h2>Results</h2><p>No users found.</p></section>
+    <section aria-label="Queue"><h2>Queue</h2></section>
+    <section aria-label="Inbox"><h2>Inbox</h2><ul id="inbox"><li>One</li><li>Two</li></ul><p id="note">Up to date</p>
+      <button onclick="document.getElementById('inbox').remove();document.getElementById('note').textContent='All caught up'">Clear</button></section>`;
+  const { value, result } = await withPage(page, [n("A1", 0), n("A2", 0), n("A3", 2), n("A4", 0)], async (run) => {
+    const inbox = count({ by: "role", role: "listitem", value: "", within: { by: "role", role: "region", value: "Inbox" } });
+    const saysEmpty = await check(run, "A1", count({ by: "role", role: "row", value: "", within: { by: "role", role: "region", value: "Results" } }));
+    const onlyHeading = await check(run, "A2", count({ by: "role", role: "listitem", value: "", within: { by: "role", role: "region", value: "Queue" } }));
+    const before = await check(run, "A3", inbox);
+    await run("click", { element: { by: "role", role: "button", value: "Clear" } });
+    // The panel now shows other words and no list, and does not say it is empty: the earlier count is what makes 0 a reading.
+    const after = await check(run, "A4", inbox);
+    return { saysEmpty, onlyHeading, before, after };
+  });
+  assert.match(value.saysEmpty.output, /expected 0, actual 0 -> match/);
+  assert.match(value.onlyHeading.output, /expected 0, actual 0 -> match/);
+  assert.match(value.before.output, /expected 2, actual 2 -> match/);
+  assert.match(value.after.output, /expected 0, actual 0 -> match/);
+  assert.equal(result.verdict, "passed");
+});
