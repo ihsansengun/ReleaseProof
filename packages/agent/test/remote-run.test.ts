@@ -629,3 +629,29 @@ test("a scenario whose page left the application after every comparison was made
     target.close();
   }
 });
+
+// ---- the expected value must be stated by the approved text ----------------------------
+
+test("KAN-16 criterion 4: a recording's own expected value is removed, although it cites an approved requirement", async () => {
+  // The application shows 999 and the recording expects 999. The approved text says 160.
+  const { result } = await run("999", recording({ assertion: { expectedNumber: 999 } }));
+  assert.ok(result.planProblems.some((problem) => /expects the number 999, which the approved text it cites does not state/.test(problem)), result.planProblems.join("\n"));
+  assert.ok(!result.results.some((r) => r.verdict === "passed"));
+});
+
+test("a recorded run says its passes are not yet verdicts on the criteria", async () => {
+  const { result } = await run("160");
+  assert.equal(result.verdictsTrusted, false);
+});
+
+test("in a remote run a presence check must look for wording the approved text states", async () => {
+  const present = { id: "A1", description: "Something is shown", kind: "present", expectedNumber: null, expectedText: null, expectedFormula: null, unit: "plain", requirementId: "R1", alsoVerifies: [] };
+  const check = (target: Record<string, unknown>) => [STEPS[0]!, { tool: "check", input: { assertionId: "A1", target }, ok: true, summary: "recorded" }, STEPS[2]!];
+  // "Your account" is on the page, and nowhere in the approved text.
+  const own = await run("160", recording({ assertion: present, steps: { S1: check({ source: "page", by: "text", value: "Your account" }) } }));
+  assert.notEqual(own.result.results[0]!.verdict, "passed");
+  assert.match(own.result.results[0]!.reason, /must look for wording the approved text states/);
+  // "Loyalty balance" is on the page and in the approved text.
+  const quoted = await run("160", recording({ assertion: present, steps: { S1: check({ source: "page", by: "text", value: "loyalty balance" }) } }));
+  assert.equal(quoted.result.results[0]!.verdict, "passed", quoted.result.results[0]!.reason);
+});

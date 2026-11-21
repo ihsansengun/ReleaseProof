@@ -20,9 +20,9 @@ the worker and uploads a result.
 | Criterion | Status | Checked by |
 | --- | --- | --- |
 | 1 | checked with recorded decisions: `run-remote` runs an approved request against its target with no pull request or ticket. A run with a live model is not available yet | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-request.test.ts`, `packages/agent/test/remote-authority.test.ts` |
-| 2 | part: a snapshot with a valid approval for this run is the only source of requirements, and a comparison must cite a requirement quoted from it. Not yet checked: that the expected value compared is the one the quoted text states. With recorded decisions that value is the recording's | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
+| 2 | part: a snapshot with a valid approval for this run is the only source of requirements; a comparison must cite a requirement quoted from it, and its expected value must itself be stated in that quoted text. Not established: that the element read is the one the text is about. That is still the plan's choice, so `verdictsTrusted` is false | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
 | 3 | checked for both gates, and the remote run takes no model driver at all | all three |
-| 4 | part: a comparison citing a quote not found in an approved snapshot, another source id, or no source id is removed. Not yet checked: the expected value itself against the quoted text (see criterion 2) | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
+| 4 | checked for expected values: a comparison citing a quote not found in an approved snapshot, another source id, or no source id is removed, and so is one whose expected value the quoted text does not state. A value the executor itself entered is not evidence (see "Independent evidence") | `packages/agent/test/independent-evidence.test.ts`, `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
 | 5 | part: the run's record names every snapshot with its hash. The result file is not built yet | `packages/agent/test/remote-run.test.ts` |
 | 6 | not started | |
 | 7 | part: the run's record has no pull-request or ticket field and says "target". The result file and report are not built yet | `packages/agent/test/remote-run.test.ts` |
@@ -100,12 +100,17 @@ expectation, a ledger directory and a **recording**, and writes
   checked against the approved snapshots by the same code that checks a live
   model, and a comparison that does not cite a requirement quoted from
   approved text is removed before anything runs.
-- That check is about where a requirement comes from. It does not establish
-  that the expected value of a comparison is the one the quoted text states,
-  or that the element read is the right one: both are the recording's. A
-  result from a recording is evidence of what the application showed, not a
-  verdict on the criteria. Checking the expected value against the quoted text
-  comes before any run-level verdict is stated.
+- In a remote run the expected value must also be stated by the quoted text
+  itself: a number written in it (in the unit expected), a text found in it
+  word for word, or a calculation whose written numbers are all in it. A
+  presence check must look for wording the text states. Anything else is
+  removed or refused. See "Independent evidence" for what the executor's own
+  input can and cannot show.
+- What is still not established: that the element a comparison reads is the
+  one the approved text is about. That remains the recording's choice. So the
+  record carries `verdictsTrusted: false`, and a scenario's "passed" in a
+  recorded run is evidence of what the application showed, not a verdict on
+  the criteria, until that is decided otherwise.
 - A recording is limited: 2,000,000 bytes, 60 steps for a scenario, and ids
   that are plain names, each used once. An id that is not a plain name is
   refused, and evidence is only ever written inside a scenario's own
@@ -168,6 +173,70 @@ not detected by the request gate.
 
 No run-level verdict is stated yet, and no result file in the dashboard's
 format is written. Those come next.
+
+## Independent evidence
+
+A value the executor itself put into the application is not evidence about
+the application. This holds for every run, with a model or from a recording,
+for a pull request or a remote request: it is in the comparison code they
+share (`packages/agent/src/execute/supplied.ts`).
+
+The executor's own values are: what it typed into a field, chose in a list,
+wrote into an address (a query value, or a path segment holding a digit), or
+sent in a request (its address and every value in its body).
+
+A comparison that **matches** such a value, or an observation of one, is
+recorded only if:
+
+- for a value entered on a page: the application accepted a change afterwards
+  (a request other than a read, answered without an error), and then answered
+  a read (a page, or data a page asked for) that contains the value while the
+  address of that read does not;
+- for a value in an address or a request: a later read contains it without
+  carrying it. The answer to the request that carried it never counts, also
+  not for a change: a saved value is verified by reading it back;
+- the element read is not a field the executor filled, in the page it typed
+  into. After saving and opening the page again it may be.
+
+Otherwise nothing is recorded and the step says why. A **mismatch** is always
+recorded: the application not showing a value is evidence whatever was typed.
+When a comparison does match an entered value, its evidence says so
+(`entered`: the step, how, and the read that confirmed it).
+
+Also refused: an expected value calculated only from a reading of the same
+place as the value compared, with nothing done in between.
+
+So "edit, save, look again" works, and "type it and read it back" does not.
+
+What this does not do:
+
+- It does not decide which element is the right one to read. A value the
+  executor saved somewhere the application keeps it can be read back from
+  there. Which place a requirement is about is the plan's.
+- A small number is easily "contained" in a later page for other reasons, so
+  the confirmation is weak for values such as 1 or 2.
+- A page that shows back what is typed, while an unrelated change was accepted
+  and an unrelated read happens to contain the same value, would count.
+
+## Security checklist
+
+Open items that must hold before a remote run is trusted. None is closed by
+browser confinement.
+
+- [ ] **Worker-level outbound network restriction to the target.** The engine
+      cannot stop what a redirect fetches or a worker WebSocket of a hostile
+      target. Origin confinement in the browser does not replace network
+      isolation.
+- [ ] The element a comparison reads is tied to the approved text
+      (`verdictsTrusted` stays false until then).
+- [ ] A failure after the run is claimed uses its one start: decide whether
+      that needs a recovery path.
+- [ ] Quote matching is loose (case, spacing, some punctuation, from 8
+      characters).
+- [ ] A public name that resolves to a private address is not detected by the
+      request gate.
+- [ ] KAN-15 criterion 7 (a replay through the worker): not started, not
+      verified.
 
 ## The run-level verdict (decided 21 November 2026)
 

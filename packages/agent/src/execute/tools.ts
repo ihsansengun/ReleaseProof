@@ -5,6 +5,7 @@ import { evaluateFormula, formulaVariables } from "../formula.ts";
 import { reconcile, scaleUnclear } from "../units.ts";
 import { BlockedCause, type ApplicationError, type ErrorSignal, type AssertionResult, type Evidence, type Outcome, type Scenario, type Step } from "../schema.ts";
 import type { SecretVault } from "../secrets.ts";
+import { addressData, independence, note as noteSupplied, noteAnswer, scalars, settled, type SuppliedState } from "./supplied.ts";
 
 /** Everything one scenario execution accumulates. */
 export type Session = {
@@ -50,6 +51,13 @@ export type Session = {
   assertionResults: AssertionResult[];
   steps: Step[];
   outcome?: Outcome;
+  /** What the executor itself put into the application, and whether the application has shown since that it holds it. */
+  supplied?: SuppliedState;
+  /**
+   * For runs whose plan is not the engine's own: a presence check must look
+   * for wording the approved text itself states.
+   */
+  quotedOnly?: boolean;
   /** The first other origin the page was on at any moment, in a session confined to the application's own. */
   leftTo?: string;
   /** Whether the page has been on the application at all, in a confined session. A blank page after that is somewhere else. */
@@ -665,6 +673,38 @@ async function readText(session: Session, target: Target): Promise<{ text: strin
   return { text, locator };
 }
 
+const suppliedOf = (s: Session): SuppliedState => (s.supplied ??= { entries: [], filled: [], pending: [] });
+
+/** Notes an answer of the application for what it says about values the executor entered. Same origin only. */
+export function noteTraffic(session: Session, response: { url(): string; status(): number; request(): { method(): string; resourceType(): string }; text(): Promise<string> }): void {
+  if (!session.supplied || session.supplied.entries.length === 0) return;
+  let url: URL;
+  try {
+    url = new URL(response.url());
+  } catch {
+    return;
+  }
+  if (url.origin !== new URL(session.baseUrl).origin) return;
+  const kind = response.request().resourceType();
+  const method = response.request().method();
+  // A read counts when it is a page or data the page asked for; scripts, styles and pictures are not the application's state.
+  if (method === "GET" && kind !== "document" && kind !== "xhr" && kind !== "fetch") return;
+  noteAnswer(session.supplied, { method, url, status: response.status(), body: () => response.text() });
+}
+
+/** Refuses a reading that only repeats what the executor entered. Returns what to record about it otherwise. */
+async function independent(
+  s: Session,
+  what: string,
+  reading: { numbers?: number[]; texts?: string[] },
+  target: Target,
+  locator: Locator | undefined,
+): Promise<{ step: number; how: string; confirmedBy: string } | undefined> {
+  const verdict = await independence(s.supplied, reading, target.source === "api" ? { source: "api", responseId: target.responseId } : { source: "page", locator });
+  if ("refuse" in verdict) throw new Error(`${what}: ${verdict.refuse} No result was recorded.`);
+  return verdict.entered;
+}
+
 async function screenshot(session: Session, name: string, locator?: Locator): Promise<string> {
   const file = path.join(session.outDir, `${name}.png`);
   // Evidence is written inside the scenario's own directory, whatever the name is made from.
@@ -941,6 +981,7 @@ type Handlers = { [K in ToolName]: (s: Session, input: z.infer<(typeof schemas)[
 const handlers: Handlers = {
   async navigate(s, { path: p }) {
     if (!p.startsWith("/") || p.startsWith("//")) throw new Error('path must start with a single "/".');
+    for (const part of addressData(new URL(p, s.baseUrl))) noteSupplied(suppliedOf(s), s.steps.length + 1, "address", part);
     const response = await s.page.goto(new URL(p, s.baseUrl).toString(), { waitUntil: "load" });
     await settle(s.page);
     const part = await partOfAPage(response);
@@ -955,6 +996,9 @@ const handlers: Handlers = {
 
   async fill(s, { element, text }) {
     const field = await locate(s.page, element);
+    noteSupplied(suppliedOf(s), s.steps.length + 1, "typed", text);
+    const handle = await field.elementHandle().catch(() => null);
+    if (handle) suppliedOf(s).filled.push(handle);
     await field.fill(text);
     // Some pages move the caret when a field takes the focus, and the new text
     // then lands after the old. What the field holds is checked; if it is not
@@ -976,7 +1020,11 @@ const handlers: Handlers = {
   },
 
   async select(s, { element, option }) {
-    await (await locate(s.page, element)).selectOption({ label: option });
+    const list = await locate(s.page, element);
+    noteSupplied(suppliedOf(s), s.steps.length + 1, "selected", option);
+    const handle = await list.elementHandle().catch(() => null);
+    if (handle) suppliedOf(s).filled.push(handle);
+    await list.selectOption({ label: option });
     await settle(s.page);
     return describePage(s);
   },
@@ -1041,6 +1089,11 @@ const handlers: Handlers = {
     }
     const id = `R${s.apiResponses.size + 1}`;
     s.apiResponses.set(id, { status: response.status(), body: parsed });
+    // What this answer says about values entered earlier, then what this request itself carried.
+    const state = suppliedOf(s);
+    noteAnswer(state, { method, url, status: response.status(), body: async () => text });
+    const accepted = method !== "GET" && response.status() < 400;
+    for (const part of [...addressData(url), ...scalars(body)]) noteSupplied(state, s.steps.length + 1, "request", part, { responseId: id, written: accepted });
     trailOf(s).requests[id] = { step: s.steps.length + 1, method, path: url.pathname };
     return JSON.stringify({ responseId: id, status: response.status(), body: parsed });
   },
@@ -1075,6 +1128,7 @@ const handlers: Handlers = {
       };
     };
     if (mine?.type === "text") {
+      await independent(s, `Observation "${name}" was not recorded`, { texts: [text] }, target, locator);
       (s.texts ??= {})[name] = text;
       reading();
       return `Recorded ${name} = ${JSON.stringify(text)}`;
@@ -1082,6 +1136,7 @@ const handlers: Handlers = {
     const read = parseNumber(text);
     const value = reconcile(mine?.unit, raw, read);
     if (!value.comparable) throw new Error(`Observation "${name}" was not recorded: ${value.why}.`);
+    await independent(s, `Observation "${name}" was not recorded`, { numbers: [read, value.value] }, target, locator);
     s.observations[name] = value.value;
     reading();
     return `Recorded ${name} = ${value.value}${value.converted ? ` (read as ${read}, converted to the declared unit)` : ""}`;
@@ -1106,6 +1161,7 @@ const handlers: Handlers = {
     let matched: number | undefined;
     let scope: string | undefined;
     let counted: { shown: number; present: number } | undefined;
+    let entered: { step: number; how: string; confirmedBy: string } | undefined;
 
     if (assertion.kind === "present" || assertion.kind === "absent") {
       // Existence is the question, so a target that matches nothing is an
@@ -1144,6 +1200,19 @@ const handlers: Handlers = {
       expected = assertion.kind;
       actual = count === 0 ? "absent" : "present";
       pass = actual === expected;
+      if (s.quotedOnly) {
+        // What counts as the thing looked for must be worded by the approved text, not by the plan.
+        const quote = squash(assertion.provenance?.quote ?? "").toLowerCase();
+        const wording = target.source === "page" && target.by !== "testid" ? squash(target.value).toLowerCase() : "";
+        if (wording.length < 2 || !quote.includes(wording)) {
+          throw new Error(
+            `Assertion ${assertionId} was not compared: in this run a presence check must look for wording the approved text states, by text, label or role name. The approved text is ${JSON.stringify(clip(assertion.provenance?.quote ?? "", 200))}. No result was recorded.`,
+          );
+        }
+      }
+      if (pass && assertion.kind === "present" && target.source === "page" && target.by !== "testid") {
+        entered = await independent(s, `Assertion ${assertionId} was not compared`, { texts: [target.value] }, target, locator);
+      }
     } else {
       // Resolve both sides before recording anything: a target that cannot be
       // read, or a formula with a missing observation, is a tool error and not
@@ -1169,6 +1238,20 @@ const handlers: Handlers = {
       if (read.present !== undefined) counted = { shown: Number(read.raw), present: read.present };
       const loop = circular(target, expected, assertion);
       if (loop) throw new Error(`Assertion ${assertionId} was not compared: ${loop} No result was recorded.`);
+      if ("formula" in assertion.expected) {
+        // A value compared with a reading of the same place, with nothing done in between, is compared with itself.
+        const trail = trailOf(s);
+        const here = `${describeTarget(target)}${read.scope ? `, counted ${read.scope}` : ""}`;
+        const same = formulaVariables(assertion.expected.formula).filter((v) => {
+          const reading = trail.readings?.[v];
+          return reading !== undefined && reading.locatedBy === here && reading.from === target.source && (trail.action === undefined || trail.action.step < reading.step);
+        });
+        if (same.length > 0) {
+          throw new Error(
+            `Assertion ${assertionId} was not compared: its expected value is calculated from ${same.join(", ")}, read from this same place with nothing done since. That compares a value with itself. No result was recorded.`,
+          );
+        }
+      }
       const numeric = (): number => {
         // The value read is brought to the unit the plan declared. Where the
         // unit cannot be established, nothing is compared: a guess about units
@@ -1195,9 +1278,19 @@ const handlers: Handlers = {
         actual = read.text;
         pass = actual.includes(squash(String(expected)));
       }
+      // A match with a value the executor itself entered counts only with evidence that is not the executor's.
+      if (pass) {
+        entered = await independent(
+          s,
+          `Assertion ${assertionId} was not compared`,
+          typeof actual === "number" ? { numbers: [actual, ...(readAs === undefined ? [] : [readAs])] } : { texts: [actual, String(expected)] },
+          target,
+          locator,
+        );
+      }
     }
 
-    const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched, scope, ...counted });
+    const evidence = { ...(await gatherEvidence(s, assertion, target, { locator, raw, matched, scope, ...counted })), ...(entered ? { entered } : {}) };
     const shot = await screenshot(s, `check-${assertionId}`, locator);
     s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, screenshot: shot });
     return `Recorded ${assertionId}: expected ${expected}, actual ${actual}${readAs === undefined ? "" : ` (read as ${readAs}, converted to the assertion's unit)`} -> ${pass ? "match" : "MISMATCH"}. This result is final.`;
@@ -1337,6 +1430,7 @@ export async function runTool(
     } finally {
       await Promise.all(session.pendingErrors ?? []);
       session.pendingErrors = [];
+      if (session.supplied) await settled(session.supplied);
       session.acting = undefined;
     }
     const met = (session.appErrors ?? []).slice(before).filter((e) => e.source === "response");

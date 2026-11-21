@@ -16,7 +16,8 @@ export function validatePlan(
   manifest: Manifest,
   maxScenarios: number,
   /** `declared`: formulas may only use observations the plan declares. Set for a live model; off for plans recorded before that rule. */
-  options: { declared?: boolean } = {},
+  /** `quoted`: an expected value must itself be stated by the approved text it cites. Set where the plan is not the engine's own. */
+  options: { declared?: boolean; quoted?: boolean } = {},
 ): { plan: Plan; problems: string[] } {
   const problems: string[] = [];
   const trimmed: string[] = [];
@@ -159,6 +160,16 @@ export function validatePlan(
         if (!a.expectedText) fault = "needs expectedText";
         else expected = { literal: a.expectedText };
       }
+      if (!fault && options.quoted === true && expected) {
+        // The expected value itself must be in the approved text the comparison
+        // cites, not only the requirement. What a plan expects beyond that is its own.
+        const missing = notQuoted(expected, source.quote, a.unit ?? "plain");
+        if (missing) {
+          problems.push(`${where} expects ${missing}, which the approved text it cites does not state ("${source.quote.slice(0, 200)}"); an expected value must be stated by the approved text. It was removed.`);
+          clarifications.push({ scenarioId: d.id, question: `What is the intended outcome for: ${a.description}? The approved text cited does not state the value expected.` });
+          continue;
+        }
+      }
       if (fault) {
         problems.push(`${where} ${fault}; it was removed.`);
         continue;
@@ -264,4 +275,31 @@ export function validatePlan(
     analysis.requirements.filter((r) => r.kind === "documented").flatMap((r) => (r.examples ?? []).map((e) => ({ ...e, requirementId: r.id }))),
   );
   return { plan, problems };
+}
+
+const QUOTED_NUMBER = /(?<![\p{L}\p{N}_.])-?\d[\d,]*(?:\.\d+)?(?![\p{L}_])/gu;
+
+/**
+ * Says what part of an expected value the quoted text does not state, if any.
+ * A number must be written in the text, in the unit expected or as the same
+ * amount in whole units or hundredths. A text must be in it word for word. A
+ * formula may calculate with recorded values, but every number written in it
+ * must be in the text (as written, or as a percentage of it).
+ */
+export function notQuoted(expected: NonNullable<Assertion["expected"]>, quote: string, unit: string): string | undefined {
+  const stated = (quote.match(QUOTED_NUMBER) ?? []).map((n) => Number(n.replace(/,/g, "")));
+  const has = (n: number, scales: number[]) => stated.some((s) => scales.some((scale) => Math.abs(s * scale - n) < 1e-9));
+  if ("literal" in expected) {
+    if (typeof expected.literal === "number") {
+      const scales = unit === "currency-hundredths" ? [1, 100] : unit === "currency-units" ? [1, 0.01] : [1];
+      return has(expected.literal, scales) ? undefined : `the number ${expected.literal}`;
+    }
+    const squash = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+    const wanted = squash(expected.literal);
+    return wanted !== "" && squash(quote).includes(wanted) ? undefined : `the text ${JSON.stringify(expected.literal.slice(0, 80))}`;
+  }
+  // Numbers written in the formula. A name such as "total2" is a recorded value, not a number.
+  const written = (expected.formula.match(/(?<![\p{L}\p{N}_.])\d+(?:\.\d+)?(?![\p{L}_])/gu) ?? []).map(Number);
+  const absent = written.filter((n) => !has(n, [1, 0.01, 100]));
+  return absent.length > 0 ? `a calculation with ${absent.join(", ")}` : undefined;
 }

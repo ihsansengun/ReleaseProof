@@ -248,6 +248,12 @@ export const Evidence = z.object({
   before: z.array(z.object({ name: z.string(), when: z.string().optional(), value: z.number(), step: z.number().optional() })),
   /** The last step before the comparison that could change the application's state. */
   action: z.object({ step: z.number(), tool: z.string(), what: z.string() }).optional(),
+  /**
+   * Set when the value compared is one the executor itself entered earlier:
+   * the step and the way it was entered, and the later read of the
+   * application that contained it. Without such a read nothing is compared.
+   */
+  entered: z.object({ step: z.number(), how: z.string(), confirmedBy: z.string() }).optional(),
   /** How the thing compared was identified. */
   target: z.object({
     locatedBy: z.string(),

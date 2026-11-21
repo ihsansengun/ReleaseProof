@@ -144,6 +144,13 @@ export type RemoteRun = {
   snapshots: { id: string; sha256: string; approvedBy: string; approvedAt: string; keyId: string }[];
   /** Always "recorded" for now: decisions came from a recording, and no model was called. */
   executionMode: "recorded";
+  /**
+   * Whether a scenario's "passed" may be taken as a verdict on the criteria.
+   * Always false for now: which element a comparison reads is still chosen by
+   * the recording, so a pass here is evidence of what the application showed.
+   * Nothing but a decision recorded in this engine changes it.
+   */
+  verdictsTrusted: false;
   limits: { maxScenarios: number; maxMinutes: number; maxUsd: number };
   analysis: Analysis;
   analysisNotes: string[];
@@ -212,10 +219,11 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
     conflicts: attributed.conflicts.map((conflict, index) => ({ ...conflict, id: `C${index + 1}` })),
   };
 
-  // The recorded plan, checked as a live model's would be: a comparison that
-  // does not cite a requirement quoted from approved text is removed here.
-  // The expected value and the element read remain the recording's.
-  const checked = validatePlan(recording.plan, analysis, manifest, request.limits.maxScenarios, { declared: true });
+  // The recorded plan, checked more strictly than a live model's: a comparison
+  // is removed unless it cites a requirement quoted from approved text and its
+  // expected value is itself stated in that text. The element read remains
+  // the recording's.
+  const checked = validatePlan(recording.plan, analysis, manifest, request.limits.maxScenarios, { declared: true, quoted: true });
 
   await mkdir(options.outDir, { recursive: true });
   const deadline = started + request.limits.maxMinutes * 60_000;
@@ -244,6 +252,8 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
       mode: { kind: "replay", steps },
       // The target and the steps are not this engine's own: the page stays on the target.
       confine: true,
+      // And the plan is not this engine's own: what is looked for must be worded by the approved text.
+      quotedOnly: true,
       expired: () => (ranOut ||= now() >= deadline),
     });
     // From the clock, never from what a result says about itself.
@@ -266,6 +276,7 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
       keyId: snapshot.authority.keyId,
     })),
     executionMode: "recorded",
+    verdictsTrusted: false,
     limits: { maxScenarios: request.limits.maxScenarios, maxMinutes: request.limits.maxMinutes, maxUsd: request.limits.maxUsd },
     analysis,
     analysisNotes: attributed.notes,
