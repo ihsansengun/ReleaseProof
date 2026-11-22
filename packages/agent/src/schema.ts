@@ -363,6 +363,12 @@ export type ScenarioResult = {
   /** Observations that hold text, such as a status read at one moment. */
   textObservations?: Record<string, string>;
   steps: Step[];
+  /**
+   * What the browser showed and said, when the run asked for it to be
+   * collected: a picture and a time for each step, console errors, failed
+   * requests. Evidence of what happened; no verdict rests on it.
+   */
+  capture?: import("./execute/capture.ts").Capture;
   evidence: { trace?: string; dir: string };
   usage?: Usage;
   startedAt: string;

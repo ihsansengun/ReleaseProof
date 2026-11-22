@@ -31,10 +31,13 @@ Adding a field needs no new version; changing what a field means does.
 | `target`, `snapshots` | Where the run went, and the approved criteria snapshots it used, each with its hash and approver. |
 | `coverage` | Requirements by status, `observedOnly`, and scenarios planned, executed and not executed. |
 | `requirements[]` | `{ id, status, observedStatus, text, reason, expected, observed, source, stepIds }`. `text` is the approved text as quoted from the snapshot, never the plan's own wording of it. |
-| `steps[]` | `{ id, scenarioId, action, target, outcome, requirementIds, note, screenshot? }`. `outcome` is `ok`, `mismatch` or `error`. |
+| `steps[]` | `{ id, scenarioId, action, target, outcome, requirementIds, note, atMs?, durationMs?, screenshot? }`. `outcome` is `ok`, `mismatch` or `error`. `atMs` is counted from the start of the run's first scenario. |
 | `profiles[]` | The browser the run used and the page size the run set. Empty when nothing was executed. |
 | `telemetry` | For each kind of evidence, `collected` or `not collected`. |
-| `diagnostics` | `console`, `network`, `analytics`: empty lists until the engine collects them, with `telemetry` saying so. |
+| `diagnostics.console[]` | `{ stepId, level, text }`: errors the page wrote to its console (`error`) and exceptions nothing caught (`uncaught`). Ordinary lines and warnings are not kept. |
+| `diagnostics.network[]` | `{ stepId, method, path, status, kind, failure? }`: requests to the application answered with 400 or above, and requests that got no answer (`status` 0). |
+| `diagnostics.analytics` | An empty list; not collected yet. |
+| `evidenceLimits.leftOut` | How many pictures, console entries and network entries the size limits left out. |
 | `evidence[]` | `{ id, label, mediaType, path, scenarioId }`: files the run wrote, by a path inside the output directory. `id` is in the form the result contract asks of an evidence id, and is the same for the same file of the same run. The file itself is not in `result.json`. |
 | `extensions` | For fields a later engine adds before they are part of this schema. |
 
@@ -111,15 +114,63 @@ and matched; and `verdictsTrusted` is exactly `true`.
 Anything short of that is `unverified`. Unknown, incomplete or unsupported
 evidence never becomes a pass.
 
+## What the browser showed and said
+
+A remote run collects, for every scenario:
+
+- **a picture after each step**, of the window as a person would see it, and
+  the time the step began and took;
+- **console errors** and uncaught exceptions;
+- **failed requests** to the application.
+
+**This is evidence of what happened in the browser, and nothing more.** No
+verdict, requirement status or count is derived from it, here or by a reader:
+a page that loaded, a picture that looks right and a quiet console do not
+establish that a requirement holds, and a noisy console does not fail one.
+A test asserts that adding console errors and failed requests changes neither
+verdict, requirements, coverage nor execution status.
+
+`telemetry.console` and `telemetry.network` are `collected` when every
+scenario that ran listened. An empty list beside `collected` means the run
+listened and heard no error. That is a fact about the console, not about the
+application being right.
+
+It leaves the machine, so it is kept small and kept clean:
+
+| | Limit |
+| --- | --- |
+| One picture | 400,000 bytes. A larger PNG is taken again as a JPEG; if still larger it is left out |
+| All pictures of one scenario | 3,000,000 bytes |
+| Console entries, and network entries, per scenario | 200 each |
+| Any one text | 300 characters |
+
+- Text passes through the scrubbing of the secrets the executor was given,
+  and through the engine's redaction of e-mail addresses, credentials, tokens
+  and long opaque values.
+- An address is given as its path: no query, fragment, parameters or host.
+- A picture cannot be cleaned after it is taken. Before each one, every
+  password field and every field the executor typed a secret into is covered
+  with a flat colour. **Anything else the page shows is in the picture**: a
+  name, an order, an address shown as text. That is what a picture of a page
+  is, and it is why real customer data stays out of these runs for now.
+- No picture is kept of a page that is not the application under test.
+- What a limit left out is counted in `evidenceLimits.leftOut`.
+
+A request the run itself stopped (to any other origin) is not listed as a
+failure of the application. The picture the shared comparison code takes at a
+comparison (`check-….png`, of the whole page, nothing covered) and the
+browser trace stay in the run's directory and are not part of the result.
+
+The pull-request path does not collect any of this: it is off unless a run
+asks.
+
 ## What is not in it yet
 
 Marked `not collected` in `telemetry`, and absent rather than empty-as-clean:
-a screen recording, console messages, failed network requests, analytics
-events and Core Web Vitals. `screenshots` is `collected` when at least one
-comparison has one; only comparison steps have a screenshot so far, and a
-step without one simply names none. The times of steps are not recorded. Browser and device profiles other than the
-one used are not listed. Each is an added field when it comes, not a new
-format.
+a screen recording, analytics events and Core Web Vitals. Browser and device
+profiles other than the one used are not listed. The picture files are named
+in `evidence` by their path in the output; carrying them to a control plane
+is a separate step. Each is an added field when it comes, not a new format.
 
 ## The pull-request path
 

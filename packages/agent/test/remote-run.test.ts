@@ -692,5 +692,25 @@ test("a remote run writes result.json: the engine's verdict, not passed while it
 test("the scenario result the pull-request path shares keeps its fields", async () => {
   const { dir } = await run("160");
   const shared = JSON.parse(readFileSync(path.join(dir, "scenarios", "S1", "result.json"), "utf8")) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(shared).sort(), ["assertionResults", "durationMs", "environment", "evidence", "mode", "observations", "reason", "scenarioId", "startedAt", "steps", "title", "verdict"]);
+  // A remote run asks for the browser's pictures and messages to be collected, which adds one field.
+  assert.deepEqual(Object.keys(shared).sort(), ["assertionResults", "capture", "durationMs", "environment", "evidence", "mode", "observations", "reason", "scenarioId", "startedAt", "steps", "title", "verdict"]);
+});
+
+test("a remote run keeps a picture of every step, and the result names each and times each step", async () => {
+  const { dir } = await run("160");
+  const stated = JSON.parse(readFileSync(path.join(dir, "result.json"), "utf8")) as { steps: { id: string; atMs?: number; screenshot?: { evidenceId: string } }[]; evidence: { id: string; path: string; mediaType: string }[]; telemetry: Record<string, string>; diagnostics: { console: unknown[]; network: unknown[] }; requirements: { status: string }[]; verdict: string };
+  assert.equal(stated.steps.length, 3);
+  for (const step of stated.steps) {
+    assert.equal(typeof step.atMs, "number");
+    const file = stated.evidence.find((entry) => entry.id === step.screenshot?.evidenceId);
+    assert.ok(file, step.id);
+    assert.match(file.path, /^scenarios\/S1\/step-\d\.png$/);
+    assert.ok(existsSync(path.join(dir, file.path)));
+  }
+  assert.equal(stated.telemetry["screenshots"], "collected");
+  assert.equal(stated.telemetry["console"], "collected");
+  assert.equal(stated.telemetry["network"], "collected");
+  // Pictures of every step, a quiet console, and still nothing is verified.
+  assert.equal(stated.verdict, "unverified");
+  assert.ok(stated.requirements.every((requirement) => requirement.status !== "verified"));
 });

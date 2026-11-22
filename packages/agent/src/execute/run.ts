@@ -9,6 +9,7 @@ import { renderReport } from "../report/markdown.ts";
 import type { Manifest, Scenario, ScenarioResult, Step, Usage } from "../schema.ts";
 import { SecretVault } from "../secrets.ts";
 import { briefing, SYSTEM } from "./briefing.ts";
+import { endCapture, startCapture } from "./capture.ts";
 import { replaySteps } from "./replay.ts";
 import { ALL_TOOLS, noteResponse, requestAllowed, suppliedOf, type Session } from "./tools.ts";
 import { computeVerdict } from "./verdict.ts";
@@ -44,6 +45,8 @@ export type SessionOptions = {
   confine?: boolean;
   /** For a run whose plan is not the engine's own: see `Session.untrustedPlan`. */
   untrustedPlan?: boolean;
+  /** Collect a picture and a time for each step, console errors and failed requests. Off unless asked for. */
+  capture?: boolean;
   /** The size of the page. Left to the browser when absent. */
   viewport?: { width: number; height: number };
   /** Says whether the time allowed has run out. A replay asks before every step. */
@@ -152,6 +155,8 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
     });
   }
 
+  if (options.capture) startCapture(session, startedAt.getTime());
+
   if (options.untrustedPlan) {
     // Another window can keep what was typed and hand it to a page opened later. There is one window.
     context.on("page", (other) => {
@@ -216,6 +221,7 @@ export async function closeSession(
   info: { mode: "agent" | "replay"; driver?: string; usage?: Usage },
 ): Promise<ScenarioResult> {
   const { session } = open;
+  const capture = endCapture(session);
   await session.context.tracing.stop({ path: path.join(session.outDir, "trace.zip") });
   await open.browser.close();
 
@@ -243,6 +249,7 @@ export async function closeSession(
     observations: session.observations,
     ...(session.texts && Object.keys(session.texts).length > 0 ? { textObservations: session.texts } : {}),
     steps: session.steps,
+    ...(capture ? { capture } : {}),
     evidence: { trace: "trace.zip", dir: session.outDir },
     usage: info.usage,
     startedAt: open.startedAt.toISOString(),

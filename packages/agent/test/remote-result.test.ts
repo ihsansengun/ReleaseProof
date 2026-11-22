@@ -31,6 +31,15 @@ const scenario = (id: string, verdict: Verdict, actual: number | null, more: Par
     { tool: "navigate", input: { path: "/account" }, ok: true, summary: "URL: /account" },
     { tool: "check", input: { assertionId: "A1", target: { source: "page", by: "testid", value: "loyalty-balance" } }, ok: actual !== null, summary: actual === null ? "Error: not found" : `Recorded A1: expected 160, actual ${actual}` },
   ],
+  capture: {
+    steps: [
+      { step: 1, atMs: 40, durationMs: 300, screenshot: "step-1.png" },
+      { step: 2, atMs: 350, durationMs: 120, screenshot: "step-2.png" },
+    ],
+    console: [],
+    network: [],
+    leftOut: { screenshots: 0, console: 0, network: 0 },
+  },
   evidence: { trace: "trace.zip", dir: `scenarios/${id}` },
   startedAt: "2026-11-22T10:00:00.000Z",
   durationMs: 1200,
@@ -139,7 +148,10 @@ test("evidence is named by its place in the output, and says what it shows, not 
   const result = remoteResult(record([scenario("S1", "passed", 160)]));
   assert.deepEqual(
     result.evidence.map((file) => [file.id, file.mediaType, file.path]),
-    [[evidenceIdOf(RUN_ID, "S1-2", "screenshot"), "image/png", "scenarios/S1/check-A1.png"]],
+    [
+      [evidenceIdOf(RUN_ID, "S1-1", "screenshot"), "image/png", "scenarios/S1/step-1.png"],
+      [evidenceIdOf(RUN_ID, "S1-2", "screenshot"), "image/png", "scenarios/S1/step-2.png"],
+    ],
   );
   assert.ok(!JSON.stringify(result).includes("/somewhere/on/this/machine"), "no path of the engine's own machine");
   assert.deepEqual(result.steps.find((step) => step.action === "check")!.screenshot, { evidenceId: evidenceIdOf(RUN_ID, "S1-2", "screenshot") });
@@ -152,9 +164,12 @@ test("evidence is named by its place in the output, and says what it shows, not 
 
 test("what was not collected is said to be not collected, never left looking clean", () => {
   const result = remoteResult(record([scenario("S1", "passed", 160)]));
-  assert.deepEqual(result.telemetry, { screenshots: "collected", recording: "not collected", trace: "not collected", console: "not collected", network: "not collected", analytics: "not collected", webVitals: "not collected" });
-  const bare = remoteResult(record([scenario("S1", "unverified", null, { evidence: { dir: "scenarios/S1" } })]));
+  assert.deepEqual(result.telemetry, { screenshots: "collected", recording: "not collected", trace: "not collected", console: "collected", network: "collected", analytics: "not collected", webVitals: "not collected" });
+  const bare = remoteResult(record([scenario("S1", "unverified", null, { evidence: { dir: "scenarios/S1" }, capture: undefined })]));
   assert.equal(bare.telemetry.screenshots, "not collected");
+  assert.equal(bare.telemetry.console, "not collected");
+  assert.equal(bare.telemetry.network, "not collected");
+  assert.deepEqual(bare.diagnostics, { console: [], network: [], analytics: [] });
   assert.equal(bare.telemetry.trace, "not collected");
 });
 
@@ -275,4 +290,61 @@ test("each requirement names the approved snapshot it comes from, with its hash 
 test("the result has no pull-request or ticket field", () => {
   const text = JSON.stringify(remoteResult(record([scenario("S1", "passed", 160)]))).toLowerCase();
   for (const word of ["pullrequest", "pull_request", "ticketkey", "ticket", "repository", "commit"]) assert.ok(!text.includes(word), word);
+});
+
+// ---- what the browser showed and said ---------------------------------------------------
+
+test("console errors and failed requests are tied to their steps, and say nothing about any requirement", () => {
+  const noisy = scenario("S1", "passed", 160);
+  noisy.capture!.console.push({ step: 1, level: "error", text: "Failed to load resource" }, { step: 2, level: "uncaught", text: "TypeError: x is undefined" });
+  noisy.capture!.network.push({ step: 1, method: "GET", path: "/api/points", status: 500, kind: "fetch" }, { step: 2, method: "GET", path: "/logo.png", status: 0, kind: "image", failure: "net::ERR_FAILED" });
+  const quiet = remoteResult(record([scenario("S1", "passed", 160)]));
+  const result = remoteResult(record([noisy]));
+  assert.deepEqual(result.diagnostics.console, [
+    { stepId: "S1-1", level: "error", text: "Failed to load resource" },
+    { stepId: "S1-2", level: "uncaught", text: "TypeError: x is undefined" },
+  ]);
+  assert.deepEqual(result.diagnostics.network, [
+    { stepId: "S1-1", method: "GET", path: "/api/points", status: 500, kind: "fetch" },
+    { stepId: "S1-2", method: "GET", path: "/logo.png", status: 0, kind: "image", failure: "net::ERR_FAILED" },
+  ]);
+  // Errors in the console change no verdict, no requirement and no count; and their absence earns nothing.
+  for (const key of ["verdict", "verdictBasis", "requirements", "coverage", "executionStatus"] as const) assert.deepEqual(result[key], quiet[key], key);
+});
+
+test("a picture after every step changes no status, and a step with no picture names none", () => {
+  const partial = scenario("S1", "passed", 160);
+  partial.capture!.steps[0] = { step: 1, atMs: 40, durationMs: 300, noScreenshot: "The page was not on the application under test." };
+  const result = remoteResult(record([partial]));
+  assert.equal(result.steps[0]!.screenshot, undefined);
+  assert.equal(result.steps[1]!.screenshot?.evidenceId, evidenceIdOf(RUN_ID, "S1-2", "screenshot"));
+  assert.equal(result.evidence.length, 1);
+  assert.equal(result.requirements[0]!.status, "unverified");
+  assert.equal(result.verdict, "unverified");
+});
+
+test("a picture is named only by a file name the engine itself gives", () => {
+  const odd = scenario("S1", "passed", 160);
+  odd.capture!.steps[0]!.screenshot = "../../../etc/passwd";
+  odd.capture!.steps[1]!.screenshot = "check-A1.png";
+  assert.deepEqual(remoteResult(record([odd])).evidence, []);
+});
+
+test("steps are timed from the start of the run, so a later scenario's steps come later", () => {
+  const second = scenario("S2", "passed", 160, { startedAt: "2026-11-22T10:00:05.000Z" });
+  const result = remoteResult(record([scenario("S1", "passed", 160), second]));
+  assert.deepEqual(result.steps.map((step) => step.atMs), [40, 350, 5040, 5350]);
+});
+
+test("what the size limits left out is counted and said", () => {
+  const cut = scenario("S1", "passed", 160);
+  cut.capture!.leftOut = { screenshots: 2, console: 5, network: 1 };
+  assert.deepEqual(remoteResult(record([cut])).evidenceLimits, { leftOut: { screenshots: 2, console: 5, network: 1 } });
+  assert.deepEqual(remoteResult(record([scenario("S1", "passed", 160)])).evidenceLimits, { leftOut: { screenshots: 0, console: 0, network: 0 } });
+});
+
+test("evidence ids are different for different steps and for different runs", () => {
+  const other = "b0000000-0000-4000-8000-000000000410";
+  const ids = [evidenceIdOf(RUN_ID, "S1-1", "screenshot"), evidenceIdOf(RUN_ID, "S1-2", "screenshot"), evidenceIdOf(other, "S1-1", "screenshot"), evidenceIdOf(other, "S1-2", "screenshot")];
+  assert.equal(new Set(ids).size, 4);
 });

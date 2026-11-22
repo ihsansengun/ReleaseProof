@@ -104,13 +104,27 @@ export type RemoteResult = {
     outcome: "ok" | "mismatch" | "error";
     requirementIds: string[];
     note: string;
+    /** When the step began, in milliseconds from the start of the run's first scenario, and how long it took. Absent when not timed. */
+    atMs?: number;
+    durationMs?: number;
     /** A screenshot taken at this step, by the id of an entry in `evidence`. */
     screenshot?: { evidenceId: string };
   }[];
   profiles: { name: string; viewport: string; state: "tested" | "not run"; reason: string }[];
   /** For each kind of evidence, whether this run collected it. Anything not collected is absent, never empty-as-if-clean. */
   telemetry: Record<"screenshots" | "recording" | "trace" | "console" | "network" | "analytics" | "webVitals", Telemetry>;
-  diagnostics: { console: unknown[]; network: unknown[]; analytics: unknown[] };
+  /**
+   * Console errors and failed requests, each tied to the step during which it happened. Only errors and
+   * failures are kept: an empty list beside "collected" means the run listened and heard none.
+   */
+  diagnostics: {
+    console: { stepId: string; level: "error" | "uncaught"; text: string }[];
+    /** `status` 0 means the request got no answer. `path` has no query, fragment or host. */
+    network: { stepId: string; method: string; path: string; status: number; kind: string; failure?: string }[];
+    analytics: unknown[];
+  };
+  /** How many pictures and entries the size limits left out. All zero when none was. */
+  evidenceLimits: { leftOut: { screenshots: number; console: number; network: number } };
   /** Files the run wrote, by a path inside the run's output directory. What each shows, not what it proves. */
   evidence: { id: string; label: string; mediaType: string; path: string; scenarioId: string }[];
   /** For fields a later engine adds before they are part of this schema. */
@@ -219,21 +233,45 @@ export function remoteResult(run: RemoteRun): RemoteResult {
   // Steps, each with an id of its own, and the comparisons each check step made.
   const steps: RemoteResult["steps"] = [];
   const evidence: RemoteResult["evidence"] = [];
+  const consoleEntries: RemoteResult["diagnostics"]["console"] = [];
+  const networkEntries: RemoteResult["diagnostics"]["network"] = [];
+  const leftOut = { screenshots: 0, console: 0, network: 0 };
+  const firstStarted = Math.min(...executed.map((result) => Date.parse(result.startedAt)).filter((time) => Number.isFinite(time)), Number.MAX_SAFE_INTEGER);
+  // Console and network count as collected only if every scenario that ran collected them.
+  const listened = executed.length > 0 && executed.every((result) => result.capture !== undefined);
   const stepsOf = new Map<string, string[]>();
   const comparisonsOf = new Map<string, { expected: string; observed: string }[]>();
   for (const result of executed) {
     const assertions = new Map(run.plan.scenarios.find((planned) => planned.scenario.id === result.scenarioId)?.scenario.assertions.map((assertion) => [assertion.id, assertion]) ?? []);
     const compared = new Map(result.assertionResults.map((made) => [made.assertionId, made]));
+    // Times are given from the start of the first scenario, so that steps of a later one come later.
+    const started = Math.max(0, Date.parse(result.startedAt) - firstStarted);
+    for (const said of result.capture?.console ?? []) consoleEntries.push({ stepId: `${result.scenarioId}-${said.step}`, level: said.level, text: said.text });
+    for (const asked of result.capture?.network ?? []) {
+      networkEntries.push({ stepId: `${result.scenarioId}-${asked.step}`, method: METHODS.has(asked.method) ? asked.method : "", path: asked.path, status: asked.status, kind: asked.kind, ...(asked.failure ? { failure: asked.failure } : {}) });
+    }
+    leftOut.screenshots += result.capture?.leftOut.screenshots ?? 0;
+    leftOut.console += result.capture?.leftOut.console ?? 0;
+    leftOut.network += result.capture?.leftOut.network ?? 0;
     result.steps.forEach((step, index) => {
       const id = `${result.scenarioId}-${index + 1}`;
       const assertionId = step.tool === "check" ? (step.input as { assertionId?: string } | null)?.assertionId : undefined;
       const made = assertionId && step.ok ? compared.get(assertionId) : undefined;
       const requirementId = assertionId ? assertions.get(assertionId)?.requirementId : undefined;
       const requirementIds = requirementId ? [requirementId] : [];
+      // The picture taken after this step, where the run collected one. A picture taken at a comparison by the
+      // shared code stays in the run's directory: it is of the whole page and nothing in it is covered.
+      const captured = result.capture?.steps.find((entry) => entry.step === index + 1);
       let screenshot: RemoteResult["steps"][number]["screenshot"];
-      if (made?.screenshot) {
+      if (captured?.screenshot && /^step-\d{1,3}\.(png|jpg)$/.test(captured.screenshot)) {
         const evidenceId = evidenceIdOf(run.runId, id, "screenshot");
-        evidence.push({ id: evidenceId, label: `What the browser showed when ${assertionId} was compared`, mediaType: "image/png", path: path.posix.join("scenarios", result.scenarioId, path.basename(made.screenshot)), scenarioId: result.scenarioId });
+        evidence.push({
+          id: evidenceId,
+          label: `What the browser showed after step ${index + 1} of ${result.scenarioId}`,
+          mediaType: captured.screenshot.endsWith(".jpg") ? "image/jpeg" : "image/png",
+          path: path.posix.join("scenarios", result.scenarioId, captured.screenshot),
+          scenarioId: result.scenarioId,
+        });
         screenshot = { evidenceId };
       }
       steps.push({
@@ -244,6 +282,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         // A comparison step that kept no comparison did not do what it was for.
         outcome: !step.ok || (step.tool === "check" && !made) ? "error" : made && !made.pass ? "mismatch" : "ok",
         requirementIds,
+        ...(captured ? { atMs: started + captured.atMs, durationMs: captured.durationMs } : {}),
         // Written here from the comparison. What a step printed can hold what a page or a request said, and stays in the run's record.
         note: made ? `Expected ${clip(String(made.expected), 120)}, observed ${clip(String(made.actual), 120)}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
         ...(screenshot ? { screenshot } : {}),
@@ -277,7 +316,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
   });
 
   const count = (status: RequirementStatus) => requirements.filter((requirement) => requirement.status === status).length;
-  const screenshots = evidence.some((file) => file.mediaType === "image/png");
+  const screenshots = evidence.length > 0;
   const reason =
     observed === "passed"
       ? "Every planned scenario ran and every comparison matched."
@@ -332,12 +371,14 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       recording: "not collected",
       // A trace is written beside each scenario and holds more than the result vouches for; it is not part of the result.
       trace: "not collected",
-      console: "not collected",
-      network: "not collected",
+      // Collected means the run listened, whether or not anything was said. Only errors and failed requests are kept.
+      console: listened ? "collected" : "not collected",
+      network: listened ? "collected" : "not collected",
       analytics: "not collected",
       webVitals: "not collected",
     },
-    diagnostics: { console: [], network: [], analytics: [] },
+    diagnostics: { console: consoleEntries, network: networkEntries, analytics: [] },
+    evidenceLimits: { leftOut },
     evidence,
     extensions: {},
   };

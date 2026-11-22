@@ -256,6 +256,8 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
       // And the plan is not this engine's own: values are read only from pages and answers as the application served them.
       untrustedPlan: true,
       viewport: REMOTE_VIEWPORT,
+      // What the browser showed and said is collected, as evidence and not as a verdict.
+      capture: true,
       expired: () => (ranOut ||= now() >= deadline),
     });
     // From the clock, never from what a result says about itself.
