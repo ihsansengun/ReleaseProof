@@ -107,6 +107,12 @@ export type Scenario = z.infer<typeof Scenario>;
 
 export const Manifest = z.object({
   baseUrl: z.string().url(),
+  /**
+   * Paths of the application that evidence from a run may name, each under an id. Read only by a run that
+   * collects evidence to leave the machine, which names an endpoint only if its path is exactly one of these;
+   * the entries are checked there. Written by whoever operates the run.
+   */
+  evidenceRoutes: z.array(z.object({ id: z.string(), path: z.string() })).optional(),
   version: z.object({ path: z.string() }).optional(),
   fixtures: z
     .record(
@@ -363,6 +369,12 @@ export type ScenarioResult = {
   /** Observations that hold text, such as a status read at one moment. */
   textObservations?: Record<string, string>;
   steps: Step[];
+  /**
+   * What the browser showed and said, when the run asked for it to be
+   * collected: a picture and a time for each step, console errors, failed
+   * requests. Evidence of what happened; no verdict rests on it.
+   */
+  capture?: import("./execute/capture.ts").Capture;
   evidence: { trace?: string; dir: string };
   usage?: Usage;
   startedAt: string;

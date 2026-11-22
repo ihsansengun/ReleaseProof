@@ -5,6 +5,7 @@ import { evaluateFormula, formulaVariables } from "../formula.ts";
 import { reconcile, scaleUnclear } from "../units.ts";
 import { BlockedCause, type ApplicationError, type ErrorSignal, type AssertionResult, type Evidence, type Outcome, type Scenario, type Step } from "../schema.ts";
 import type { SecretVault } from "../secrets.ts";
+import { capturing, noteSecretField } from "./capture.ts";
 import { answerNotEvidence, arrival, foundInOwnText, newState, noteInput, noteOpened, ownField, pageNotEvidence, placeOf, restoredField, type SuppliedState } from "./supplied.ts";
 
 /** Everything one scenario execution accumulates. */
@@ -59,6 +60,8 @@ export type Session = {
    * look for wording the approved text states. See `supplied.ts`.
    */
   untrustedPlan?: boolean;
+  /** Set while a fill step is entering a secret, so that the field can be covered in pictures. */
+  enteringSecret?: boolean;
   /** The first other origin the page was on at any moment, in a session confined to the application's own. */
   leftTo?: string;
   /** Whether the page has been on the application at all, in a confined session. A blank page after that is somewhere else. */
@@ -1032,6 +1035,7 @@ const handlers: Handlers = {
   async fill(s, { element, text }) {
     const field = await locate(s.page, element);
     await noteInput(suppliedOf(s), field);
+    if (s.enteringSecret) await noteSecretField(s, field);
     await field.fill(text);
     // Some pages move the caret when a field takes the focus, and the new text
     // then lands after the old. What the field holds is checked; if it is not
@@ -1316,8 +1320,10 @@ const handlers: Handlers = {
     // Whether an element is there is not a reading of what it holds.
     await requireEvidence(s, `Assertion ${assertionId} was not compared`, target, locator, assertion.kind !== "present" && assertion.kind !== "absent");
     const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched, scope, ...counted });
-    const shot = await screenshot(s, `check-${assertionId}`, locator);
-    s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, screenshot: shot });
+    // The picture of the whole page at a comparison has nothing in it covered. A run that collects what may leave
+    // the machine takes its own pictures, covered, after every step, and does not take this one.
+    const shot = capturing(s) ? undefined : await screenshot(s, `check-${assertionId}`, locator);
+    s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, ...(shot === undefined ? {} : { screenshot: shot }) });
     return `Recorded ${assertionId}: expected ${expected}, actual ${actual}${readAs === undefined ? "" : ` (read as ${readAs}, converted to the assertion's unit)`} -> ${pass ? "match" : "MISMATCH"}. This result is final.`;
   },
 
@@ -1450,6 +1456,7 @@ export async function runTool(
     const resolved = session.vault.resolve(parsed.data);
     const before = session.appErrors?.length ?? 0;
     session.acting = USER_ACTIONS.has(tool) ? tool : undefined;
+    session.enteringSecret = tool === "fill" && JSON.stringify(input ?? null).includes("{{secret:");
     // What already read like a failure before this step is not this step's doing.
     const shownBefore = session.acting ? new Set(await failureLines(session.page)) : undefined;
     try {

@@ -9,6 +9,8 @@ import { renderReport } from "../report/markdown.ts";
 import type { Manifest, Scenario, ScenarioResult, Step, Usage } from "../schema.ts";
 import { SecretVault } from "../secrets.ts";
 import { briefing, SYSTEM } from "./briefing.ts";
+import { endCapture, startCapture } from "./capture.ts";
+import type { EvidenceRoute } from "./kept.ts";
 import { replaySteps } from "./replay.ts";
 import { ALL_TOOLS, noteResponse, requestAllowed, suppliedOf, type Session } from "./tools.ts";
 import { computeVerdict } from "./verdict.ts";
@@ -44,6 +46,10 @@ export type SessionOptions = {
   confine?: boolean;
   /** For a run whose plan is not the engine's own: see `Session.untrustedPlan`. */
   untrustedPlan?: boolean;
+  /** Collect a picture and a time for each step, console errors and failed requests. Off unless asked for. */
+  capture?: boolean;
+  /** With `capture`: the trusted list of paths an endpoint may be named by. With none, no endpoint is named. */
+  evidenceRoutes?: readonly EvidenceRoute[];
   /** The size of the page. Left to the browser when absent. */
   viewport?: { width: number; height: number };
   /** Says whether the time allowed has run out. A replay asks before every step. */
@@ -97,7 +103,9 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
       else void socket.close({ code: 1008, reason: "not the application under test" });
     });
   }
-  await context.tracing.start({ screenshots: true, snapshots: true });
+  // A browser trace holds pictures and copies of every page, with nothing covered. A run that collects what may
+  // leave the machine does not record one, so that there is none to upload or expose by mistake.
+  if (!options.capture) await context.tracing.start({ screenshots: true, snapshots: true });
 
   const session: Session = {
     scenario,
@@ -151,6 +159,8 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
       session.leftTo = seen;
     });
   }
+
+  if (options.capture) startCapture(session, startedAt.getTime(), options.evidenceRoutes ?? []);
 
   if (options.untrustedPlan) {
     // Another window can keep what was typed and hand it to a page opened later. There is one window.
@@ -216,7 +226,8 @@ export async function closeSession(
   info: { mode: "agent" | "replay"; driver?: string; usage?: Usage },
 ): Promise<ScenarioResult> {
   const { session } = open;
-  await session.context.tracing.stop({ path: path.join(session.outDir, "trace.zip") });
+  const capture = endCapture(session);
+  if (!capture) await session.context.tracing.stop({ path: path.join(session.outDir, "trace.zip") });
   await open.browser.close();
 
   const outcome = session.outcome ?? { kind: "stopped" as const, reason: "No outcome recorded." };
@@ -243,7 +254,8 @@ export async function closeSession(
     observations: session.observations,
     ...(session.texts && Object.keys(session.texts).length > 0 ? { textObservations: session.texts } : {}),
     steps: session.steps,
-    evidence: { trace: "trace.zip", dir: session.outDir },
+    ...(capture ? { capture } : {}),
+    evidence: { trace: capture ? "not recorded" : "trace.zip", dir: session.outDir },
     usage: info.usage,
     startedAt: open.startedAt.toISOString(),
     durationMs: Date.now() - open.startedAt.getTime(),

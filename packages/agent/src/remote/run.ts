@@ -22,6 +22,7 @@
  * evidence of what the application showed, not a verdict on the criteria, and
  * the record says which it is (`executionMode`).
  */
+import { trustedRoutes, type EvidenceRoute } from "../execute/kept.ts";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -33,6 +34,9 @@ import { validatePlan } from "../validate.ts";
 import { isStartable, type AuthoritativeSnapshot, type StartableRun } from "./authority.ts";
 import { RemoteRequestRefused, type AdmittedRun } from "./request.ts";
 import { remoteResult, REMOTE_VIEWPORT } from "./result.ts";
+
+/** The longest quote of approved text a requirement may carry. */
+const MAX_QUOTE = 600;
 
 /** The version of the recording format this engine reads. */
 export const REMOTE_RECORDING_VERSION = 1;
@@ -143,6 +147,8 @@ export type RemoteRun = {
   target: { baseUrl: string; /** Present, and true, when the target was on the engine's own machine: a trial, not a worker's run. */ localTarget?: true };
   /** Every snapshot the run used, with its hash and who approved it. */
   snapshots: { id: string; sha256: string; approvedBy: string; approvedAt: string; keyId: string }[];
+  /** The paths evidence may name, as the operator's manifest listed them and this engine checked them. Only their ids reach the result. */
+  evidenceRoutes: EvidenceRoute[];
   /** Always "recorded" for now: decisions came from a recording, and no model was called. */
   executionMode: "recorded";
   /**
@@ -213,8 +219,21 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
   // The recording's reading of the criteria, checked against the approved text.
   // A requirement is documented only if its quote is found in a snapshot;
   // nothing the recording says about trust is read.
+  // The paths that evidence may name: the operator's list, each entry checked. Not the recording's, not a page's.
+  const evidenceRoutes = trustedRoutes(manifest.evidenceRoutes);
   const sources = snapshotSources(snapshots);
-  const attributed = attribute(recording.analysis, sources);
+  // In a remote run a quote is the approved text itself or it is nothing: the same characters, in the same case,
+  // with the same spaces, and no longer than a requirement is. A quote that only reads like the approved text
+  // once formatting is ignored is the recording's own string, and that string would be shown as the requirement.
+  const exact = (quote: unknown) => typeof quote === "string" && quote.trim().length > 0 && quote.length <= MAX_QUOTE && snapshots.some((snapshot) => snapshot.content.includes(quote));
+  const asRecorded = recording.analysis as { requirements?: unknown };
+  const strict = {
+    ...recording.analysis,
+    ...(Array.isArray(asRecorded.requirements)
+      ? { requirements: asRecorded.requirements.map((requirement: { quote?: unknown }) => (requirement !== null && typeof requirement === "object" && !exact(requirement.quote) ? { ...requirement, quote: "" } : requirement)) }
+      : {}),
+  } as typeof recording.analysis;
+  const attributed = attribute(strict, sources);
   const analysis: Analysis = {
     ...attributed.analysis,
     conflicts: attributed.conflicts.map((conflict, index) => ({ ...conflict, id: `C${index + 1}` })),
@@ -256,6 +275,9 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
       // And the plan is not this engine's own: values are read only from pages and answers as the application served them.
       untrustedPlan: true,
       viewport: REMOTE_VIEWPORT,
+      // What the browser showed and said is collected, as evidence and not as a verdict.
+      capture: true,
+      evidenceRoutes,
       expired: () => (ranOut ||= now() >= deadline),
     });
     // From the clock, never from what a result says about itself.
@@ -270,6 +292,7 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
     workspaceId: request.workspaceId,
     projectId: request.projectId,
     target: { baseUrl, ...(new URL(baseUrl).hostname === "localhost" ? { localTarget: true as const } : {}) },
+    evidenceRoutes,
     snapshots: snapshots.map((snapshot) => ({
       id: snapshot.id,
       sha256: snapshot.sha256,

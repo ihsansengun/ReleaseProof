@@ -11,6 +11,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { filesThatMayLeave } from "../src/remote/result.ts";
 import { promisify } from "node:util";
 import { authoriseForExecution, authoriseRemoteRun, memoryLedger, scopeSha256, signedStatement, type Approval, type StartableRun, type TrustedKeys } from "../src/remote/authority.ts";
 import { admitRemoteRun, RemoteRequestRefused, sha256Hex } from "../src/remote/request.ts";
@@ -154,10 +155,17 @@ test("KAN-16 criterion 2: the approved snapshot sets the expected value, and a m
   // The comparison names the snapshot it rests on.
   const planned = result.plan.scenarios[0]!.scenario.assertions[0]!;
   assert.deepEqual(planned.provenance, { sourceId: SNAPSHOT, trust: "authoritative", origin: `criteria snapshot "${SNAPSHOT}"`, quote: QUOTE });
-  // A real screenshot was captured at the comparison.
-  const shot = path.join(dir, "scenarios", "S1", "check-A1.png");
-  assert.ok(existsSync(shot), "a screenshot of the comparison exists");
-  assert.ok(readFileSync(shot).subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "and it is a PNG image");
+  // The picture kept of a step is one the run covered itself. No picture of the whole page is taken at the
+  // comparison, and no browser trace is recorded: neither is covered, so neither is written at all.
+  const kept = readdirSync(path.join(dir, "scenarios", "S1"));
+  assert.ok(kept.some((name) => /^step-\d+\.png$/.test(name)), kept.join(" "));
+  assert.ok(readFileSync(path.join(dir, "scenarios", "S1", kept.find((name) => name.startsWith("step-"))!)).subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "and it is a PNG image");
+  assert.deepEqual(kept.filter((name) => name.startsWith("check-") || name === "trace.zip"), []);
+  // What may leave the machine is the result and the pictures it names, each of which is there.
+  const written = JSON.parse(readFileSync(path.join(dir, "result.json"), "utf8"));
+  const leaving = filesThatMayLeave(written);
+  assert.ok(leaving.length >= 2 && leaving.every((file) => file === "result.json" || /^scenarios\/S1\/step-\d+\.png$/.test(file)), leaving.join(" "));
+  for (const file of leaving) assert.ok(existsSync(path.join(dir, file)), file);
 });
 
 // ---- criterion 4: nothing but an approved snapshot sets an expected value -------
@@ -179,6 +187,11 @@ for (const [what, over] of [
   ["no source id at all", { sourceId: "" }],
   ["a quote the snapshot does not contain", { quote: "After a first paid order the loyalty balance is 999." }],
   ["a requirement it calls inferred", { kind: "inferred", sourceId: "", quote: "" }],
+  // The approved words in the recording's own writing: other capitals, other spacing, signs of its own put in.
+  // The quote is shown as the requirement, so it is the approved text itself or it is nothing.
+  ["the approved words in other capitals", { quote: QUOTE.toUpperCase() }],
+  ["the approved words with formatting of its own", { quote: `${QUOTE}\n\n${"*_`#> ".repeat(700)}` }],
+  ["the approved words with other spacing", { quote: QUOTE.replace(" ", "  ") }],
 ] as const) {
   test(`KAN-16 criterion 4: a recording that cites ${what} sets no expected value`, async () => {
     const { result } = await run("160", recording({ requirement: over }));
@@ -271,6 +284,20 @@ test("a request whose criteria text was swapped under an unchanged hash is refus
   assert.throws(() => authoriseRemoteRun(admitted, [approvalFor(raw, now)], trusted, now), /does not match its hash/);
 });
 
+test("a step names an endpoint only by an id from the operator's list of routes; a path that is not on it is not recorded, and no path is written", async () => {
+  const listed = await run("160", recording(), {}, { manifest: { baseUrl: "http://ignored.localhost:9", evidenceRoutes: [{ id: "account-page", path: "/account" }, { id: "Bad Id", path: "/account" }, { id: "pattern", path: "/acc*" }] } as never });
+  assert.deepEqual(listed.result.evidenceRoutes, [{ id: "account-page", path: "/account" }]);
+  const withList = JSON.parse(readFileSync(path.join(listed.dir, "result.json"), "utf8"));
+  assert.ok(withList.steps.some((step: { action: string; target: string }) => step.action === "navigate" && step.target === "account-page"), JSON.stringify(withList.steps.map((step: { target: string }) => step.target)));
+  const unlisted = await run("160");
+  const without = JSON.parse(readFileSync(path.join(unlisted.dir, "result.json"), "utf8"));
+  assert.ok(without.steps.filter((step: { action: string }) => step.action === "navigate").every((step: { target: string }) => step.target === "Endpoint not recorded"));
+  for (const written of [withList, without]) {
+    const outside = JSON.stringify([written.steps.map((step: { target: string; note: string }) => [step.target, step.note]), written.diagnostics]);
+    assert.ok(!/[/?#%]/.test(outside), outside);
+  }
+});
+
 test("the run goes to the approved target, whatever address a manifest carries", async () => {
   const hits: string[] = [];
   const { baseUrl, server } = await app("160", hits);
@@ -361,7 +388,9 @@ test("the command runs an approved request once, with no model key present, and 
 
     const first = await exec(args(path.join(dir, "out-1")));
     assert.equal(first.code, 0, first.text);
-    assert.match(first.text, /S1 {2}failed/);
+    assert.match(first.text, /scenario 1 {2}failed/);
+  // What is printed may reach a log: it holds no reason a scenario gave and none of a recording's words.
+  assert.doesNotMatch(first.text, /Replay|diverged|loyalty-balance|testid/);
     assert.match(first.text, /with no model/);
     const written = JSON.parse(readFileSync(path.join(dir, "out-1", "remote-run.json"), "utf8")) as RemoteRun;
     assert.deepEqual([written.results[0]!.assertionResults[0]!.expected, written.results[0]!.assertionResults[0]!.actual], [160, 60]);
@@ -692,5 +721,25 @@ test("a remote run writes result.json: the engine's verdict, not passed while it
 test("the scenario result the pull-request path shares keeps its fields", async () => {
   const { dir } = await run("160");
   const shared = JSON.parse(readFileSync(path.join(dir, "scenarios", "S1", "result.json"), "utf8")) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(shared).sort(), ["assertionResults", "durationMs", "environment", "evidence", "mode", "observations", "reason", "scenarioId", "startedAt", "steps", "title", "verdict"]);
+  // A remote run asks for the browser's pictures and messages to be collected, which adds one field.
+  assert.deepEqual(Object.keys(shared).sort(), ["assertionResults", "capture", "durationMs", "environment", "evidence", "mode", "observations", "reason", "scenarioId", "startedAt", "steps", "title", "verdict"]);
+});
+
+test("a remote run keeps a picture of every step, and the result names each and times each step", async () => {
+  const { dir } = await run("160");
+  const stated = JSON.parse(readFileSync(path.join(dir, "result.json"), "utf8")) as { steps: { id: string; atMs?: number; screenshot?: { evidenceId: string } }[]; evidence: { id: string; path: string; mediaType: string }[]; telemetry: Record<string, string>; diagnostics: { console: unknown[]; network: unknown[] }; requirements: { status: string }[]; verdict: string };
+  assert.equal(stated.steps.length, 3);
+  for (const step of stated.steps) {
+    assert.equal(typeof step.atMs, "number");
+    const file = stated.evidence.find((entry) => entry.id === step.screenshot?.evidenceId);
+    assert.ok(file, step.id);
+    assert.match(file.path, /^scenarios\/S1\/step-\d\.png$/);
+    assert.ok(existsSync(path.join(dir, file.path)));
+  }
+  assert.equal(stated.telemetry["screenshots"], "collected");
+  assert.equal(stated.telemetry["console"], "collected");
+  assert.equal(stated.telemetry["network"], "collected");
+  // Pictures of every step, a quiet console, and still nothing is verified.
+  assert.equal(stated.verdict, "unverified");
+  assert.ok(stated.requirements.every((requirement) => requirement.status !== "verified"));
 });

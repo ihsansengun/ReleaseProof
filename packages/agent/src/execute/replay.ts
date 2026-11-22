@@ -1,4 +1,5 @@
 import type { Step } from "../schema.ts";
+import { captureStep } from "./capture.ts";
 import { runTool, type Session } from "./tools.ts";
 
 export type ReplayLimits = {
@@ -55,8 +56,11 @@ export async function replaySteps(session: Session, recorded: Step[], limits: Re
     const texts = session.texts ? { ...session.texts } : undefined;
     const signals = session.errorSignals?.length ?? 0;
     const errors = session.appErrors?.length ?? 0;
+    const began = Date.now();
     const { ok, output } = await runTool(session, step.tool, step.input);
     const after = strayed(session, limits.confineTo);
+    // A picture and a time for the step, where the run collects them. Never of a page that is not the application.
+    await captureStep(session, began, after === undefined ? { ok: true } : { ok: false, why: "The page was not on the application under test." });
     if (after !== undefined) {
       // What a step read while the page was somewhere else is not evidence about the application.
       session.assertionResults.length = compared;

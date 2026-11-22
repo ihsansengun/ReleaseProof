@@ -29,6 +29,7 @@
  */
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { ENDPOINT_NOT_RECORDED, endpointOfPath, isEndpoint, MOST_COUNTED, plainAmount, trustedRoutes, type EvidenceRoute } from "../execute/kept.ts";
 import { assess, type RequirementStatus } from "../report/readiness.ts";
 import type { ScenarioResult, Verdict } from "../schema.ts";
 import type { RemoteRun } from "./run.ts";
@@ -104,13 +105,28 @@ export type RemoteResult = {
     outcome: "ok" | "mismatch" | "error";
     requirementIds: string[];
     note: string;
+    /** When the step began, in milliseconds from the start of the run's first scenario, and how long it took. Absent when not timed. */
+    atMs?: number;
+    durationMs?: number;
     /** A screenshot taken at this step, by the id of an entry in `evidence`. */
     screenshot?: { evidenceId: string };
   }[];
   profiles: { name: string; viewport: string; state: "tested" | "not run"; reason: string }[];
   /** For each kind of evidence, whether this run collected it. Anything not collected is absent, never empty-as-if-clean. */
   telemetry: Record<"screenshots" | "recording" | "trace" | "console" | "network" | "analytics" | "webVitals", Telemetry>;
-  diagnostics: { console: unknown[]; network: unknown[]; analytics: unknown[] };
+  /**
+   * Console errors and failed requests, each tied to the step during which it happened. Only errors and
+   * failures are kept: an empty list beside "collected" means the run listened and heard none.
+   */
+  diagnostics: {
+    /** What an error said and where it came from are not kept. `endpoint` is a name from the trusted list of routes, or "Endpoint not recorded"; `count` is how often it happened in the step. */
+    console: { stepId: string; level: "error" | "uncaught"; endpoint: string; count: number }[];
+    /** No address or part of one is kept. `status` 0 means the request got no answer; `failure` says which it was; `kind` is the browser's kind of request. */
+    network: { stepId: string; status: number; kind: string; failure: "error answer" | "no answer"; endpoint: string; count: number }[];
+    analytics: unknown[];
+  };
+  /** How many pictures and entries the size limits left out. All zero when none was. */
+  evidenceLimits: { leftOut: { screenshots: number; console: number; network: number } };
   /** Files the run wrote, by a path inside the run's output directory. What each shows, not what it proves. */
   evidence: { id: string; label: string; mediaType: string; path: string; scenarioId: string }[];
   /** For fields a later engine adds before they are part of this schema. */
@@ -150,44 +166,55 @@ export function evidenceIdOf(runId: string, stepId: string, kind: string): strin
 /** The steps an executor can take. Anything else a recording calls a step is not named here. */
 const ACTIONS = new Set(["navigate", "click", "fill", "select", "press", "upload", "api_request", "observe", "check", "finish"]);
 const LOCATED_BY = new Set(["role", "label", "text", "testid", "labelled", "cell"]);
-const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]);
-/** How much of a recording's own words (a locator, a path) is shown. Enough to tell steps apart. */
-const WORDS = 80;
+/** A time a run can have: from nothing up to a day, in milliseconds. */
+const within = (ms: unknown): ms is number => typeof ms === "number" && Number.isFinite(ms) && ms >= 0 && ms <= 86_400_000;
+/** Console entries, and network entries, taken from one scenario. The same number the collector keeps. */
+const ENTRIES = 60;
+
+/** The kinds of request a browser makes. Any other is "other". */
+const KINDS = new Set(["document", "stylesheet", "image", "media", "font", "script", "texttrack", "xhr", "fetch", "eventsource", "websocket", "manifest", "other"]);
+/** The kinds of element a locator can name by role. Any other is not named. */
+const ROLES = new Set(["button", "link", "textbox", "checkbox", "radio", "combobox", "listbox", "option", "heading", "tab", "menuitem", "row", "cell", "dialog", "switch", "img", "list", "listitem", "navigation", "form", "table", "searchbox", "spinbutton", "slider"]);
 
 /**
- * Where a step went or what it pointed at, in a form that carries as little
- * of the recording's own text as says which step it was. A path is given
- * without its query, fragment, parameters or any host; a locator by its kind
- * and a short part of its words. What was typed, sent or answered is never
- * part of it.
+ * Where a step went or what it pointed at, in a form that holds none of the
+ * recording's or the page's own words and no address. A step that asks for a
+ * path names an endpoint only when that path is exactly one on the trusted
+ * list of routes, and is otherwise said not to be recorded; a locator is
+ * given by its kind alone, and its role when that is one of the known ones.
+ * What was typed, sent or answered is never part of it.
  */
-function describeTarget(input: unknown): string {
-  const given = (input !== null && typeof input === "object" ? input : {}) as { path?: unknown; method?: unknown; element?: unknown; target?: unknown };
-  if (typeof given.path === "string") {
-    let pathname = "";
-    try {
-      pathname = new URL(given.path, "http://target.invalid").pathname;
-    } catch {
-      pathname = "";
-    }
-    const plain = pathname.split(";")[0] ?? "";
-    const cut = plain !== given.path;
-    const method = typeof given.method === "string" && METHODS.has(given.method) ? `${given.method} ` : "";
-    return `${method}${clip(plain, WORDS)}${cut ? " (rest of the address not shown)" : ""}`;
-  }
-  const element = (given.element ?? given.target) as { source?: unknown; by?: unknown; role?: unknown; value?: unknown; responseId?: unknown } | undefined;
+function describeTarget(input: unknown, routes: readonly EvidenceRoute[]): string {
+  const given = (input !== null && typeof input === "object" ? input : {}) as { path?: unknown; element?: unknown; target?: unknown };
+  if (typeof given.path === "string") return endpointOfPath(routes, given.path);
+  const element = (given.element ?? given.target) as { source?: unknown; by?: unknown; role?: unknown; responseId?: unknown } | undefined;
   if (element === undefined || element === null || typeof element !== "object") return "";
   if (element.source === "api") return typeof element.responseId === "string" && /^R\d{1,4}$/.test(element.responseId) ? `the answer ${element.responseId}` : "an answer";
   if (typeof element.by !== "string" || !LOCATED_BY.has(element.by)) return "";
-  const role = typeof element.role === "string" && /^[a-z]{1,20}$/.test(element.role) ? ` ${element.role}` : "";
-  return `${element.by}${role} "${clip(typeof element.value === "string" ? element.value : "", WORDS)}"`;
+  const role = typeof element.role === "string" && ROLES.has(element.role) ? ` ${element.role}` : "";
+  return `an element found by ${element.by}${role}`;
 }
+
+/** A value of a comparison as this file gives it: itself when it is a plain number or amount, and otherwise said not to be shown. */
+const NOT_SHOWN = "not shown";
+const shownValue = (value: unknown): string => plainAmount(value) ?? NOT_SHOWN;
 
 /**
  * Builds the result of a remote run from its record. Pure: it reads nothing
  * but the record, and states nothing the record does not hold.
  */
 export function remoteResult(run: RemoteRun): RemoteResult {
+  // Where the run went, as the approved address's origin and nothing more of it.
+  let whereTo = "an address that is not shown";
+  try {
+    const url = new URL(run.target.baseUrl);
+    if (/^https?:$/.test(url.protocol) && url.username === "" && url.password === "") whereTo = `${url.origin}/`;
+  } catch {
+    // Left as not shown.
+  }
+  // The trusted list of routes, checked again here: only an id on it may stand where an endpoint is named.
+  const routes = trustedRoutes(run.evidenceRoutes);
+  const routeIds = routes.map((route) => route.id);
   // Taken from the record, where nothing can yet set it to true.
   const trusted: boolean = (run.verdictsTrusted as unknown) === true;
   const executed = run.results.filter((result) => result.steps.length > 0);
@@ -219,39 +246,104 @@ export function remoteResult(run: RemoteRun): RemoteResult {
   // Steps, each with an id of its own, and the comparisons each check step made.
   const steps: RemoteResult["steps"] = [];
   const evidence: RemoteResult["evidence"] = [];
+  const consoleEntries: RemoteResult["diagnostics"]["console"] = [];
+  const networkEntries: RemoteResult["diagnostics"]["network"] = [];
+  const leftOut = { screenshots: 0, console: 0, network: 0 };
+  const firstStarted = Math.min(...executed.map((result) => Date.parse(result.startedAt)).filter((time) => Number.isFinite(time)), Number.MAX_SAFE_INTEGER);
+  // Console and network count as collected only if every scenario that ran collected them.
+  const listened = executed.length > 0 && executed.every((result) => result.capture !== null && typeof result.capture === "object" && Array.isArray(result.capture.console) && Array.isArray(result.capture.network));
   const stepsOf = new Map<string, string[]>();
   const comparisonsOf = new Map<string, { expected: string; observed: string }[]>();
   for (const result of executed) {
     const assertions = new Map(run.plan.scenarios.find((planned) => planned.scenario.id === result.scenarioId)?.scenario.assertions.map((assertion) => [assertion.id, assertion]) ?? []);
     const compared = new Map(result.assertionResults.map((made) => [made.assertionId, made]));
+    // Times are given from the start of the first scenario, so that steps of a later one come later.
+    const begun = Date.parse(result.startedAt);
+    const started = Number.isFinite(begun) ? Math.max(0, begun - firstStarted) : Number.NaN;
+    // What was collected is taken in again here by its own rules, not on trust: this file is what leaves the
+    // machine, whoever wrote the record it is built from. An entry that does not fit is left out and counted.
+    // A scenario is named in this file only by a plain name.
+    const scenarioId = typeof result.scenarioId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(result.scenarioId) ? result.scenarioId : "scenario";
+    const stepOf = (value: unknown) => `${scenarioId}-${Math.min(Math.max(1, Number.isInteger(value) ? (value as number) : 1), Math.max(1, result.steps.length))}`;
+    const count = (value: unknown) => (Number.isInteger(value) && (value as number) >= 0 ? Math.min(value as number, 1_000_000) : 0);
+    const said = Array.isArray(result.capture?.console) ? result.capture.console : [];
+    const asked = Array.isArray(result.capture?.network) ? result.capture.network : [];
+    for (const entry of said.slice(0, ENTRIES)) {
+      try {
+        if ((entry?.level !== "error" && entry?.level !== "uncaught") || !Number.isInteger(entry.count) || entry.count < 1) {
+          leftOut.console += 1;
+          continue;
+        }
+        consoleEntries.push({ stepId: stepOf(entry.step), level: entry.level, endpoint: isEndpoint(routeIds, entry.endpoint) ? entry.endpoint : ENDPOINT_NOT_RECORDED, count: Math.min(entry.count, MOST_COUNTED) });
+      } catch {
+        // An entry that cannot be read is left out, and the rest of the result stands.
+        leftOut.console += 1;
+      }
+    }
+    for (const entry of asked.slice(0, ENTRIES)) {
+      try {
+        addRequest(entry);
+      } catch {
+        leftOut.network += 1;
+      }
+    }
+    function addRequest(entry: (typeof asked)[number]): void {
+      const status = Number.isInteger(entry?.status) && (entry.status === 0 || (entry.status >= 400 && entry.status <= 599)) ? entry.status : undefined;
+      if (status === undefined || !Number.isInteger(entry.count) || entry.count < 1) {
+        leftOut.network += 1;
+        return;
+      }
+      networkEntries.push({
+        stepId: stepOf(entry.step),
+        status,
+        kind: typeof entry.kind === "string" && KINDS.has(entry.kind) ? entry.kind : "other",
+        // Said from the status, not taken from the record.
+        failure: status === 0 ? "no answer" : "error answer",
+        endpoint: isEndpoint(routeIds, entry.endpoint) ? entry.endpoint : ENDPOINT_NOT_RECORDED,
+        count: Math.min(entry.count, MOST_COUNTED),
+      });
+    }
+    leftOut.screenshots += count(result.capture?.leftOut?.screenshots);
+    leftOut.console += count(result.capture?.leftOut?.console) + Math.max(0, said.length - ENTRIES);
+    leftOut.network += count(result.capture?.leftOut?.network) + Math.max(0, asked.length - ENTRIES);
     result.steps.forEach((step, index) => {
-      const id = `${result.scenarioId}-${index + 1}`;
+      const id = `${scenarioId}-${index + 1}`;
       const assertionId = step.tool === "check" ? (step.input as { assertionId?: string } | null)?.assertionId : undefined;
       const made = assertionId && step.ok ? compared.get(assertionId) : undefined;
       const requirementId = assertionId ? assertions.get(assertionId)?.requirementId : undefined;
       const requirementIds = requirementId ? [requirementId] : [];
+      // The picture taken after this step, where the run collected one.
+      const captured = Array.isArray(result.capture?.steps) ? result.capture.steps.find((entry) => entry?.step === index + 1) : undefined;
       let screenshot: RemoteResult["steps"][number]["screenshot"];
-      if (made?.screenshot) {
+      if (typeof captured?.screenshot === "string" && /^step-\d{1,3}\.(png|jpg)$/.test(captured.screenshot) && scenarioId === result.scenarioId) {
         const evidenceId = evidenceIdOf(run.runId, id, "screenshot");
-        evidence.push({ id: evidenceId, label: `What the browser showed when ${assertionId} was compared`, mediaType: "image/png", path: path.posix.join("scenarios", result.scenarioId, path.basename(made.screenshot)), scenarioId: result.scenarioId });
+        evidence.push({
+          id: evidenceId,
+          label: `What the browser showed after step ${index + 1} of ${/^[A-Za-z0-9_-]{1,64}$/.test(result.scenarioId) ? result.scenarioId : "a scenario"}`,
+          mediaType: captured.screenshot.endsWith(".jpg") ? "image/jpeg" : "image/png",
+          path: path.posix.join("scenarios", result.scenarioId, captured.screenshot),
+          scenarioId: result.scenarioId,
+        });
         screenshot = { evidenceId };
       }
       steps.push({
         id,
-        scenarioId: result.scenarioId,
+        scenarioId,
         action: ACTIONS.has(step.tool) ? step.tool : "unknown step",
-        target: describeTarget(step.input),
+        target: describeTarget(step.input, routes),
         // A comparison step that kept no comparison did not do what it was for.
         outcome: !step.ok || (step.tool === "check" && !made) ? "error" : made && !made.pass ? "mismatch" : "ok",
         requirementIds,
+        ...(captured && within(started + captured.atMs) ? { atMs: Math.round(started + captured.atMs) } : {}),
+        ...(captured && within(captured.durationMs) ? { durationMs: Math.round(captured.durationMs) } : {}),
         // Written here from the comparison. What a step printed can hold what a page or a request said, and stays in the run's record.
-        note: made ? `Expected ${clip(String(made.expected), 120)}, observed ${clip(String(made.actual), 120)}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
+        note: made ? `Expected ${shownValue(made.expected)}, observed ${shownValue(made.actual)}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
         ...(screenshot ? { screenshot } : {}),
       });
       if (requirementId) {
         stepsOf.set(requirementId, [...(stepsOf.get(requirementId) ?? []), id]);
-        // The values compared, cut to a length that shows a value and not a page of text.
-        if (made) comparisonsOf.set(requirementId, [...(comparisonsOf.get(requirementId) ?? []), { expected: clip(String(made.expected), 120), observed: clip(String(made.actual), 120) }]);
+        // The values compared, each only if it is a plain number or amount.
+        if (made) comparisonsOf.set(requirementId, [...(comparisonsOf.get(requirementId) ?? []), { expected: shownValue(made.expected), observed: shownValue(made.actual) }]);
       }
     });
   }
@@ -266,7 +358,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       status: withheld ? "unverified" : requirement.status,
       observedStatus: requirement.status,
       // The approved text itself, as quoted from the snapshot. How a plan put it in its own words is not shown as the requirement.
-      text: requirement.quote,
+      text: clip(typeof requirement.quote === "string" ? requirement.quote : "", 600),
       // In the engine's own words, from the comparisons made. The fuller account, which can repeat what a scenario said, is in the run's record.
       reason: withheld ? `Observed, not verified. ${matched(comparisons)} ${NOT_TRUSTED}` : REASON[requirement.status](comparisons),
       expected: comparisons.map((made) => made.expected).join("; "),
@@ -277,7 +369,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
   });
 
   const count = (status: RequirementStatus) => requirements.filter((requirement) => requirement.status === status).length;
-  const screenshots = evidence.some((file) => file.mediaType === "image/png");
+  const screenshots = evidence.length > 0;
   const reason =
     observed === "passed"
       ? "Every planned scenario ran and every comparison matched."
@@ -304,9 +396,9 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     workspaceId: run.workspaceId,
     projectId: run.projectId,
     // Not the plan's own summary of the feature: that is unapproved wording.
-    title: `Run against ${run.target.baseUrl}`,
+    title: `Run against ${whereTo}`,
     summary: clip(summaryOf(run.results, executed.length, planned.length), 600),
-    target: run.target,
+    target: { ...run.target, baseUrl: whereTo },
     snapshots: run.snapshots,
     coverage: {
       requirements: {
@@ -330,14 +422,16 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     telemetry: {
       screenshots: screenshots ? "collected" : "not collected",
       recording: "not collected",
-      // A trace is written beside each scenario and holds more than the result vouches for; it is not part of the result.
+      // A remote run records no browser trace: it would hold what every page showed, with nothing covered.
       trace: "not collected",
-      console: "not collected",
-      network: "not collected",
+      // Collected means the run listened, whether or not anything was said. Only errors and failed requests are kept.
+      console: listened ? "collected" : "not collected",
+      network: listened ? "collected" : "not collected",
       analytics: "not collected",
       webVitals: "not collected",
     },
-    diagnostics: { console: [], network: [], analytics: [] },
+    diagnostics: { console: consoleEntries, network: networkEntries, analytics: [] },
+    evidenceLimits: { leftOut },
     evidence,
     extensions: {},
   };
@@ -348,4 +442,17 @@ function summaryOf(results: ScenarioResult[], executed: number, planned: number)
   const mismatched = results.reduce((sum, result) => sum + result.assertionResults.filter((made) => !made.pass).length, 0);
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   return `${executed} of ${plural(planned, "planned scenario")} ran. ${plural(matched, "comparison")} matched and ${mismatched} did not.`;
+}
+
+/**
+ * The only files of a run's directory that may be uploaded, stored elsewhere
+ * or shown: the result itself and the pictures it names. Everything else a
+ * run writes there (each scenario's own record and report, with what steps
+ * printed and what pages said) holds text that has not been cleaned, and
+ * stays on the machine. A remote run records no browser trace and takes no
+ * uncovered picture at a comparison, so there is none of either to leave.
+ */
+export function filesThatMayLeave(result: RemoteResult): string[] {
+  const named = Array.isArray(result?.evidence) ? result.evidence : [];
+  return ["result.json", ...named.map((entry) => entry?.path).filter((file): file is string => typeof file === "string" && /^scenarios\/[A-Za-z0-9_][A-Za-z0-9_-]{0,63}\/step-\d{1,3}\.(png|jpg)$/.test(file))];
 }
