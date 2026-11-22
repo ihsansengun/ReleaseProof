@@ -54,10 +54,18 @@ trailing slash.
 
 **Plain text**, here and in a binding: well-formed Unicode (no half of a
 surrogate pair, which would be written out as another character), with no
-control character (U+0000 to U+001F, U+007F to U+009F), no soft hyphen
-(U+00AD), and none of U+200B to U+200F, U+2028 to U+202E, U+2060 to U+2069
-and U+FEFF: characters that are not seen, or that change the direction text
-is read in.
+control character (U+0000 to U+001F, U+007F to U+009F), and none of these,
+which are not seen or change the direction text is read in: U+00AD, U+034F,
+U+061C, U+115F, U+1160, U+180E, U+200B to U+200F, U+2028 to U+202E, U+2060
+to U+2069, U+3164, U+FEFF, U+FFF9 to U+FFFB, and the tag characters
+U+E0000 to U+E007F.
+
+The list is not every unseen character there is, and look-alike letters of
+different scripts are not told apart. It also refuses the two joiners
+U+200C and U+200D, which some languages and some emoji need in ordinary
+writing: text that needs them cannot be used in a binding or as an
+approver's name in this version. Lengths here are counted in UTF-16 code
+units.
 
 The first line differs from a criteria approval's
 (`releaseproof-criteria-approval-v1`), so neither can verify as the other,
@@ -133,9 +141,18 @@ Limits and forms:
   underscores.
 - **Text** (a locator's `value` or `name`: at most 200; a `fill` literal: at
   most 500): plain text as defined above, not empty.
-- **A path**: at most 500 characters; begins with `/`; plain text; no space,
-  `?`, `#`, `\` or `%`; no empty segment (so no `//`), and no segment that
-  is `.` or `..`.
+- **A path**: at most 500 characters; begins with `/`; printable ASCII only
+  (U+0021 to U+007E), without `?`, `#`, `\` or `%`; no empty segment (so no
+  `//`), and no segment that is `.` or `..`. A browser reports any other
+  character in a path as percent signs, so a path that needs one cannot be
+  bound in this version. `/a` and `/a/` are two paths.
+- **`snapshotId`**: a letter or digit, then up to 63 letters, digits, `.`,
+  `_` or `-`.
+- **`locale`**: two or three letters, then up to three parts of two to eight
+  letters or digits, joined by `-` (for example `en-GB`).
+- **`timezone`**: at most 64 characters: letters and `_`, then up to two
+  parts of letters, digits, `_`, `+` or `-`, joined by `/` (for example
+  `Europe/London`).
 - **A number**: text of at most 40 characters in plain decimal form:
   optional minus, no leading zeros, optional fraction. It is hashed as
   written, so `1` and `1.0` are different.

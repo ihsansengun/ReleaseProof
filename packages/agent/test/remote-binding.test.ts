@@ -496,7 +496,7 @@ test("a statement has one spelling in bytes: half of a surrogate pair is refused
 test("text that is not seen, or that turns the reading direction, is refused in a statement and in a binding", () => {
   const set = [binding()];
   const good = binding();
-  for (const unseen of ["\u200b", "\u202e", "\ufeff", "\u2028", "\u0085", "\u00ad", "\u2066", "\r", "\t"]) {
+  for (const unseen of ["\u200b", "\u202e", "\ufeff", "\u2028", "\u0085", "\u00ad", "\u2066", "\r", "\t", "\u061c", "\u180e", "\u3164", "\u115f", "\u034f", "\ufff9", "\u{e0041}", "\u200d"]) {
     assert.match(refused({ statements: [{ ...statementFor(set, SNAP_A), approvedBy: `owner${unseen}@releaseproof.test` }], bindings: set }), /binding statement 1 is malformed/, JSON.stringify(unseen));
     const named = { ...good, observation: { ...good.observation, locator: { by: "role", role: "status", name: `Bal${unseen}ance` } } };
     assert.match(refused({ statements: [statementFor(set, SNAP_A)], bindings: [named] }), /binding 1 is malformed/, JSON.stringify(unseen));
@@ -611,13 +611,37 @@ test("the limits are the limits: 40 statements, 200 bindings, 60 steps, a quote 
 test("a path is a plain static path of the target: nothing a browser would read as another place", () => {
   const set = [binding()];
   const good = binding();
-  for (const bad of ["//other.example/x", "/a//b", "/\\other.example", "/a/../b", "/a/./b", "/..", "/a%3Fb", "/a%2e%2e/b", "/a b", "/a\u202eb", "/a?b", "/a#b", ""]) {
+  for (const bad of ["/caf\u00e9", "/\u65e5\u672c", "/a\u00a0b", "//other.example/x", "/a//b", "/\\other.example", "/a/../b", "/a/./b", "/..", "/a%3Fb", "/a%2e%2e/b", "/a b", "/a\u202eb", "/a?b", "/a#b", ""]) {
     const moved = { ...good, observation: { ...good.observation, path: bad } };
     assert.match(refused({ statements: [statementFor(set, SNAP_A)], bindings: [moved] }), /binding 1 is malformed/, JSON.stringify(bad));
   }
   for (const fine of ["/", "/account", "/a/b-c_d.e/f", "/api/test/accounts"]) {
     assert.deepEqual(bindingProblems(binding({ observation: { ...good.observation, path: fine } })), [], fine);
   }
+});
+
+test("ordinary text in other scripts is still text, and the last limits hold", () => {
+  const set = [binding()];
+  const good = binding();
+  for (const name of ["\u05e9\u05dc\u05d5\u05dd", "\u0645\u0631\u062d\u0628\u0627", "\u65e5\u672c\u8a9e", "caf\u00e9", "\u{1f600} ok", "\u{20000}"]) {
+    assert.deepEqual(bindingProblems(binding({ observation: { ...good.observation, locator: { by: "role", role: "status", name } } })), [], name);
+    assert.equal(authoriseBindings(authorisedRun(), { statements: [statementFor(set, SNAP_A, { approvedBy: name })], bindings: set }, trusted, NOW).length, 1, name);
+  }
+  const signed = statementFor(set, SNAP_A);
+  const body = (length: number) => ({ ...good, setup: { kind: "fixture", method: "POST", path: "/api/test/accounts", body: `{{key}}${"x".repeat(length - 7)}` } });
+  assert.match(refused({ statements: [signed], bindings: [body(4_001)] }), /binding 1 is malformed/);
+  assert.doesNotMatch(refused({ statements: [signed], bindings: [body(4_000)] }), /malformed/);
+  assert.match(refused({ statements: [signed], bindings: [{ ...good, quote: { start: 200_000, end: 200_001 } }] }), /binding 1 is malformed/);
+});
+
+test("a snapshot presented at another hash than the request carries it at is not the run's snapshot", () => {
+  const set = [binding()];
+  const run = authorisedRun();
+  const other = sha256Hex(`${TEXT_A}other`);
+  // A caller that built the run itself: the snapshot's text and hash agree with each other, and not with the request.
+  const swapped = { ...run, snapshots: run.snapshots.map((snapshot) => (snapshot.id === SNAP_A.id ? { ...snapshot, content: `${TEXT_A}other`, sha256: other } : snapshot)) } as AuthorisedRun;
+  const forOther = [binding({ snapshotSha256: other })];
+  assert.match(refused({ statements: [statementFor(forOther, { ...SNAP_A, sha256: other })], bindings: forOther }, swapped), /a criteria snapshot this run does not carry/);
 });
 
 test("a snapshot that is not among the request's own criteria is not part of the run, whoever built the run", () => {

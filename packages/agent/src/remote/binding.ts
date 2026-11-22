@@ -49,7 +49,7 @@ const MAX_STEPS = 60;
  */
 /** Half of a pair with no other half. It has no spelling of its own in bytes: written out, it becomes another character. */
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
-const plain = (text: string) => !LONE_SURROGATE.test(text) && !/[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/.test(text);
+const plain = (text: string) => !LONE_SURROGATE.test(text) && !/[\u0000-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\u3164\ufeff\ufff9-\ufffb]|\udb40[\udc00-\udc7f]/.test(text);
 const Line = z.string().min(1).max(500).refine(plain, "must be one line of well-formed text without control or unseen characters");
 const Name = z.string().regex(/^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/, "must be a plain name of at most 64 letters, digits, hyphens or underscores");
 const KeyId = z.string().regex(/^[A-Za-z0-9._-]{1,100}$/, "must be letters, digits, dot, underscore or hyphen");
@@ -58,7 +58,10 @@ const Sha256 = z.string().regex(/^[0-9a-f]{64}$/);
 const StaticPath = z
   .string()
   .max(500)
-  .regex(/^\/[^\s?#\\%]*$/, "must be a path that begins with a slash and has no query, fragment, space, backslash or percent sign")
+  // Printable ASCII only. A browser gives any other character in a path as percent signs, which are not taken
+  // here, so a path with one could never be the path a browser reports.
+  .regex(/^\/[\x21-\x7e]*$/, "must be a path of plain ASCII characters that begins with a slash")
+  .regex(/^[^?#\\%]*$/, "must have no query, fragment, backslash or percent sign")
   .refine(plain, "must be well-formed text without control or unseen characters")
   // Read by a browser against the target's address, "//host" would be another host, and "." and ".." are not where they say.
   .refine((path) => !path.includes("//") && !path.split("/").some((part) => part === "." || part === ".."), "must not hold an empty segment, or a segment that is one or two dots");
