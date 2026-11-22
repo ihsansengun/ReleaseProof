@@ -49,8 +49,21 @@ if the engine said it:
 - a requirement's `text` is the approved quote; its `reason`, the verdict's
   `reason` and a step's `note` are written by the engine from the comparisons
   made, not copied from what a scenario or a step printed;
-- a step's `target` gives the path asked for without its query, and an
-  element by how it was located, never what was typed into it.
+- a step's `action` is one of the steps an executor can take, or "unknown
+  step";
+- a step's `target` gives the path asked for without its query, fragment,
+  parameters or host, or an element by how it was located.
+
+What does remain of other hands, and is marked as such by where it stands:
+
+- a step's `target` holds up to 80 characters of the recording's own locator
+  words or path. They say which step it was. They are not a statement by the
+  engine;
+- `expected` and `observed`, and the note of a comparison step, hold the
+  values compared, up to 120 characters each. An observed value is what the
+  application showed in the element read;
+- ids of requirements, scenarios and comparisons are the recording's, checked
+  to be plain names.
 
 The fuller account (what each step printed, why each scenario ended) is in
 `remote-run.json`, which is not meant to leave the machine as it is. The
@@ -91,8 +104,10 @@ First match wins: `failed`, `errored`, `blocked`, `unverified`, `passed`.
 `passed` needs all of: the very scenarios planned ran, each once, and made
 every comparison planned; none is blocked in the plan and none was dropped
 to stay within the limit; the run did not end early; no conflict about the
-approved requirements is open; there is at least one approved requirement;
-every approved requirement was compared and matched; and `verdictsTrusted`.
+approved requirements is open and no earlier rule was taken as replaced
+without its owner saying so; there is at least one approved requirement;
+every approved requirement, and every example its text states, was compared
+and matched; and `verdictsTrusted` is exactly `true`.
 Anything short of that is `unverified`. Unknown, incomplete or unsupported
 evidence never becomes a pass.
 

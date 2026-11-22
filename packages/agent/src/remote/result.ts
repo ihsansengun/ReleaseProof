@@ -137,17 +137,40 @@ const REASON: Record<RequirementStatus, (made: Compared) => string> = {
 
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
+/** The steps an executor can take. Anything else a recording calls a step is not named here. */
+const ACTIONS = new Set(["navigate", "click", "fill", "select", "press", "upload", "api_request", "observe", "check", "finish"]);
+const LOCATED_BY = new Set(["role", "label", "text", "testid", "labelled", "cell"]);
+const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]);
+/** How much of a recording's own words (a locator, a path) is shown. Enough to tell steps apart. */
+const WORDS = 80;
+
+/**
+ * Where a step went or what it pointed at, in a form that carries as little
+ * of the recording's own text as says which step it was. A path is given
+ * without its query, fragment, parameters or any host; a locator by its kind
+ * and a short part of its words. What was typed, sent or answered is never
+ * part of it.
+ */
 function describeTarget(input: unknown): string {
-  const given = (input ?? {}) as { path?: string; method?: string; element?: { by?: string; role?: string; value?: string }; target?: { source?: string; by?: string; value?: string; responseId?: string; jsonPath?: string }; assertionId?: string; name?: string };
-  // The path only. A query can carry a token, and is no part of saying where a step went.
+  const given = (input !== null && typeof input === "object" ? input : {}) as { path?: unknown; method?: unknown; element?: unknown; target?: unknown };
   if (typeof given.path === "string") {
-    const [plain, query] = given.path.split(/[?#]/, 2);
-    return clip(`${given.method ? `${given.method} ` : ""}${plain}${query === undefined ? "" : " (query not shown)"}`, 200);
+    let pathname = "";
+    try {
+      pathname = new URL(given.path, "http://target.invalid").pathname;
+    } catch {
+      pathname = "";
+    }
+    const plain = pathname.split(";")[0] ?? "";
+    const cut = plain !== given.path;
+    const method = typeof given.method === "string" && METHODS.has(given.method) ? `${given.method} ` : "";
+    return `${method}${clip(plain, WORDS)}${cut ? " (rest of the address not shown)" : ""}`;
   }
-  const element = given.element ?? given.target;
-  if (element && "responseId" in element && element.responseId) return clip(`response ${element.responseId}${element.jsonPath ? ` at ${element.jsonPath}` : ""}`, 200);
-  if (element?.by) return clip(`${element.by}${"role" in element && element.role ? ` ${element.role}` : ""} "${element.value ?? ""}"`, 200);
-  return "";
+  const element = (given.element ?? given.target) as { source?: unknown; by?: unknown; role?: unknown; value?: unknown; responseId?: unknown } | undefined;
+  if (element === undefined || element === null || typeof element !== "object") return "";
+  if (element.source === "api") return typeof element.responseId === "string" && /^R\d{1,4}$/.test(element.responseId) ? `the answer ${element.responseId}` : "an answer";
+  if (typeof element.by !== "string" || !LOCATED_BY.has(element.by)) return "";
+  const role = typeof element.role === "string" && /^[a-z]{1,20}$/.test(element.role) ? ` ${element.role}` : "";
+  return `${element.by}${role} "${clip(typeof element.value === "string" ? element.value : "", WORDS)}"`;
 }
 
 /**
@@ -156,7 +179,7 @@ function describeTarget(input: unknown): string {
  */
 export function remoteResult(run: RemoteRun): RemoteResult {
   // Taken from the record, where nothing can yet set it to true.
-  const trusted: boolean = run.verdictsTrusted;
+  const trusted: boolean = (run.verdictsTrusted as unknown) === true;
   const executed = run.results.filter((result) => result.steps.length > 0);
   const assessment = assess({ analysis: run.analysis, plan: run.plan, results: run.results });
 
@@ -169,6 +192,8 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     planned.length === 0 ||
     // Every planned scenario, by its own id, ran exactly once, and made every comparison it planned.
     run.results.length !== planned.length ||
+    executed.length !== planned.length ||
+    new Set(planned.map((scenario) => scenario.scenario.id)).size !== planned.length ||
     planned.some((scenario) => !ran.has(scenario.scenario.id) || scenario.scenario.assertions.some((assertion) => !compared(run.results.find((result) => result.scenarioId === scenario.scenario.id), assertion.id))) ||
     run.plan.scenarios.some((scenario) => scenario.status !== "runnable") ||
     // Whatever else the assessment holds against the run: scenarios dropped under the limit, unresolved conflicts, no approved requirement.
@@ -204,7 +229,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       steps.push({
         id,
         scenarioId: result.scenarioId,
-        action: step.tool,
+        action: ACTIONS.has(step.tool) ? step.tool : "unknown step",
         target: describeTarget(step.input),
         // A comparison step that kept no comparison did not do what it was for.
         outcome: !step.ok || (step.tool === "check" && !made) ? "error" : made && !made.pass ? "mismatch" : "ok",
@@ -215,7 +240,8 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       });
       if (requirementId) {
         stepsOf.set(requirementId, [...(stepsOf.get(requirementId) ?? []), id]);
-        if (made) comparisonsOf.set(requirementId, [...(comparisonsOf.get(requirementId) ?? []), { expected: String(made.expected), observed: String(made.actual) }]);
+        // The values compared, cut to a length that shows a value and not a page of text.
+        if (made) comparisonsOf.set(requirementId, [...(comparisonsOf.get(requirementId) ?? []), { expected: clip(String(made.expected), 120), observed: clip(String(made.actual), 120) }]);
       }
     });
   }
@@ -285,7 +311,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         notPlanned: count("not planned"),
       },
       observedOnly: requirements.filter((requirement) => requirement.observedStatus === "verified" && requirement.status !== "verified").length,
-      scenarios: { planned: planned.length, executed: executed.length, notExecuted: planned.length - executed.length },
+      scenarios: { planned: planned.length, executed: executed.length, notExecuted: Math.max(0, planned.length - executed.length) },
     },
     requirements,
     steps,
