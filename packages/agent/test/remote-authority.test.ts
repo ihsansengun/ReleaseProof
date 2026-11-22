@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
+import { runInNewContext } from "node:vm";
 import { authoriseForExecution, authoriseRemoteRun, directoryLedger, isStartable, runStartKey, loadTrustedKeys, memoryLedger, scopeSha256, signedStatement, type Approval, type TrustedKeys } from "../src/remote/authority.ts";
 import { admitRemoteRun, RemoteRequestRefused, sha256Hex } from "../src/remote/request.ts";
 
@@ -539,4 +540,138 @@ test("the command authorises a run only with approvals that verify against the k
   const unreadable = await bare("--approvals", file("broken.json", "x").replace("broken.json", "absent.json"), "--authority-keys", keys, ...EXPECT);
   assert.equal(unreadable.code, 2, unreadable.text);
   assert.match(unreadable.text, /approvals file could not be read/);
+});
+
+// ---- RPAI-39: one spelling in bytes, and a clock that can be read ---------------
+
+test("RPAI-39: an approval's text has one spelling in bytes, so a field cannot be altered into one that signs the same", () => {
+  // Written out as UTF-8 for signing, half of a surrogate pair becomes U+FFFD. An approval signed with U+FFFD in
+  // the approver's name must not also stand for one with half a pair there. The request is not signed, so whoever
+  // writes it can make its snapshot name the altered approver too.
+  const signedBy = "owner\ufffd@releaseproof.test";
+  const genuineRequest = request({ criteria: [snapshot({ approvedBy: signedBy })] });
+  const genuine = approval({ approvedBy: signedBy, scopeSha256: scopeSha256(genuineRequest) });
+  assert.equal(authoriseRemoteRun(admitRemoteRun(genuineRequest, NOW), [genuine], trusted, NOW).snapshots[0]!.authority.approvedBy, signedBy);
+
+  for (const half of ["\ud800", "\udbff", "\udc00", "\udfff"]) {
+    const alteredBy = `owner${half}@releaseproof.test`;
+    const alteredRequest = request({ criteria: [snapshot({ approvedBy: alteredBy })] });
+    // The scope does not cover the approver's name, so the signature still fits: only the text's form stops it.
+    assert.equal(scopeSha256(alteredRequest), scopeSha256(genuineRequest));
+    assert.notEqual(signedStatement({ ...genuine, approvedBy: alteredBy }), signedStatement(genuine), "as text the two differ");
+    assert.equal(Buffer.from(signedStatement({ ...genuine, approvedBy: alteredBy }), "utf8").equals(Buffer.from(signedStatement(genuine), "utf8")), true, "the two would be signed as the same bytes");
+    const altered = { ...genuine, approvedBy: alteredBy };
+    assert.match(refusal(alteredRequest, [altered]), /approval 1 is malformed: approvedBy must be well-formed Unicode/);
+    assert.match(refusal(alteredRequest, [JSON.parse(JSON.stringify(altered))]), /approval 1 is malformed: approvedBy must be well-formed Unicode/);
+  }
+  // In the snapshot's id as well.
+  assert.match(refusal(request(), [{ ...approval(), snapshotId: "checkout-r3\ud800" }]), /approval 1 is malformed: snapshotId must be well-formed Unicode/);
+});
+
+test("RPAI-39: well-formed text in any script is still accepted in an approval, a pair of surrogates included", () => {
+  for (const name of ["Zo\u00eb Owner", "\u05d1\u05e2\u05dc\u05d9\u05dd", "\u6240\u6709\u8005", "owner \u{1f600}", "\u{20000}", "owner\ufffd"]) {
+    const raw = request({ criteria: [snapshot({ approvedBy: name })] });
+    const authorised = authoriseRemoteRun(admitRemoteRun(raw, NOW), [approval({ approvedBy: name, scopeSha256: scopeSha256(raw) })], trusted, NOW);
+    assert.equal(authorised.snapshots[0]!.authority.approvedBy, name);
+  }
+});
+
+test("RPAI-39: a time now that cannot be read refuses the run: nothing is taken as not yet expired", () => {
+  const raw = request();
+  const admitted = admitRemoteRun(raw, NOW);
+  const longExpired = approval({ issuedAt: "2020-01-01T00:00:00Z", expiresAt: "2020-01-01T01:00:00Z", approvedAt: "2020-01-01T00:00:00Z" });
+  const old = request({ criteria: [snapshot({ approvedAt: "2020-01-01T00:00:00Z" })] });
+  // With a clock, it has expired.
+  assert.throws(() => authoriseRemoteRun(admitRemoteRun(old, NOW), [{ ...longExpired, scopeSha256: scopeSha256(old) }], trusted, NOW), RemoteRequestRefused);
+  // A thing that only looks like a date is not a clock.
+  const unreadable: unknown[] = [new Date("not a date"), new Date(Number.NaN), new Date(8.64e15 + 1), "2026-11-21T12:00:00Z", 1_795_000_000_000, null, { getTime: () => NOW.getTime() }, Object.create(Date.prototype)];
+  for (const clock of unreadable) {
+    const reasons = (work: () => unknown) => {
+      try {
+        work();
+      } catch (error) {
+        assert.ok(error instanceof RemoteRequestRefused, String(error));
+        return error.reasons.join(" | ");
+      }
+      assert.fail(`accepted with the clock ${String(clock)}`);
+    };
+    // A genuine, current approval is refused too: without a clock nothing can be said to be current.
+    assert.match(reasons(() => authoriseRemoteRun(admitted, [approval()], trusted, clock as Date)), /the time now cannot be read, so no approval can be checked/);
+    // Where the clock is an option, "none given" means the machine's own, as before; anything else given must be readable.
+    if (clock !== null) assert.match(reasons(() => authoriseForExecution(admitted, [approval()], trusted, { expected: EXPECTED, ledger: memoryLedger(), now: clock as Date })), /the time now cannot be read/);
+    // And a request is not admitted: its snapshots' dates could not be compared with anything.
+    assert.match(reasons(() => admitRemoteRun(request({ criteria: [snapshot({ approvedAt: "2999-01-01T00:00:00Z" })] }), clock as Date)), /the time now cannot be read, so the request cannot be admitted/);
+  }
+  // With no clock given, the machine's own is used, as before.
+  assert.throws(() => authoriseRemoteRun(admitted, [approval()], trusted), RemoteRequestRefused);
+});
+
+test("RPAI-39: with a readable clock everything is as it was: the same approval is accepted, expired and future-dated ones refused", () => {
+  const admitted = admitRemoteRun(request(), NOW);
+  assert.equal(authoriseRemoteRun(admitted, [approval()], trusted, NOW).snapshots.length, 1);
+  assert.match(refusal(request(), [approval({ expiresAt: "2026-11-21T12:00:00Z" })]), /it has expired/);
+  assert.match(refusal(request(), [approval({ issuedAt: "2026-11-21T12:05:01Z" })]), /it is dated in the future/);
+  assert.throws(() => admitRemoteRun(request({ criteria: [snapshot({ approvedAt: "2026-11-21T12:05:01Z" })] }), NOW), RemoteRequestRefused);
+});
+
+test("RPAI-39: half a surrogate pair is found wherever it stands, and whole pairs are left alone", () => {
+  const withBy = (approvedBy: string) => {
+    const raw = request({ criteria: [snapshot({ approvedBy })] });
+    return { raw, evidence: [approval({ approvedBy, scopeSha256: scopeSha256(raw) })] };
+  };
+  // Beside a whole pair, at the start, at the end, two halves the wrong way round, and one after another.
+  const refusedOnes = ["\ud800\u{10000}", "\u{10000}\udc00", "\udc00\ud800", "\ud800owner", "owner\udc00", "\udc00owner", "owner\ud800", "o\ud800\ud800\udc00", "o\ud800\udc00\udc00"];
+  const acceptedOnes = ["\u{10000}", "\u{10ffff}", "a\u{10000}b\u{1f600}c", "\ud7ff\ue000"];
+  // One refused straight after another, the second with its half earlier in the text than the first's: a check
+  // that remembered where it last looked would miss it.
+  const late = withBy("owner-name\udc00x");
+  const early = withBy("\udc00owner-name");
+  assert.match(refusal(late.raw, late.evidence), /approvedBy must be well-formed Unicode/);
+  assert.match(refusal(early.raw, early.evidence), /approvedBy must be well-formed Unicode/);
+  // Turn about, so that nothing remembered from one text is carried to the next.
+  for (let index = 0; index < refusedOnes.length; index += 1) {
+    const bad = withBy(refusedOnes[index]!);
+    assert.match(refusal(bad.raw, bad.evidence), /approvedBy must be well-formed Unicode/, JSON.stringify(refusedOnes[index]));
+    const good = withBy(acceptedOnes[index % acceptedOnes.length]!);
+    assert.equal(authoriseRemoteRun(admitRemoteRun(good.raw, NOW), good.evidence, trusted, NOW).snapshots.length, 1);
+    assert.match(refusal(bad.raw, bad.evidence), /approvedBy must be well-formed Unicode/);
+  }
+});
+
+test("RPAI-39: an approval's target is compared as the text it is: a space or a line break around it is another text, and is refused", () => {
+  const genuine = approval();
+  assert.equal(authoriseRemoteRun(admitRemoteRun(request(), NOW), [genuine], trusted, NOW).snapshots.length, 1);
+  const origin = genuine.targetOrigin;
+  for (const spelled of [` ${origin}`, `${origin} `, `${origin}\n`, `${origin}\t`, `\ufeff${origin}`, `${origin}/`, `${origin}:443`, origin.toUpperCase(), "not an address", `${origin}\ud800`, "", "ftp://shop.releaseproof.test", "wss://shop.releaseproof.test", "ws://shop.releaseproof.test", "file://shop.releaseproof.test"]) {
+    // Refused as a malformed approval, by the engine's own refusal and not by an error from somewhere beneath it.
+    assert.match(refusal(request(), [{ ...genuine, targetOrigin: spelled }]), /approval 1 is malformed: targetOrigin must be an origin/, JSON.stringify(spelled));
+  }
+});
+
+test("RPAI-39: the clock is read once and in the standard way: a date from elsewhere is a date, and one that answers differently each time is read once", () => {
+  const admitted = admitRemoteRun(request(), NOW);
+  // A date made in another realm is as good a date as any.
+  const elsewhere = runInNewContext(`new Date(${NOW.getTime()})`) as Date;
+  assert.equal(elsewhere instanceof Date, false);
+  assert.equal(authoriseRemoteRun(admitted, [approval()], trusted, elsewhere).snapshots.length, 1);
+  assert.equal(admitRemoteRun(request(), elsewhere).snapshots.length, 1);
+  // A date whose own answer changes is asked nothing: its time is read from the date itself, once.
+  class Later extends Date {
+    override getTime(): number {
+      return Number.NaN;
+    }
+  }
+  assert.equal(authoriseRemoteRun(admitted, [approval()], trusted, new Later(NOW.getTime())).snapshots.length, 1);
+  assert.match(refusal(request(), [approval({ expiresAt: "2026-11-21T12:00:00Z" })]), /it has expired/);
+  assert.throws(() => authoriseRemoteRun(admitted, [approval({ expiresAt: "2026-11-21T12:00:00Z" })], trusted, new Later(NOW.getTime())), RemoteRequestRefused);
+  // The same one reading is what "dated in the future" is measured against, for an approval and for a snapshot.
+  const later = new Later(NOW.getTime());
+  assert.throws(
+    () => authoriseRemoteRun(admitted, [approval({ issuedAt: "2026-11-21T12:05:01Z" })], trusted, later),
+    (error: unknown) => error instanceof RemoteRequestRefused && /dated in the future/.test(error.reasons.join(" ")),
+  );
+  assert.throws(
+    () => admitRemoteRun(request({ criteria: [snapshot({ approvedAt: "2026-11-21T12:05:01Z" })] }), later),
+    (error: unknown) => error instanceof RemoteRequestRefused && /claims an approval in the future/.test(error.reasons.join(" ")),
+  );
 });
