@@ -42,7 +42,15 @@ const MAX_STEPS = 60;
 // ---- the shape of a binding ----------------------------------------------------
 
 /** One line, with nothing a signature or a hash could be made to read two ways. */
-const Line = z.string().min(1).max(500).regex(/^[^\u0000-\u001f\u007f-\u009f\u2028\u2029]+$/, "must be one line without control characters");
+/**
+ * Text that reads as what it is: well-formed Unicode, with no control character, no line or paragraph separator,
+ * and none of the characters that are not seen or that change the direction text is read in. Such characters would
+ * let one text pass for another on the screen where a person approves it.
+ */
+/** Half of a pair with no other half. It has no spelling of its own in bytes: written out, it becomes another character. */
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+const plain = (text: string) => !LONE_SURROGATE.test(text) && !/[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/.test(text);
+const Line = z.string().min(1).max(500).refine(plain, "must be one line of well-formed text without control or unseen characters");
 const Name = z.string().regex(/^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/, "must be a plain name of at most 64 letters, digits, hyphens or underscores");
 const KeyId = z.string().regex(/^[A-Za-z0-9._-]{1,100}$/, "must be letters, digits, dot, underscore or hyphen");
 const Sha256 = z.string().regex(/^[0-9a-f]{64}$/);
@@ -50,8 +58,11 @@ const Sha256 = z.string().regex(/^[0-9a-f]{64}$/);
 const StaticPath = z
   .string()
   .max(500)
-  .regex(/^\/[^\s?#\u0000-\u001f\u007f-\u009f\u2028\u2029]*$/, "must be a path that begins with a slash and has no query, fragment or space");
-/** A number as it is written, so that no two spellings of one number exist in what is hashed. */
+  .regex(/^\/[^\s?#\\%]*$/, "must be a path that begins with a slash and has no query, fragment, space, backslash or percent sign")
+  .refine(plain, "must be well-formed text without control or unseen characters")
+  // Read by a browser against the target's address, "//host" would be another host, and "." and ".." are not where they say.
+  .refine((path) => !path.includes("//") && !path.split("/").some((part) => part === "." || part === ".."), "must not hold an empty segment, or a segment that is one or two dots");
+/** A number in plain decimal form. It is hashed as written: "1" and "1.0" are two texts, and two hashes. */
 const Decimal = z.string().max(40).regex(/^-?(0|[1-9][0-9]*)(\.[0-9]+)?$/, "must be a number in plain decimal form");
 const Offset = z.number().int().min(0).max(200_000);
 const Span = z.strictObject({ start: Offset, end: Offset }).refine((span) => span.end > span.start, "must end after it starts");
@@ -144,7 +155,8 @@ export function bindingProblems(binding: Binding): string[] {
     if (typeof value === "string") texts.push(value);
     return value;
   });
-  if (texts.some((text) => text !== text.normalize("NFC"))) problems.push("it holds text that is not in Unicode NFC");
+  if (texts.some((text) => LONE_SURROGATE.test(text))) problems.push("it holds text that is not well-formed Unicode");
+  else if (texts.some((text) => text !== text.normalize("NFC"))) problems.push("it holds text that is not in Unicode NFC");
   // Condition binding is mandatory: besides the final observation, something must be seen on the way.
   if (!binding.steps.some((step) => step.kind === "see")) problems.push("it has no condition: no step sees a value before the final observation");
   if (binding.setup.kind === "fixture" && !binding.setup.body.includes(FIXTURE_KEY_PLACEHOLDER)) {
@@ -236,7 +248,7 @@ export function bindingsSha256(bindings: readonly Binding[]): string {
 
 // ---- the signed statement ------------------------------------------------------
 
-const SignedLine = z.string().min(1).max(500).regex(/^[^\r\n]+$/, "must be a single line");
+const SignedLine = z.string().min(1).max(500).refine(plain, "must be one line of well-formed text without control or unseen characters");
 
 export const BindingApproval = z.strictObject({
   bindingApprovalVersion: z.literal(BINDING_APPROVAL_VERSION),
@@ -265,7 +277,8 @@ export type BindingApproval = z.infer<typeof BindingApproval>;
 /**
  * The exact bytes that are signed: every bound field, one per line, in a fixed
  * sequence. No field is empty and none holds a line break (the shape above
- * sees to both), so no field can run into the next and two different
+ * sees to both), and every text is well-formed Unicode, so that it has one
+ * spelling in bytes. No field can run into the next, and two different
  * statements cannot give the same bytes.
  */
 export function signedBindingStatement(approval: Omit<BindingApproval, "signature">): string {
@@ -332,6 +345,8 @@ export type SignedBindingSet = {
  */
 export function authoriseBindings(authorised: AuthorisedRun, evidence: unknown, trusted: TrustedKeys, now: Date = new Date()): SignedBindingSet[] {
   if (evidence === undefined) return [];
+  // A time that cannot be read would make every comparison with it false, and nothing would ever have expired.
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new RemoteRequestRefused(["the time now cannot be read, so no binding approval can be checked"]);
   if (trusted.size === 0) throw new RemoteRequestRefused(["no trusted approval key was given, so no binding approval can be checked"]);
   for (const [keyId, key] of trusted) {
     if (key.type !== "public" || key.asymmetricKeyType !== "ed25519") {
@@ -378,7 +393,9 @@ export function authoriseBindings(authorised: AuthorisedRun, evidence: unknown, 
     if (new URL(approval.targetOrigin).origin !== targetOrigin) found.push("it is for another target");
     if (approval.scopeSha256 !== scope) found.push("it is for a different target address, set of allowed hosts, limits or set of criteria");
     const snapshot = authorised.snapshots.find((candidate) => candidate.id === approval.snapshotId);
-    if (!snapshot) found.push("it is for a criteria snapshot this run does not carry");
+    // The request's own criteria are what the scope hash covers. A snapshot beside them is not part of the run.
+    const carried = request.criteria.filter((candidate) => candidate.id === approval.snapshotId);
+    if (!snapshot || carried.length !== 1 || carried[0]!.sha256 !== snapshot.sha256) found.push("it is for a criteria snapshot this run does not carry");
     // Recomputed: this does not rely on who built `authorised`.
     else if (sha256Hex(snapshot.content) !== snapshot.sha256 || snapshot.sha256 !== approval.snapshotSha256) found.push("it is for another revision of the criteria text");
     else if (snapshot.approverVerified !== true) found.push("the snapshot it is for has no verified approval of its own");

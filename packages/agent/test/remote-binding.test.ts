@@ -228,10 +228,10 @@ test("a statement is refused when its signature is not the control plane's", () 
   assert.match(refused({ statements: [statementFor(set, SNAP_A, { keyId: "unknown-key" })], bindings: set }), /names a key that is not trusted/);
   const genuine = statementFor(set, SNAP_A);
   const flipped = genuine.signature.slice(0, -2) + (genuine.signature.at(-2) === "A" ? "B" : "A") + genuine.signature.at(-1);
-  assert.match(refused({ statements: [{ ...genuine, signature: flipped }], bindings: set }), /does not verify|canonical/);
+  assert.match(refused({ statements: [{ ...genuine, signature: flipped }], bindings: set }), /signature that does not verify/);
   // The same signature spelled another way (spare bits set) is not accepted either.
   const spare = genuine.signature.slice(0, -1) + String.fromCharCode(genuine.signature.charCodeAt(85) + 1);
-  assert.match(refused({ statements: [{ ...genuine, signature: spare }], bindings: set }), /canonical base64url|does not verify/);
+  assert.match(refused({ statements: [{ ...genuine, signature: spare }], bindings: set }), /not in canonical base64url/);
 });
 
 test("changing any signed field after signing is refused", () => {
@@ -332,7 +332,7 @@ test("a statement is refused when expired, dated in the future, valid for too lo
     [{ issuedAt: "2026-11-22T12:05:01Z", expiresAt: "2026-11-22T13:00:00Z" }, /dated in the future/],
     [{ issuedAt: "2026-11-21T12:30:00Z", expiresAt: "2026-11-22T12:30:01Z" }, /valid for more than 24 hours/],
     [{ approvedAt: "2026-11-22T11:00:01Z" }, /issued before the approval it states/],
-    [{ issuedAt: "2026-11-22T11:30:00Z", expiresAt: "2026-11-22T11:30:00Z" }, /expires before it was issued|has expired/],
+    [{ issuedAt: "2026-11-22T12:02:00Z", expiresAt: "2026-11-22T12:01:00Z" }, /expires before it was issued/],
   ];
   for (const [change, reason] of cases) assert.match(refused({ statements: [statementFor(set, SNAP_A, change)], bindings: set }), reason, JSON.stringify(change));
   // The same statement, an hour and a day later.
@@ -374,7 +374,7 @@ test("a binding no statement covers, two statements for one snapshot, and a stat
 
 test("one name, one binding: the same id twice in a set, or in two sets of one run, is refused", () => {
   const twice = [binding(), binding({ settling: { within: 20, readings: 3 } })];
-  assert.match(refused({ statements: [{ ...statementFor([twice[0]!], SNAP_A), bindingCount: 2 }], bindings: twice }), /does not verify|same id/);
+  assert.match(refused({ statements: [statementFor([twice[0]!], SNAP_A)], bindings: twice }), /two bindings have the same id/);
   const a = [binding({ id: "shared-name" })];
   const b = [ofB({ id: "shared-name" })];
   assert.match(refused({ statements: [statementFor(a, SNAP_A), statementFor(b, SNAP_B)], bindings: [...a, ...b] }), /two bindings have the same id/);
@@ -450,19 +450,181 @@ test("bindings are only ever for a snapshot whose own approval verified", () => 
 
 // ---- not used by any run -------------------------------------------------------
 
-test("nothing in the engine uses bindings yet: no other source file refers to the module, and a run still writes verdictsTrusted false", () => {
+test("nothing in the engine uses bindings yet: no other source file refers to the module or to what it exports, and nothing writes verdictsTrusted true", () => {
   const src = path.join(import.meta.dirname, "../src");
   const files: string[] = [];
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const file = path.join(dir, name);
       if (statSync(file).isDirectory()) walk(file);
-      else if (file.endsWith(".ts")) files.push(file);
+      else if (/\.[cm]?[jt]sx?$/.test(file)) files.push(file);
     }
   };
   walk(src);
-  const users = files.filter((file) => !file.endsWith(path.join("remote", "binding.ts")) && /remote\/binding|\.\/binding(\.ts)?["']/.test(readFileSync(file, "utf8")));
-  assert.deepEqual(users.map((file) => path.relative(src, file)), []);
-  // The one place a run's record is made still writes the constant.
-  assert.match(readFileSync(path.join(src, "remote/run.ts"), "utf8"), /verdictsTrusted: false,/);
+  const others = files.filter((file) => !file.endsWith(path.join("remote", "binding.ts")));
+  // By any spelling of its name (with or without an ending, in any kind of quote, or put together from parts),
+  // and by the names of what it exports.
+  const refers = /binding(\.[cm]?[jt]s)?["'`]|["'`]bind["'`]|authoriseBindings|bindingsSha256|bindingSha256|bindingProblems|BindingApproval|BindingEvidence|SignedBindingSet|signedBindingStatement|FIXTURE_KEY_PLACEHOLDER|BINDING_(APPROVAL|FORMAT)_VERSION/;
+  assert.deepEqual(others.filter((file) => refers.test(readFileSync(file, "utf8"))).map((file) => path.relative(src, file)), []);
+  // Trust is written in one place, as the constant false, and true nowhere: comments are left out before looking.
+  const code = (file: string) => readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const all = files.map(code).join("\n");
+  assert.equal((all.match(/verdictsTrusted\s*:\s*true/g) ?? []).length, 0);
+  assert.equal((all.match(/verdictsTrusted\s*=\s*true/g) ?? []).length, 0);
+  assert.equal((code(path.join(src, "remote/run.ts")).match(/verdictsTrusted: false,/g) ?? []).length, 1);
+});
+
+// ---- found by the security review of this stage ---------------------------------
+
+test("a statement has one spelling in bytes: half of a surrogate pair is refused, so a field cannot be altered into one that signs the same", () => {
+  const set = [binding()];
+  // Written out as UTF-8, half a pair becomes U+FFFD. A statement signed with U+FFFD must not also stand for one with half a pair.
+  const signed = statementFor(set, SNAP_A, { approvedBy: "owner\ufffd@releaseproof.test" });
+  assert.equal(authoriseBindings(authorisedRun(), { statements: [signed], bindings: set }, trusted, NOW).length, 1);
+  for (const half of ["\ud800", "\udfff"]) {
+    const altered = { ...signed, approvedBy: `owner${half}@releaseproof.test` };
+    assert.match(refused({ statements: [altered], bindings: set }), /binding statement 1 is malformed/);
+    assert.match(refused({ statements: [JSON.parse(JSON.stringify(altered))], bindings: set }), /binding statement 1 is malformed/);
+  }
+  const good = binding();
+  const halved = { ...good, observation: { ...good.observation, locator: { by: "testid", value: "balance\ud800" } } };
+  assert.match(refused({ statements: [statementFor(set, SNAP_A)], bindings: [halved] }), /binding 1 is malformed/);
+  const body = { ...good, setup: { kind: "fixture", method: "POST", path: "/api/test/accounts", body: '{"key":"{{key}}","n":"\ud800"}' } };
+  assert.match(refused({ statements: [statementFor(set, SNAP_A)], bindings: [body] }), /not well-formed Unicode/);
+});
+
+test("text that is not seen, or that turns the reading direction, is refused in a statement and in a binding", () => {
+  const set = [binding()];
+  const good = binding();
+  for (const unseen of ["\u200b", "\u202e", "\ufeff", "\u2028", "\u0085", "\u00ad", "\u2066", "\r", "\t"]) {
+    assert.match(refused({ statements: [{ ...statementFor(set, SNAP_A), approvedBy: `owner${unseen}@releaseproof.test` }], bindings: set }), /binding statement 1 is malformed/, JSON.stringify(unseen));
+    const named = { ...good, observation: { ...good.observation, locator: { by: "role", role: "status", name: `Bal${unseen}ance` } } };
+    assert.match(refused({ statements: [statementFor(set, SNAP_A)], bindings: [named] }), /binding 1 is malformed/, JSON.stringify(unseen));
+  }
+});
+
+test("a time now that cannot be read refuses everything: nothing is taken as not yet expired", () => {
+  const set = [binding()];
+  const longExpired = statementFor(set, SNAP_A, { approvedAt: "2020-01-01T00:00:00Z", issuedAt: "2020-01-01T00:00:00Z", expiresAt: "2020-01-01T01:00:00Z" });
+  assert.match(refused({ statements: [longExpired], bindings: set }), /has expired/);
+  assert.match(refused({ statements: [longExpired], bindings: set }, authorisedRun(), new Date("not a date")), /the time now cannot be read/);
+  assert.match(refused({ statements: [statementFor(set, SNAP_A)], bindings: set }, authorisedRun(), new Date(Number.NaN)), /the time now cannot be read/);
+  assert.match(refused({ statements: [statementFor(set, SNAP_A)], bindings: set }, authorisedRun(), "2026-11-22T12:00:00Z" as unknown as Date), /the time now cannot be read/);
+});
+
+test("the signed bytes are fixed: every field on its own line, in this sequence", () => {
+  const fixed = {
+    bindingApprovalVersion: 1 as const,
+    keyId: "control-plane-2026-11",
+    workspaceId: WORKSPACE,
+    projectId: PROJECT,
+    runId: RUN,
+    targetOrigin: "https://app.releaseproof.test",
+    scopeSha256: "a".repeat(64),
+    snapshotId: "rules-r3",
+    snapshotSha256: "b".repeat(64),
+    bindingFormatVersion: 1 as const,
+    bindingCount: 2,
+    bindingsSha256: "c".repeat(64),
+    approvedBy: "owner-a@releaseproof.test",
+    approvedAt: "2026-11-21T10:00:00Z",
+    issuedAt: "2026-11-22T11:00:00Z",
+    expiresAt: "2026-11-22T13:00:00Z",
+  };
+  assert.equal(
+    signedBindingStatement(fixed),
+    [
+      "releaseproof-binding-approval-v1",
+      "1",
+      "control-plane-2026-11",
+      WORKSPACE,
+      PROJECT,
+      RUN,
+      "https://app.releaseproof.test",
+      "a".repeat(64),
+      "rules-r3",
+      "b".repeat(64),
+      "1",
+      "2",
+      "c".repeat(64),
+      "owner-a@releaseproof.test",
+      "2026-11-21T10:00:00Z",
+      "2026-11-22T11:00:00Z",
+      "2026-11-22T13:00:00Z",
+    ].join("\n"),
+  );
+});
+
+test("the key a statement names is part of what is signed: named after signing as another trusted key, it does not verify", () => {
+  const set = [binding()];
+  const both: TrustedKeys = new Map([[KEY_ID, controlPlane.publicKey], ["second-key", controlPlane.publicKey]]);
+  const signed = statementFor(set, SNAP_A);
+  assert.equal(authoriseBindings(authorisedRun(), { statements: [signed], bindings: set }, both, NOW).length, 1);
+  assert.match(refused({ statements: [{ ...signed, keyId: "second-key" }], bindings: set }, authorisedRun(), NOW, both), /signature that does not verify/);
+});
+
+test("a statement is a strict thing: an unknown field, an address that is not an origin, a signature of another length", () => {
+  const set = [binding()];
+  const signed = statementFor(set, SNAP_A);
+  for (const wrong of [
+    { ...signed, note: "extra" },
+    { ...signed, targetOrigin: "https://app.releaseproof.test/" },
+    { ...signed, targetOrigin: "https://app.releaseproof.test:443" },
+    { ...signed, targetOrigin: "HTTPS://app.releaseproof.test" },
+    { ...signed, signature: signed.signature.slice(0, 85) },
+    { ...signed, signature: `${signed.signature}A` },
+    { ...signed, bindingCount: 201 },
+    { ...signed, bindingApprovalVersion: 2 },
+    { ...signed, bindingFormatVersion: 2 },
+  ]) {
+    assert.match(refused({ statements: [wrong], bindings: set }), /binding statement 1 is malformed/, JSON.stringify(wrong).slice(0, 90));
+  }
+});
+
+test("the five minutes allowed for clocks that disagree are five minutes", () => {
+  const set = [binding()];
+  const at = (issuedAt: string) => ({ statements: [statementFor(set, SNAP_A, { issuedAt, expiresAt: "2026-11-22T13:00:00Z" })], bindings: set });
+  assert.equal(authoriseBindings(authorisedRun(), at("2026-11-22T12:05:00Z"), trusted, NOW).length, 1);
+  assert.match(refused(at("2026-11-22T12:05:00.001Z")), /dated in the future/);
+});
+
+test("the limits are the limits: 40 statements, 200 bindings, 60 steps, a quote of 600, and positions inside it", () => {
+  const set = [binding()];
+  const signed = statementFor(set, SNAP_A);
+  assert.match(refused({ statements: Array.from({ length: 41 }, () => signed), bindings: set }), /not a list of statements and a list of bindings, within their limits/);
+  assert.match(refused({ statements: [signed], bindings: Array.from({ length: 201 }, () => set[0]) }), /within their limits/);
+  const good = binding();
+  const many = { ...good, steps: Array.from({ length: 61 }, () => good.steps[3]) };
+  assert.match(refused({ statements: [signed], bindings: [many] }), /binding 1 is malformed/);
+  assert.match(bindingProblems(binding({ quote: { start: 0, end: 601 } })).join(" "), /longer than 600/);
+  assert.deepEqual(bindingProblems(binding({ quote: { start: 0, end: 600 } })), []);
+  const seeOutside = binding({ steps: good.steps.map((step) => (step.kind === "see" && step.expected.from === "quote" ? { ...step, expected: { ...step.expected, start: 100, end: 105 } } : step)) });
+  assert.match(bindingProblems(seeOutside).join(" "), /a condition's expected value lies outside the quote/);
+  assert.match(bindingProblems(binding({ expected: { start: 10, end: 10, value: "124" } })).join(" "), /its expected value has a position that ends before it starts/);
+  const seeBackwards = binding({ steps: good.steps.map((step) => (step.kind === "see" && step.expected.from === "quote" ? { ...step, expected: { ...step.expected, start: 9, end: 4 } } : step)) });
+  assert.match(bindingProblems(seeBackwards).join(" "), /a condition's expected value has a position that ends before it starts/);
+  assert.match(refused({ statements: [signed], bindings: [{ ...good, quote: { start: 5, end: 5 } }] }), /binding 1 is malformed/);
+  assert.match(refused({ statements: [signed], bindings: [{ ...good, tolerated: [{ method: "GET", path: "/favicon.ico", status: 399 }] }] }), /binding 1 is malformed/);
+  assert.match(refused({ statements: [signed], bindings: [{ ...good, tolerated: [{ method: "GET", path: "/favicon.ico", status: 600 }] }] }), /binding 1 is malformed/);
+});
+
+test("a path is a plain static path of the target: nothing a browser would read as another place", () => {
+  const set = [binding()];
+  const good = binding();
+  for (const bad of ["//other.example/x", "/a//b", "/\\other.example", "/a/../b", "/a/./b", "/..", "/a%3Fb", "/a%2e%2e/b", "/a b", "/a\u202eb", "/a?b", "/a#b", ""]) {
+    const moved = { ...good, observation: { ...good.observation, path: bad } };
+    assert.match(refused({ statements: [statementFor(set, SNAP_A)], bindings: [moved] }), /binding 1 is malformed/, JSON.stringify(bad));
+  }
+  for (const fine of ["/", "/account", "/a/b-c_d.e/f", "/api/test/accounts"]) {
+    assert.deepEqual(bindingProblems(binding({ observation: { ...good.observation, path: fine } })), [], fine);
+  }
+});
+
+test("a snapshot that is not among the request's own criteria is not part of the run, whoever built the run", () => {
+  const set = [binding()];
+  const run = authorisedRun(request({ criteria: [SNAP_B] }));
+  // A caller that put a snapshot beside the request's criteria, outside what the scope hash covers.
+  const widened = { ...run, snapshots: [...run.snapshots, { ...SNAP_A, approverVerified: true, authority: run.snapshots[0]!.authority }] } as unknown as AuthorisedRun;
+  const raw = request({ criteria: [SNAP_B] });
+  assert.match(refused({ statements: [statementFor(set, SNAP_A, {}, controlPlane.privateKey, raw)], bindings: set }, widened), /a criteria snapshot this run does not carry/);
 });

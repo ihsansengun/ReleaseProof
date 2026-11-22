@@ -662,7 +662,7 @@ failed.
   requirements; a plan's own comparison that matches.
 - **Statement:** each kind of approval presented as the other and placed in
   the other's list; another run, project, origin, revision or scope hash;
-  expired; future-dated; valid for too long; a set reordered, with one
+  expired; future-dated; valid for too long; a set with one
   binding more or fewer, with a wrong count, or with text not in NFC; an id
   used twice, in one set and across snapshots.
 - **Binding content:** offsets off a line boundary; an expected span inside
@@ -702,6 +702,8 @@ failed.
   row without the verified-envelope columns.
 - **Re-approval:** the same lines under a changed heading; lines changed by
   one character.
+
+A set presented in another sequence is the same set: the hash sorts by id.
 
 And the positive cases: a check that verifies; a check whose value arrives
 late but within the approved time and stays (verified); a check that fails

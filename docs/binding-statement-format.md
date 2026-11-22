@@ -45,8 +45,19 @@ issuedAt
 expiresAt
 ```
 
-Every field is non-empty and holds no line break. The signature is 64 bytes
-in base64url without padding, in its one canonical spelling.
+Every field is non-empty, at most 500 characters (`snapshotId` 64,
+`approvedBy` 200), and plain text as defined below: so it holds no line
+break, and has exactly one spelling in bytes. The signature is 64 bytes in
+base64url without padding, in its one canonical spelling. `targetOrigin` is
+written exactly as a browser gives an origin: lowercase, no default port, no
+trailing slash.
+
+**Plain text**, here and in a binding: well-formed Unicode (no half of a
+surrogate pair, which would be written out as another character), with no
+control character (U+0000 to U+001F, U+007F to U+009F), no soft hyphen
+(U+00AD), and none of U+200B to U+200F, U+2028 to U+202E, U+2060 to U+2069
+and U+FEFF: characters that are not seen, or that change the direction text
+is read in.
 
 The first line differs from a criteria approval's
 (`releaseproof-criteria-approval-v1`), so neither can verify as the other,
@@ -74,11 +85,12 @@ All of:
 - It parses, names a trusted key, and its signature verifies.
 - Its run, workspace, project and target origin are the request's, and its
   `scopeSha256` is the request's.
-- Its snapshot is one the run carries, whose own approval verified, at
-  exactly that hash.
+- Its snapshot is one of the request's own criteria (what the scope hash
+  covers), whose own approval verified, at exactly that hash.
 - It has not expired, is not dated more than five minutes ahead, expires
   after it was issued, was issued no earlier than the approval it states,
-  and is valid for at most 24 hours.
+  and is valid for at most 24 hours. If the time now cannot be read,
+  everything is refused.
 - It is the only statement for its snapshot.
 - The bindings presented for its snapshot are `bindingCount` in number and
   hash to `bindingsSha256`.
@@ -111,9 +123,27 @@ A strict object: an unknown field is a refusal.
 
 A reading is `{ path, locator, valueKind, unit }`. A locator is
 `{ by: "testid", value }` or `{ by: "role", role, name }`. `valueKind` is
-`number` or `amount`. A path begins with `/` and has no query, fragment or
-space. A number is text in plain decimal form: optional minus, no leading
-zeros, optional fraction.
+`number` or `amount`; `unit` is `plain`, `currency-units` or
+`currency-hundredths`.
+
+Limits and forms:
+
+- **A plain name** (`id`, a locator's `role`, a fixture `field`): a letter,
+  digit or underscore, then up to 63 letters, digits, hyphens or
+  underscores.
+- **Text** (a locator's `value` or `name`: at most 200; a `fill` literal: at
+  most 500): plain text as defined above, not empty.
+- **A path**: at most 500 characters; begins with `/`; plain text; no space,
+  `?`, `#`, `\` or `%`; no empty segment (so no `//`), and no segment that
+  is `.` or `..`.
+- **A number**: text of at most 40 characters in plain decimal form:
+  optional minus, no leading zeros, optional fraction. It is hashed as
+  written, so `1` and `1.0` are different.
+- **Offsets**: whole numbers from 0 to 200,000; an `end` is after its
+  `start`.
+- **Methods**: a write (`act`, fixture) is `POST`, `PUT`, `PATCH` or
+  `DELETE`; `background` and `tolerated` may also name `GET` and `HEAD`.
+- **A fixture body**: 1 to 4,000 characters.
 
 Steps:
 
@@ -126,12 +156,14 @@ Steps:
 
 Refused at this stage, whatever is signed:
 
-- text anywhere in it that is not in Unicode NFC;
+- text anywhere in it that is not well-formed Unicode, or not in NFC;
 - no `see` step (condition binding is mandatory);
 - a fixture body without `{{key}}`;
 - an `act` that expects a write also listed in `background`;
 - a `fill` from a fixture in a check that has none;
-- a quote longer than 600 code units, or an expected value outside it.
+- a quote longer than 600 code units;
+- an expected value, of the observation or of a `see`, whose position ends
+  before it starts or lies outside the quote.
 
 ## The hash of a set
 
@@ -184,5 +216,6 @@ written, and text not in NFC is refused, never converted.
 The hash of one binding, by which a result will name it, is the SHA-256 of
 `JSON.stringify([ "releaseproof-binding-v1", B ])`.
 
-Changing any of this changes `bindingFormatVersion`. A test holds two
-vectors (one binding and one set) and fails if the form drifts.
+Changing any of this changes `bindingFormatVersion`. Tests hold two hash
+vectors (one binding and one set) and the exact signed bytes of one
+statement, and fail if the form drifts.
