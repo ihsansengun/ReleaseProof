@@ -202,7 +202,10 @@ engine. A binding that breaks one is refused, never repaired.
   number of bounded length, and is treated as a secret by the engine: it is
   never written to a result and its field is covered in pictures.
 - **In a check with a write, the observation's own reading is seen before
-  that write, with an expected value that is not the final one.** A value
+  the first write that the starting-state `see` does not witness, with an
+  expected value that is not the final one.** (An element that shows no
+  number before the journey, such as an empty state, therefore cannot be
+  bound in this stage.) A value
   that was already there before the journey says nothing about the
   journey: without this, a purchase that awards nothing would verify
   against a balance that was right all along.
