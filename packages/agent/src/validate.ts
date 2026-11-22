@@ -16,7 +16,8 @@ export function validatePlan(
   manifest: Manifest,
   maxScenarios: number,
   /** `declared`: formulas may only use observations the plan declares. Set for a live model; off for plans recorded before that rule. */
-  options: { declared?: boolean } = {},
+  /** `quoted`: an expected value must itself be stated by the approved text it cites. Set where the plan is not the engine's own. */
+  options: { declared?: boolean; quoted?: boolean } = {},
 ): { plan: Plan; problems: string[] } {
   const problems: string[] = [];
   const trimmed: string[] = [];
@@ -159,6 +160,41 @@ export function validatePlan(
         if (!a.expectedText) fault = "needs expectedText";
         else expected = { literal: a.expectedText };
       }
+      if (!fault && options.quoted === true) {
+        // The kind of comparison is part of what is expected. "At least", "at most" and
+        // "absent" are satisfied by many values, so the approved text must say so itself.
+        const said = source.quote.toLowerCase();
+        const bound =
+          a.kind === "number_at_least"
+            ? /\b(at least|or more|minimum|no less than|not less than|or greater|or above)\b/
+            : a.kind === "number_at_most"
+              ? /\b(at most|or less|maximum|no more than|not more than|up to|or fewer|or below)\b/
+              : a.kind === "absent"
+                ? /\b(not|no|never|without|hidden|removed|absent|cannot|can't|isn't|doesn't)\b/
+                : a.kind === "present"
+                  ? /\b(shown|shows|show|displayed|displays|display|visible|appears?|present|sees?|listed|lists)\b/
+                  : undefined;
+        if (bound && !bound.test(said)) {
+          problems.push(`${where} is a "${a.kind}" comparison, and the approved text it cites does not word the requirement that way ("${source.quote.slice(0, 200)}"). It was removed.`);
+          continue;
+        }
+      }
+      if (!fault && options.quoted === true && expected && "formula" in expected) {
+        // What a calculation means cannot be checked against the text: one can cancel its
+        // recorded values and arrive at any number. Until that can be checked, there are none.
+        problems.push(`${where} expects a calculated value. In this run an expected value must be written in the approved text itself; calculations are not accepted yet. It was removed.`);
+        continue;
+      }
+      if (!fault && options.quoted === true && expected) {
+        // The expected value itself must be in the approved text the comparison
+        // cites, not only the requirement. What a plan expects beyond that is its own.
+        const missing = notQuoted(expected, source.quote, a.unit ?? "plain");
+        if (missing) {
+          problems.push(`${where} expects ${missing}, which the approved text it cites does not state ("${source.quote.slice(0, 200)}"); an expected value must be stated by the approved text. It was removed.`);
+          clarifications.push({ scenarioId: d.id, question: `What is the intended outcome for: ${a.description}? The approved text cited does not state the value expected.` });
+          continue;
+        }
+      }
       if (fault) {
         problems.push(`${where} ${fault}; it was removed.`);
         continue;
@@ -166,7 +202,11 @@ export function validatePlan(
       assertionIds.add(a.id);
       // Further requirements the comparison is credited to. Only approved,
       // uncontested ones count; anything else is dropped and noted.
-      const alsoVerifies = [...new Set(a.alsoVerifies ?? [])].filter((id) => {
+      // Where the expected value must be stated by the text cited, a comparison is credited to that text alone.
+      if (options.quoted === true && (a.alsoVerifies ?? []).some((id) => id !== a.requirementId)) {
+        trimmed.push(`${where} lists further requirements as also verified. In this run a comparison counts for the requirement it cites and no other; the links were removed.`);
+      }
+      const alsoVerifies = [...new Set(options.quoted === true ? [] : (a.alsoVerifies ?? []))].filter((id) => {
         const other = requirement.get(id);
         const usable = id !== a.requirementId && other?.kind === "documented" && other.trust === "authoritative" && !other.contested;
         if (!usable && id !== a.requirementId) trimmed.push(`${where} lists "${id}" as also verified, which is not an approved requirement; the link was removed.`);
@@ -264,4 +304,48 @@ export function validatePlan(
     analysis.requirements.filter((r) => r.kind === "documented").flatMap((r) => (r.examples ?? []).map((e) => ({ ...e, requirementId: r.id }))),
   );
   return { plan, problems };
+}
+
+// A number as the text writes it. It ends where its digits end: "160px" states no number, and neither does a part of "1600".
+// Not a number the text states either: part of a reference ("KAN-160", "#160"), of a fraction, a range, a date or a time.
+const QUOTED_NUMBER = /(?<![\p{L}\p{N}_.,#/:]|[\p{L}\p{N}]-)-?\d+(?:,\d{3})*(?:\.\d+)?(?![\p{L}\p{N}_/:]|[.,]\d|-\d)/gu;
+/** A list marker at the start of a line ("2. After…") numbers the line; it states nothing. */
+const unnumbered = (quote: string) =>
+  quote
+    // Every kind of hyphen and dash reads as one: "KAN‑160" and "100–160" are a reference and a range too.
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D\u00AD\u2043\u058A~\u2026\u2192]/g, "-")
+    .replace(/[\u00A0\u2007\u202F]/g, " ")
+    .replace(/^[ \t]*\d+[.)][ \t]+(?=\S)/gm, "");
+
+/**
+ * Says what part of an expected value the quoted text does not state, if any.
+ * A number must be written in the text, in the unit expected or as the same
+ * amount in whole units or hundredths. A text must be in it word for word. A
+ * formula may calculate with recorded values, but every number written in it
+ * must be in the text (as written, or as a percentage of it).
+ */
+export function notQuoted(expected: NonNullable<Assertion["expected"]>, quote: string, unit: string): string | undefined {
+  quote = unnumbered(quote);
+  const stated = (quote.match(QUOTED_NUMBER) ?? []).map((n) => Number(n.replace(/,/g, "")));
+  const has = (n: number, scales: number[]) => stated.some((s) => scales.some((scale) => Math.abs(s * scale - n) < 1e-9));
+  if ("literal" in expected) {
+    if (typeof expected.literal === "number") {
+      // An amount in hundredths may be written in whole units, and only an amount: a number with a decimal point.
+      const amounts = (quote.match(QUOTED_NUMBER) ?? []).filter((n) => /\.\d{2}$/.test(n)).map((n) => Number(n.replace(/,/g, "")));
+      const converted = unit === "currency-hundredths" && amounts.some((s) => Math.abs(s * 100 - Number(expected.literal)) < 1e-9);
+      return has(expected.literal, [1]) || converted ? undefined : `the number ${expected.literal}`;
+    }
+    const squash = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+    const wanted = squash(expected.literal);
+    // Whole words, and enough of them to be a statement: "active" is not stated by "inactive".
+    const found = wanted.length >= 4 && new RegExp(`(?<![\\p{L}\\p{N}])${wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u").test(squash(quote));
+    return found ? undefined : `the text ${JSON.stringify(expected.literal.slice(0, 80))}`;
+  }
+  // A calculation with no recorded value in it is a number of the plan's own making.
+  if (formulaVariables(expected.formula).length === 0) return "a calculation that uses no recorded value";
+  // Numbers written in the formula. A name such as "total2" is a recorded value, not a number.
+  const written = (expected.formula.match(/(?<![\p{L}\p{N}_.])\d+(?:\.\d+)?(?![\p{L}\p{N}_.])/gu) ?? []).map(Number);
+  // As written, or as the fraction of a stated percentage (20 percent is 0.2).
+  const absent = written.filter((n) => !has(n, [1, 0.01]));
+  return absent.length > 0 ? `a calculation with ${absent.join(", ")}` : undefined;
 }

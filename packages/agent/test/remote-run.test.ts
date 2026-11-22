@@ -14,6 +14,8 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { authoriseForExecution, authoriseRemoteRun, memoryLedger, scopeSha256, signedStatement, type Approval, type StartableRun, type TrustedKeys } from "../src/remote/authority.ts";
 import { admitRemoteRun, RemoteRequestRefused, sha256Hex } from "../src/remote/request.ts";
+import { runScenario } from "../src/execute/run.ts";
+import { Manifest } from "../src/schema.ts";
 import { checkedRecording, MAX_RECORDED_STEPS, RemoteRecording, runRemote, snapshotSources, unsupported, type RemoteRun } from "../src/remote/run.ts";
 
 const RUN = "a0000000-0000-4000-8000-000000000410";
@@ -600,12 +602,33 @@ test("another window cannot put a blank page in the application's place and have
       STEPS[1]!,
       STEPS[2]!,
     ];
+    // In a remote run the other window is closed as it opens. Whether it got as far as replacing the
+    // page first depends on timing; either way nothing is read and nothing passes.
     const result = await runRemote({ run: startable(target.baseUrl), recording: recording({ steps: { S1: steps } }), outDir: out() });
-    const [scenarioResult] = result.results;
-    assert.ok(target.elsewhere.some((hit) => hit.includes("blank=1")), "the other window did open the other origin");
-    assert.equal(scenarioResult!.verdict, "blocked", JSON.stringify([scenarioResult!.reason, scenarioResult!.steps]));
-    assert.match(scenarioResult!.reason, /a blank page/);
-    assert.deepEqual(scenarioResult!.assertionResults, []);
+    assert.notEqual(result.results[0]!.verdict, "passed", JSON.stringify([result.results[0]!.reason, result.results[0]!.steps]));
+    assert.deepEqual(result.results[0]!.assertionResults, []);
+
+    // With the other window left open (a confined run with a plan of the engine's own), the blank page is what stops it.
+    const hitsBefore = target.elsewhere.length;
+    const confined = await runScenario({
+      scenario: {
+        id: "S1",
+        title: "Blank page",
+        basis: "requirement",
+        requirementIds: ["R1"],
+        intent: "Read the balance.",
+        fixtures: {},
+        assertions: [{ id: "A1", description: "Balance", kind: "number_equals", unit: "plain", expected: { literal: 160 }, requirementId: "R1" }],
+      },
+      manifest: Manifest.parse({ baseUrl: target.baseUrl }),
+      outDir: out(),
+      mode: { kind: "replay", steps: steps as never },
+      confine: true,
+    });
+    assert.ok(target.elsewhere.slice(hitsBefore).some((hit) => hit.includes("blank=1")), "the other window did open the other origin");
+    assert.equal(confined.verdict, "blocked", JSON.stringify([confined.reason, confined.steps]));
+    assert.match(confined.reason, /a blank page/);
+    assert.deepEqual(confined.assertionResults, []);
   } finally {
     target.close();
   }
@@ -628,4 +651,25 @@ test("a scenario whose page left the application after every comparison was made
   } finally {
     target.close();
   }
+});
+
+// ---- the expected value must be stated by the approved text ----------------------------
+
+test("KAN-16 criterion 4: a recording's own expected value is removed, although it cites an approved requirement", async () => {
+  // The application shows 999 and the recording expects 999. The approved text says 160.
+  const { result } = await run("999", recording({ assertion: { expectedNumber: 999 } }));
+  assert.ok(result.planProblems.some((problem) => /expects the number 999, which the approved text it cites does not state/.test(problem)), result.planProblems.join("\n"));
+  assert.ok(!result.results.some((r) => r.verdict === "passed"));
+});
+
+test("a recorded run says its passes are not yet verdicts on the criteria", async () => {
+  const { result } = await run("160");
+  assert.equal(result.verdictsTrusted, false);
+});
+
+test("in a remote run a presence check is removed unless the approved text says that something is shown", async () => {
+  const present = { id: "A1", description: "Something is shown", kind: "present", expectedNumber: null, expectedText: null, expectedFormula: null, unit: "plain", requirementId: "R1", alsoVerifies: [] };
+  const { result } = await run("160", recording({ assertion: present }));
+  assert.ok(result.planProblems.some((problem) => /is a "present" comparison, and the approved text it cites does not word the requirement that way/.test(problem)), result.planProblems.join("\n"));
+  assert.ok(!result.results.some((r) => r.verdict === "passed"));
 });
