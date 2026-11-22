@@ -85,9 +85,20 @@ type Collector = {
   capture: Capture;
   startedAt: number;
   screenshotBytes: number;
-  /** The very elements a secret was typed into, held by themselves: a way of finding them may stop finding them. */
-  secretFields: ElementHandle[];
-  origin: string;
+  /**
+   * The very elements a secret was typed into, held by themselves: a way of finding them may stop finding them.
+   * With each, which document of the page it was in, by the engine's own count (see `documents`).
+   */
+  secretFields: { handle: ElementHandle; document: number | undefined }[];
+  /** The secret values typed so far, so that a field found holding one is covered wherever it turns up. */
+  typed: string[];
+  /**
+   * How many documents the page's main frame has loaded, as the browser itself reports each one to the engine.
+   * Not asked of the page. Undefined until the browser has been asked to report them, and then nothing is known.
+   */
+  documents: number | undefined;
+  /** Ends the browser's reports of new documents. */
+  unwatch?: () => void;
   /** A page of the engine's own, in a context apart from the application's, in which pictures are covered. Made when first needed. */
   easel?: Page;
   /** Set when a field that holds a secret could not be kept hold of: no picture is kept from then on. */
@@ -162,7 +173,8 @@ export function startCapture(session: Session, startedAt: number, routes: readon
     startedAt,
     screenshotBytes: 0,
     secretFields: [],
-    origin,
+    typed: [],
+    documents: undefined,
     stop: () => {
       page.off("console", onConsole);
       page.off("pageerror", onPageError);
@@ -170,6 +182,23 @@ export function startCapture(session: Session, startedAt: number, routes: readon
       page.off("response", onResponse);
     },
   });
+  // The browser is asked to say when the main frame loads a new document. That is the only way a held element is
+  // ever taken to be gone: by the browser's word, never by the page's. A change of address inside one document
+  // is not reported this way, and the element is then still there.
+  void page
+    .context()
+    .newCDPSession(page)
+    .then(async (browser) => {
+      await browser.send("Page.enable");
+      const collector = collectors.get(session);
+      if (!collector) return;
+      collector.documents = 0;
+      browser.on("Page.frameNavigated", (event) => {
+        if (event.frame.parentId === undefined && collector.documents !== undefined) collector.documents += 1;
+      });
+      collector.unwatch = () => void browser.detach().catch(() => undefined);
+    })
+    .catch(() => undefined);
   return capture;
 }
 
@@ -177,17 +206,23 @@ export function startCapture(session: Session, startedAt: number, routes: readon
 export const capturing = (session: Session): boolean => collectors.has(session);
 
 /**
- * Notes a field the executor is about to type a secret into, so that it is covered in every later picture.
- * The element itself is kept, not the way it was found: a label that changes its words would otherwise leave
- * the field uncovered. If the element cannot be taken hold of, no later picture is kept at all.
+ * Notes a field the executor is about to type a secret into, and the secret, so that it is covered in every later
+ * picture. The element itself is kept, not the way it was found: a label that changes its words would otherwise
+ * leave the field uncovered. If the element cannot be taken hold of, no later picture is kept at all.
  */
-export async function noteSecretField(session: Session, field: Locator): Promise<void> {
+export async function noteSecretField(session: Session, field: Locator, typed?: string): Promise<void> {
   const collector = collectors.get(session);
   if (!collector) return;
+  if (typeof typed === "string" && typed !== "" && !collector.typed.includes(typed)) {
+    // A value longer than is read of a field could not be found again, and more values than are kept could not
+    // all be looked for: then nothing can be said to be covered, and no later picture is kept.
+    if (typed.length > VALUE_READ || collector.typed.length >= 50) collector.uncoverable = true;
+    else collector.typed.push(typed);
+  }
   try {
     const found = await field.elementHandles();
     if (found.length === 0) throw new Error("no element");
-    collector.secretFields.push(...found);
+    collector.secretFields.push(...found.map((handle) => ({ handle, document: collector.documents })));
   } catch {
     collector.uncoverable = true;
   }
@@ -259,6 +294,36 @@ const COVER_TIMEOUT_MS = 4_000;
 const within = <T>(work: Promise<T>, ms: number): Promise<T> =>
   Promise.race([work, new Promise<T>((_resolve, reject) => setTimeout(() => reject(new Error("took too long")), ms).unref())]);
 type Area = [x: number, y: number, width: number, height: number];
+/** Form fields and editable text: where a typed value can be shown again. */
+const FIELDS = "input, textarea, [contenteditable]";
+/** The longest secret that is looked for. A longer one typed, and no picture is kept. */
+const VALUE_READ = 4_000;
+/**
+ * What each field holds and where it is, read out of the page. Nothing is passed in. An element is asked for its
+ * value by having one, not by what kind the page's own script says it is: an element made in another document
+ * is a field all the same.
+ */
+const fieldsOf = (elements: Element[]): [string, number, number, number, number][] => {
+  if (elements.length > 5_000) throw new Error("too many fields to look at");
+  // Each field is read whole. A field read in part could hold the value in the part not read, so there is no
+  // reading in part: more than 2,000,000 characters in one document's fields, and no picture is kept.
+  let read = 0;
+  return elements.map((element) => {
+    const value = "value" in element && typeof (element as { value: unknown }).value === "string" ? (element as { value: string }).value : (element.textContent ?? "");
+    read += value.length;
+    if (read > 2_000_000) throw new Error("too much in the fields to read");
+    const box = element.getBoundingClientRect();
+    return [value, box.x, box.y, box.width, box.height];
+  });
+};
+/**
+ * Whether the browser is at this moment drawing a picture of what was shown before over what is shown now, as
+ * it does while one view changes into another. Such a picture can show a field that is no longer anywhere in
+ * the document, so nothing in the document says where to cover it.
+ */
+const changingView = (): boolean =>
+  Boolean((document as unknown as { activeViewTransition?: unknown }).activeViewTransition) ||
+  document.getAnimations().some((animation) => String((animation.effect as { pseudoElement?: string | null } | null)?.pseudoElement ?? "").startsWith("::view-transition"));
 const rectsOf = (elements: Element[]): Area[] =>
   elements.map((element) => {
     const box = element.getBoundingClientRect();
@@ -280,18 +345,45 @@ async function findSecretAreas(session: Session, collector: Collector): Promise<
   if (page.frames().length > MOST_FRAMES + 1) throw new Error("too many frames to look into");
   const areas: Area[] = await page.locator(SECRET_FIELDS).evaluateAll(rectsOf);
   if (collector.uncoverable) throw new Error("a field that holds a secret could not be taken hold of");
-  // An element no longer in the page is not in the picture. Any other failure to ask is a failure to cover.
-  for (const field of collector.secretFields) {
-    const area = await field.evaluate((element) => {
+  // A held element is let go only when the browser has reported a new document since it was noted. In the same
+  // document it is asked where it is, and a failure to ask, whatever the cause, is a failure to cover: no
+  // picture is kept. After a new document the element is ordinarily gone with the old one; a page that set out
+  // to could carry it across (through another window), and then it is found, if at all, by what it holds.
+  // While one view is changing into another the browser may still show the view before, with a field in it that
+  // no document holds any more. Once a secret has been typed, no picture is kept of such a moment.
+  const secretTyped = collector.typed.length > 0 || collector.secretFields.length > 0;
+  if (secretTyped && (await page.evaluate(changingView))) throw new Error("the view before may still be showing");
+  const gone = new Set<ElementHandle>();
+  for (const { handle, document } of [...collector.secretFields]) {
+    if (document !== undefined && collector.documents !== undefined && document !== collector.documents) {
+      gone.add(handle);
+      continue;
+    }
+    const area = await handle.evaluate((element) => {
       if (!element.isConnected) return null;
       const box = (element as Element).getBoundingClientRect();
       return [box.x, box.y, box.width, box.height] as [number, number, number, number];
     });
     if (area) areas.push(area);
   }
+  if (gone.size > 0) collector.secretFields = collector.secretFields.filter((held) => !gone.has(held.handle));
+  // A field that holds a secret the executor typed, whichever element it is: the value may be shown again in
+  // another field, by the application answering with what was sent, by the browser going back, or by a page
+  // that draws its form anew. What each field holds is read out and compared here, in the engine. The secret is
+  // never handed to a page or to a frame to compare: a later page, or a frame from somewhere else, has no
+  // business learning it.
+  const typed = collector.typed;
+  const holdsTyped = (held: string) => typed.some((value) => held.includes(value));
+  if (typed.length > 0) {
+    for (const [held, x, y, width, height] of await page.locator(FIELDS).evaluateAll(fieldsOf)) {
+      if (typeof held === "string" && holdsTyped(held)) areas.push([x, y, width, height]);
+    }
+  }
   for (const frame of page.frames()) {
     if (frame === page.mainFrame()) continue;
-    const inside = await frame.locator(SECRET_FIELDS).count();
+    // A frame changes its view like a page does, and is asked the same.
+    if (secretTyped && (await frame.evaluate(changingView))) throw new Error("the view before may still be showing in a frame");
+    const inside = (await frame.locator(SECRET_FIELDS).count()) + (typed.length > 0 ? (await frame.locator(FIELDS).evaluateAll(fieldsOf)).filter(([held]) => typeof held === "string" && holdsTyped(held)).length : 0);
     if (inside === 0) continue;
     // A field in a frame is somewhere inside the frame's own box. The whole box is covered.
     const box = await (await frame.frameElement()).boundingBox();
@@ -349,6 +441,7 @@ export function endCapture(session: Session): Capture | undefined {
   const collector = collectors.get(session);
   if (!collector) return undefined;
   collector.stop();
+  collector.unwatch?.();
   // The page the pictures were drawn in is the engine's own, and is closed with the run.
   void collector.easel?.context().close().catch(() => undefined);
   collector.easel = undefined;

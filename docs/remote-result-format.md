@@ -230,7 +230,35 @@ taken in is counted and left out.
   over the application's page and nothing in it is changed. A test runs a
   page that counts every change to its own document, and it counts none.
 - A field the executor typed a secret into is held by its element, not by
-  the way it was found, so it stays covered when its label changes.
+  the way it was found, so it stays covered when its label changes. It is
+  let go only when the browser itself has reported that the page loaded a
+  new document since; that is the browser's word, not the page's. In the
+  same document, any failure to ask the element where it is means no
+  picture, whatever caused it.
+- A text field (`input`, `textarea`) or text marked editable found holding
+  the very value the executor typed is covered too, in the page and in its frames: an application may
+  answer a form with what was sent, a browser may put a value back when it
+  goes back, and a page may draw its form anew. What each field holds is
+  read out and compared in the engine; **the secret is never handed to a
+  page or a frame to look for.** Each field is read whole, never in part. Once a secret has been typed,
+  with more than
+  5,000 fields in a document, more than 2,000,000 characters in them, a
+  typed secret longer than 4,000 characters, or more than 50 different
+  secrets, no picture is kept.
+- While the browser is changing one view into another (a view transition)
+  it may still draw the view before, with a field in it that no document
+  holds any more. Once a secret has been typed, no picture is kept while
+  such a change is under way in the page or in any of its frames. Whether
+  one is under way is asked of the page and of each frame, like where
+  their fields are.
+- That second check finds a value only where a page lets it be read and
+  only as it was typed. It does not find a secret shown as plain text, one
+  the page has changed (cut, spaced out, encoded, in capitals), one in a
+  closed component, or one behind a field the page has made to answer
+  falsely. A page that set out to could also carry a field into a new
+  document and change what it holds. These are the same limit as above:
+  covering is not safe against a hostile page, and anything a page shows as
+  text is in the picture.
 - **Every field the page reports a place for is covered, or no picture is
   kept.** A place that is not four finite numbers counts as no answer. More
   than 2,000 such fields, more than 40 frames, or any stage taking over four

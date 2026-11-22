@@ -15,6 +15,9 @@ import { LEAKED_BEFORE, LEAKED_PATHS, SECRETS_BEFORE } from "./leaked-before.ts"
 import { runScenario } from "../src/execute/run.ts";
 import { Manifest, type Scenario, type ScenarioResult, type Step } from "../src/schema.ts";
 
+/** What a watching page told the server it saw. */
+const hits: string[] = [];
+
 async function app(): Promise<{ baseUrl: string; server: Server }> {
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://app");
@@ -72,6 +75,44 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
         setTimeout(() => { throw new Error("card " + location.origin + "/pay:4111111:1111111 and more"); }, 0);
         setTimeout(() => { const e = new Error("x"); e.stack = "Error: " + location.origin + "/said/in/words.js:5:6\\n    at f (" + location.origin + "/the/admin/hunter/two.js?k=v#frag:12:34)"; throw e; }, 5);
       </script>`);
+    // An application that answers a form with what was sent, shown again in a plain text field.
+    if (url.pathname === "/echo-form") return html(`<form action="/echo"><label for="k" style="display:block;font-size:40px">API key</label><input id="k" name="key" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button>Submit</button></form>`);
+    if (url.pathname === "/echo") return html(`<label for="e" style="display:block;font-size:40px">Try again</label><input id="e" type="text" style="display:block;width:1200px;height:400px;font-size:200px" value="${(url.searchParams.get("key") ?? "").replace(/[^A-Za-z0-9{}:._-]/g, "")}">`);
+    // A page that, once a secret has been typed, makes one question about the held field fail and then behaves again.
+    if (url.pathname === "/trap") return html(`<label for="k" style="display:block;font-size:40px">API key</label><input id="k" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button id="b">Save</button><script>
+        // The page writes what was typed in its own way, so the field no longer holds the very value typed.
+        document.getElementById("b").addEventListener("click", () => { const k = document.getElementById("k"); k.value = k.value.split("").join(" "); });
+        const hidden = document.createElement("input"); hidden.type = "password"; hidden.style.display = "none"; document.body.append(hidden);
+        const real = Element.prototype.getBoundingClientRect; let done = false;
+        Element.prototype.getBoundingClientRect = function () {
+          if (!done && this === hidden && document.getElementById("k").value !== "") { done = true;
+            Object.defineProperty(Object.prototype, "a", { get() { delete Object.prototype.a; throw new Error("no"); }, configurable: true }); }
+          return real.call(this);
+        };
+      </script>`);
+    // A later page that watches for anything handed to it, and tells the server what it saw.
+    if (url.pathname === "/spy") return html(`<h1>Spy</h1><input value="nothing here"><script>
+        const has = String.prototype.includes; const beacon = navigator.sendBeacon.bind(navigator); let telling = false;
+        const seen = (value) => { if (telling || typeof value !== "string" || !has.call(value, "user.password")) return; telling = true; try { beacon("/seen", "x"); } finally { telling = false; } };
+        for (const [proto, name] of [[String.prototype, "includes"], [String.prototype, "indexOf"], [Array.prototype, "some"], [Array.prototype, "includes"]]) {
+          const real = proto[name];
+          proto[name] = function (...args) { seen(String(this)); for (const arg of args) seen(Array.isArray(arg) ? arg.join(",") : arg); return real.apply(this, args); };
+        }
+      </script>`);
+    if (url.pathname === "/seen") { hits.push("seen"); response.writeHead(204); return void response.end(); }
+    // A new page that shows what was sent in a field made by one document and placed in another.
+    if (url.pathname === "/echo-frame") return html(`<iframe id="f" style="display:block;border:0;width:1200px;height:500px"></iframe><script>
+        const field = document.createElement("input"); field.value = ${JSON.stringify((url.searchParams.get("key") ?? "").replace(/[^A-Za-z0-9{}:._-]/g, ""))};
+        field.style.cssText = "display:block;width:1100px;height:400px;font-size:200px";
+        document.getElementById("f").contentDocument.body.append(field);
+      </script>`);
+    if (url.pathname === "/echo-frame-form") return html(`<form action="/echo-frame"><label for="k" style="display:block;font-size:40px">API key</label><input id="k" name="key" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button>Submit</button></form>`);
+    if (url.pathname === "/echo-long-form") return html(`<form action="/echo-long"><label for="k" style="display:block;font-size:40px">API key</label><input id="k" name="key" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button>Submit</button></form>`);
+    if (url.pathname === "/echo-long") return html(`<label for="e" style="display:block;font-size:40px">Settings</label><textarea id="e" style="display:block;width:1200px;height:400px;font-size:200px">${"an ordinary line of settings\n".repeat(300)}key: ${(url.searchParams.get("key") ?? "").replace(/[^A-Za-z0-9{}:._-]/g, "")}</textarea>`);
+    const SLOW_CHANGE = `<style>@view-transition { navigation: auto } ::view-transition-group(root), ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 20s }</style>`;
+    if (url.pathname === "/change-form") return html(`${SLOW_CHANGE}<label for="k" style="display:block;font-size:40px">API key</label><input id="k" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><a href="/change-next">Next</a>`);
+    if (url.pathname === "/change-framed") return html(`<label for="k" style="display:block;font-size:40px">API key</label><input id="k" type="text" style="display:block;width:600px;height:100px"><button onclick="frames[0].location = '/change-next'">Go</button><iframe src="/change-form" style="display:block;width:1200px;height:400px"></iframe>`);
+    if (url.pathname === "/change-next") return html(`${SLOW_CHANGE}<h1>Next</h1>`);
     if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
     if (url.pathname === "/leaky") {
       return html(`<h1>Leaky</h1><script>
@@ -247,6 +288,98 @@ test("a field a secret was typed into stays covered when the way it was found st
     assert.deepEqual(await pixel(path.join(dir, entry.screenshot), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
   }
   assert.ok(result.capture!.steps.some((taken) => taken.step >= 3 && taken.screenshot !== undefined), "a covered picture is kept after the label changed");
+});
+
+test("once the page a secret was typed into has been left, pictures are kept again: the field went with its page", async () => {
+  const { result, dir } = await run(
+    [step("navigate", { path: "/relabel" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("navigate", { path: "/quiet" }), step("navigate", { path: "/sign-in" }), FINISH],
+    true,
+  );
+  const taken = result.capture!.steps;
+  // While the field is on the page it is covered. After the page is left there is a picture of each later step.
+  assert.deepEqual(await pixel(path.join(dir, taken[1]!.screenshot!), 600, 250), [0x3a, 0x3a, 0x3a]);
+  for (const entry of taken.slice(2)) assert.match(entry.screenshot ?? "", /^step-\d\.png$/, `step ${entry.step}: ${entry.noScreenshot}`);
+  assert.equal(result.capture!.leftOut.screenshots, 0);
+  // And a password field met later is covered as any other.
+  assert.deepEqual(await pixel(path.join(dir, taken[3]!.screenshot!), 600, 400), [0x3a, 0x3a, 0x3a]);
+});
+
+test("a typed secret shown again in another field is covered there: an application that answers with what was sent", async () => {
+  const { result, dir } = await run(
+    [step("navigate", { path: "/echo-form" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "button", value: "Submit" } }), FINISH],
+    true,
+  );
+  const taken = result.capture!.steps;
+  // The page after the form was sent is a new document with a new field that holds what was typed.
+  for (const entry of taken.slice(1)) {
+    assert.match(entry.screenshot ?? "", /^step-\d\.png$/, `step ${entry.step}: ${entry.noScreenshot}`);
+    assert.deepEqual(await pixel(path.join(dir, entry.screenshot!), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
+  }
+});
+
+test("a typed secret far down a long field is found: a field is read whole, never in part", async () => {
+  const { result, dir } = await run(
+    [step("navigate", { path: "/echo-long-form" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "button", value: "Submit" } }), FINISH],
+    true,
+  );
+  // The field of the page after holds some 8,000 characters, and what was typed comes last.
+  for (const entry of result.capture!.steps.slice(2)) {
+    assert.match(entry.screenshot ?? "", /^step-\d\.png$/, `step ${entry.step}: ${entry.noScreenshot}`);
+    assert.deepEqual(await pixel(path.join(dir, entry.screenshot!), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
+  }
+});
+
+test("no picture is kept while the browser still draws the view before over the next: the field typed into may show in it", async () => {
+  const { result } = await run(
+    [step("navigate", { path: "/change-form" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "link", value: "Next" } }), FINISH],
+    true,
+  );
+  const taken = result.capture!.steps;
+  assert.ok(taken[1]!.screenshot !== undefined, "the field itself, covered, is pictured before the page is left");
+  for (const entry of taken.slice(2)) assert.equal(entry.screenshot, undefined, `step ${entry.step} kept a picture during the change of view`);
+});
+
+test("a frame that is changing its view is treated as the page is, and without a typed secret a change of view costs no picture", async () => {
+  const framed = await run(
+    [step("navigate", { path: "/change-framed" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "button", value: "Go" } }), FINISH],
+    true,
+  );
+  assert.ok(framed.result.capture!.steps[1]!.screenshot !== undefined, "pictured before the frame changes its view");
+  for (const entry of framed.result.capture!.steps.slice(2)) assert.equal(entry.screenshot, undefined, `step ${entry.step} kept a picture while a frame changed its view`);
+  const plain = await run([step("navigate", { path: "/change-form" }), step("click", { element: { by: "role", role: "link", value: "Next" } }), FINISH], true);
+  for (const entry of plain.result.capture!.steps) assert.ok(entry.screenshot !== undefined, `step ${entry.step}: ${entry.noScreenshot}`);
+});
+
+test("the secret typed is never handed to a later page to look for: what fields hold is read out and compared in the engine", async () => {
+  hits.length = 0;
+  const { result } = await run([step("navigate", { path: "/relabel" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("navigate", { path: "/spy" }), step("navigate", { path: "/quiet" }), FINISH], true);
+  assert.equal(result.verdict, "passed");
+  assert.ok(result.capture!.steps[2]!.screenshot !== undefined, "a picture of the later page is kept");
+  assert.deepEqual(hits.filter((hit) => hit === "seen"), [], "the later page saw the typed value");
+});
+
+test("a typed secret shown again in a field made by one document and placed in another is covered", async () => {
+  const { result, dir } = await run(
+    [step("navigate", { path: "/echo-frame-form" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "button", value: "Submit" } }), FINISH],
+    true,
+  );
+  for (const entry of result.capture!.steps.slice(2)) {
+    assert.match(entry.screenshot ?? "", /^step-\d\.png$/, `step ${entry.step}: ${entry.noScreenshot}`);
+    assert.deepEqual(await pixel(path.join(dir, entry.screenshot!), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
+  }
+});
+
+test("a page cannot have a held field let go by making one question about it fail: the field is covered or there is no picture", async () => {
+  const { result, dir } = await run(
+    [step("navigate", { path: "/trap" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "button", value: "Save" } }), step("click", { element: { by: "role", role: "button", value: "Save" } }), FINISH],
+    true,
+  );
+  for (const entry of result.capture!.steps.slice(1)) {
+    if (entry.screenshot === undefined) continue;
+    assert.deepEqual(await pixel(path.join(dir, entry.screenshot), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
+  }
+  // And it is covered again in a picture after the page has stopped interfering.
+  assert.ok(result.capture!.steps.slice(2).some((entry) => entry.screenshot !== undefined), JSON.stringify(result.capture!.steps));
 });
 
 test("a field whose place the page does not give as numbers gets no picture, and that is counted", async () => {
