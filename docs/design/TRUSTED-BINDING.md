@@ -114,8 +114,8 @@ Binding
   tolerated          method, path and status of answers of 400 or above that
                      the approver accepts as normal for this application
   settling           within: the time the application may take to show a
-                     write, in seconds, at most 120; readings: how many final
-                     readings are made, at least 3
+                     write, in seconds, at most 120 (a provisional bound);
+                     readings: how many final readings are made, at least 3
   setup              how the check starts                      (see Setup)
   steps              ordered list, at least one                (see Step)
   observation        the place to read at the end              (see Reading)
@@ -201,6 +201,11 @@ engine. A binding that breaks one is refused, never repaired.
   answer is named by an own field of that answer, must be a string or a
   number of bounded length, and is treated as a secret by the engine: it is
   never written to a result and its field is covered in pictures.
+- **In a check with a write, the observation's own reading is seen before
+  that write, with an expected value that is not the final one.** A value
+  that was already there before the journey says nothing about the
+  journey: without this, a purchase that awards nothing would verify
+  against a balance that was right all along.
 - **An `act` may not expect a write that is also listed as background.**
 - **A locator may not contain the expected value**, test ids included. That
   is stricter than the engine's rule for comparisons today. Whether the
@@ -347,10 +352,14 @@ by asking script that the page can replace.
   listed in the binding as `tolerated`. A background request that is
   answered with an error counts like any other. Otherwise the check is
   unverified, whatever it read.
+- **A `see` after a write** may be read again, on a fresh page each time,
+  until it matches or the binding's settling time has passed. If it never
+  matches, the check is unverified.
 - **The final readings.** The observation is read as many times as the
   binding's `settling` says, each time on a page freshly opened by the
   engine under all the same rules: the first at once, the last not before
-  the approved time has passed since the last witnessed write, the others
+  the approved time has passed since the last write of the check, signing
+  in included (in a check with no write, since its first step), the others
   spread between. The time is the approver's statement of how long this
   application may take to show a write. It is part of the binding, bounded,
   and not a delay fixed in the code.
@@ -584,7 +593,10 @@ verify the wrong thing with full standing.
    fragment routing. Much real criteria text cannot be bound yet and stays
    unverified. That is intended.
 10. **Cost of approval.** A check is approved step by step. This is real
-    work for the owner, and is what the trust rests on.
+    work for the owner, and is what the trust rests on. Each check also
+    takes its whole approved settling time, even when it verifies, so many
+    checks with long times can outlast a run's time limit and end
+    unverified.
 11. **Unseen effects.** A change the application makes through a plain read
     or a socket is not counted as a write.
 12. **Shared stored state.** Checks are separate in the browser, not in the
@@ -669,6 +681,8 @@ failed.
   picture, or other set hashes; a result that leaves trust out; a second
   result for the run.
 
+- **A value that was already there:** an observation whose value was the
+  expected one before the write.
 - **Witnessing and errors:** an `act` answered 200 with a body that says it
   failed; a page whose own data request fails and shows a default; a
   request of the application's own during a step that sends none; a write
