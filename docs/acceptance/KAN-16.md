@@ -23,9 +23,9 @@ the worker and uploads a result.
 | 2 | part: a snapshot with a valid approval for this run is the only source of requirements; a comparison must cite a requirement quoted from it, and its expected value must itself be stated in that quoted text. Not established: that the element read is the one the text is about. That is still the plan's choice, so `verdictsTrusted` is false | `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
 | 3 | checked for both gates, and the remote run takes no model driver at all | all three |
 | 4 | part: a comparison citing a quote not found in an approved snapshot, another source id, or no source id is removed, and so is one whose expected number, text or kind of comparison the quoted text does not state. What the executor itself entered is not evidence (see "Independent evidence"). Not established: what a calculation means, and which element is read | `packages/agent/test/independent-evidence.test.ts`, `packages/agent/test/remote-run.test.ts`, `packages/agent/test/remote-authority.test.ts` |
-| 5 | part: the run's record names every snapshot with its hash. The result file is not built yet | `packages/agent/test/remote-run.test.ts` |
+| 5 | checked: `result.json` names every snapshot with its hash, and each requirement names the snapshot it comes from | `packages/agent/test/remote-run.test.ts` |
 | 6 | not started | |
-| 7 | part: the run's record has no pull-request or ticket field and says "target". The result file and report are not built yet | `packages/agent/test/remote-run.test.ts` |
+| 7 | part: `result.json` and the run's record have no pull-request or ticket field and say "target". A written report is not built yet | `packages/agent/test/remote-run.test.ts` |
 | 8 | checked so far: the existing suite passes unchanged | `npm test` |
 | KAN-15 criterion 7 | not started | |
 
@@ -156,7 +156,7 @@ expectation, a ledger directory and a **recording**, and writes
   mistake in any of them uses nothing up. A failure after that, such as the
   browser not starting or the disk filling, does use the run's one start.
 - The command exits 0 when the run was carried out, whatever the scenarios
-  found. Exit 0 is not a pass: there is no run-level verdict yet.
+  found. Exit 0 is not a pass: the verdict is in `result.json`.
 - A target named `localhost` is refused, as before, unless the caller passes
   `--allow-local-target`, for a trial against an application on the same
   machine. The worker never passes it, and the record says `localTarget` when
@@ -168,8 +168,11 @@ is matched to a source loosely (ignoring case, spacing and some punctuation,
 from 8 characters), and a public name that resolves to a private address is
 not detected by the request gate.
 
-No run-level verdict is stated yet, and no result file in the dashboard's
-format is written. Those come next.
+The run writes `result.json`, with the engine's run-level verdict, beside
+`remote-run.json`. Its format, and how an observation is kept apart from a
+verified requirement, is in `docs/remote-result-format.md`. What the shared
+comparison code does not protect against on the pull-request path is in
+`docs/assertion-evidence-risks.md`.
 
 ## Independent evidence
 

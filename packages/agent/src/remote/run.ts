@@ -32,6 +32,7 @@ import type { SourceRecord } from "../sources.ts";
 import { validatePlan } from "../validate.ts";
 import { isStartable, type AuthoritativeSnapshot, type StartableRun } from "./authority.ts";
 import { RemoteRequestRefused, type AdmittedRun } from "./request.ts";
+import { remoteResult, REMOTE_VIEWPORT } from "./result.ts";
 
 /** The version of the recording format this engine reads. */
 export const REMOTE_RECORDING_VERSION = 1;
@@ -254,6 +255,7 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
       confine: true,
       // And the plan is not this engine's own: values are read only from pages and answers as the application served them.
       untrustedPlan: true,
+      viewport: REMOTE_VIEWPORT,
       expired: () => (ranOut ||= now() >= deadline),
     });
     // From the clock, never from what a result says about itself.
@@ -288,5 +290,7 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
     durationMs: now() - started,
   };
   await writeFile(path.join(options.outDir, "remote-run.json"), `${JSON.stringify(run, null, 2)}\n`);
+  // The result: what the run found, in the format a control plane reads. The record above is the working behind it.
+  await writeFile(path.join(options.outDir, "result.json"), `${JSON.stringify(remoteResult(run), null, 2)}\n`);
   return run;
 }
