@@ -379,7 +379,7 @@ const HIDDEN = new RegExp("[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u200b-\\u200f
 
 test("for any text or path made of the pieces that have broken cleaning before: no error, nothing hidden in what comes out, and cleaning again changes nothing", () => {
   const session = { vault: { scrub: (text: string) => text.replaceAll("Zq7!vault-pw", "{{secret:u.password}}") } } as never;
-  const pieces = ["password", "token", "=", ":", " ", "?", "&", "/", "%41", "%25", "%2541", "%00", "%1B", "%E2%80%AE", "://", "http", "@", "[redacted]", "[redacted value]", "[redacted e-mail]", "[redacted-e-mail]", "[address]", "{{secret:u.x}}", "{{secret:", "}}", "\ud800", "\udc00", "\u200b", "\u202e", "\u0085", "\u2067", "\u00a0", "\u061c", "%3F", "%3D", "%2F", "equals", "\u2192", "+", "aws_secret_access_key_2", "logo@2x.png", "é", "a", "b1", "Bearer", "is", '"', "'", "(", ")", "[", "]", "{", "}", ",", ";", "|", "<", ">", ".", "-", "_", "x".repeat(20), "12345678901234", "…", "\ue000", "\ue001", "0", "key", "%zz", "%", "#", ":12:3", ".js", "Zq7!vault-pw", "Zq7%21vault-pw"];
+  const pieces = ["password", "token", "=", ":", " ", "?", "&", "/", "%41", "%25", "%2541", "%00", "%1B", "%E2%80%AE", "://", "http", "@", "[redacted]", "[redacted value]", "[redacted e-mail]", "[redacted-e-mail]", "[address]", "{{secret:u.x}}", "{{secret:sEcReTt0ken1234567890abcdefXYZ}}", "%7B%7Bsecret:", "%7D%7D", "{{secret:", "}}", "\ud800", "\udc00", "\u200b", "\u202e", "\u0085", "\u2067", "\u00a0", "\u061c", "%3F", "%3D", "%2F", "equals", "\u2192", "+", "aws_secret_access_key_2", "logo@2x.png", "é", "a", "b1", "Bearer", "is", '"', "'", "(", ")", "[", "]", "{", "}", ",", ";", "|", "<", ">", ".", "-", "_", "x".repeat(20), "12345678901234", "…", "\ue000", "\ue001", "0", "key", "%zz", "%", "#", ":12:3", ".js", "Zq7!vault-pw", "Zq7%21vault-pw"];
   // The same cases every time: a generator with a fixed start.
   let state = 42;
   const next = () => {
@@ -499,14 +499,40 @@ test("what cleaning must remove, and what it must leave", () => {
     assert.equal(cleanText(session, cleaned), cleaned, `again: ${what}`);
   }
   // Left as they are: what a person needs to make sense of an error.
-  for (const kept of ["Unexpected token < in JSON at position 0", "TypeError: Cannot read properties of undefined (reading 'total')", "Failed to load resource: the server responded with a status of 404 (Not Found)", "retry=3 timeout=5000", "monkey=banana primaryKey=42", "could not sign in with {{secret:user.password}}", "token=[redacted]", "see [redacted value] and [redacted e-mail] ok", "401 Unauthorized: access denied", "The basic shipping rate is: 4.99", "what? 100% done", "Cannot read properties of null (reading 'password')", "Invalid token", "Error: Request failed with status code 500", "GET /assets/logo@2x.png failed", "at render (/_next/static/chunks/app-[redacted].js:12:345)"]) {
+  for (const kept of ["Invalid token", "Enter your password.", 'label "Password"', "TypeError: Cannot read properties of undefined (reading 'total')", "Failed to load resource: the server responded with a status of 404 (Not Found)", "retry=3 timeout=5000", "monkey=banana primaryKey=42", "could not sign in with {{secret:user.password}}", "token=[redacted]", "see [redacted value] and [redacted e-mail] ok", "401 Unauthorized: access denied", "The basic shipping rate is: 4.99", "what? 100% done", "Cannot read properties of null (reading 'password')", "Invalid token", "Error: Request failed with status code 500", "GET /assets/logo@2x.png failed", "at render (/_next/static/chunks/app-[redacted].js:12:345)"]) {
     assert.equal(cleanText(session, kept), kept);
   }
   assert.equal(cleanText(session, "failed at http://127.0.0.1:1/api/v2/international-shipping-rates?x=1"), "failed at /api/v2/international-shipping-rates");
+  // A credential's name with anything after it: the name stays and says what kind of line it was; nothing after it does.
+  for (const [text, cleaned] of [
+    ["Unexpected token < in JSON at position 0", "Unexpected token [redacted]"],
+    ["Uncaught ReferenceError: session is not defined", "Uncaught ReferenceError: session [redacted]"],
+    ["password for admin: after-words-62", "password [redacted]"],
+    ["Invalid password supplied: after-words-63", "Invalid password [redacted]"],
+    ["password field value=after-words-64", "password [redacted]"],
+    ["password hunter3-no-sign-65", "password [redacted]"],
+    ["password <angle-66>", "password [redacted]"],
+    ["token hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh=opaque-then-67", "token [redacted]"],
+    ['label "Token" more', 'label "Token [redacted]'],
+  ] as const) {
+    assert.equal(cleanText(session, text), cleaned);
+    assert.equal(cleanText(session, cleaned), cleaned, `again: ${text}`);
+  }
+  for (const text of ["password\uFF1A wide-colon-68", "password\u2192 glued-arrow-69", "token\u21D2 glued-arrow-70", 'password\uFF1A"wide-quoted-71"', "password ~tilde-72", "session id: two-words-73"]) {
+    assert.ok(!/-(6[89]|7[0-3])/.test(cleanText(session, text)), cleanText(session, text));
+  }
+  // A long word with nothing readable in it is said to have been there, at any length.
+  assert.equal(cleanText(session, "x".repeat(5_000)), "[redacted value]");
+  assert.equal(cleanText(session, `Error: ${"x".repeat(5_000)}`), "Error: [redacted value]");
   // A secret the executor was given that lies across two segments of a path, part of it written in codes.
   const across = { vault: { scrub: (text: string) => text.replaceAll("alpha/bravo-charlie", "{{secret:f.path}}") } } as never;
   for (const text of ["GET /files/alpha/bravo%2Dcharlie failed", "http://h.example/files/alpha/bravo%2Dcharlie"]) assert.ok(!cleanText(across, text).includes("bravo"), cleanText(across, text));
   assert.ok(!cleanPath(across, "/files/alpha/bravo%2Dcharlie").includes("bravo"));
+  // Or put together again by the cleaning itself, which drops what is empty or not shown between the parts.
+  for (const way of ["/alpha//bravo-charlie", "/alpha/%E2%80%8Bbravo-charlie", "/alpha/%00/bravo-charlie", "/alpha/../bravo-charlie", "/alpha/./bravo-charlie"]) assert.equal(cleanPath(across, way), "/[redacted]", way);
+  assert.ok(!cleanText(across, "GET http://app.example/alpha//bravo-charlie failed").includes("bravo"));
+  // What looks like the engine's placeholder but holds a key is not kept in a path either.
+  assert.equal(cleanPath(session, "/%7B%7Bsecret:sEcReTt0ken1234567890abcdefXYZ%7D%7D"), "/[redacted]");
 });
 
 test("a field whose place the page does not give as numbers gets no picture, and that is counted", async () => {

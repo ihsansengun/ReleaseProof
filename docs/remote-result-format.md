@@ -150,18 +150,17 @@ It leaves the machine, so it is kept small and kept clean:
   The secrets the executor was given go first; then the text is cut to 4,000
   characters, and a word the cut went through is dropped. It is read once
   into words and the signs between them. Removed: an address down to its
-  cleaned path, wherever in a word it starts; e-mail addresses; **everything
-  after the point a credential's value begins**, that is after a name that
-  is a credential's (`password`, `access_token`, `clientSecret`, `pwd`,
-  `x-auth`, `Cookie`, `Authorization` and the like) and a sign or a verb
-  (`=`, `:`, `=>`, `->`, `:=`, an arrow, `is`, `equals`, an opening
-  bracket), or after `Bearer`, `Basic`, `Digest`, `Negotiate` or `Token`.
-  Once a credential has been named, the first sign or such verb met anywhere
-  later in the text counts, whatever stands between: a closing bracket, a
-  quote, other words. So a line that names a credential and has a sign
-  anywhere after it loses what follows the sign. A name counts wherever in a
-  word it stands (`Error:password=…`). Where a value begins can be told;
-  where it ends cannot, so no attempt is made and the rest of the text goes. Also removed: a long word of
+  cleaned path, wherever in a word it starts; e-mail addresses; **everything after a
+  credential's name**. A name is a word that is, or holds, one the rules
+  know (`password`, `access_token`, `clientSecret`, `pwd`, `x-auth`,
+  `Cookie`, `Authorization`, `session`, `key` and the like), or `Bearer`,
+  `Basic`, `Digest`, `Negotiate` or `Token`, wherever in a word it stands
+  (`Error:password=…`). If anything but closing quotes, closing brackets
+  and stops follows the name, none of it is kept. Earlier versions looked
+  for the sign between a name and its value, and then for a sign anywhere
+  later; each time a review found another way of writing one. Neither where
+  a value begins nor where it ends can be told in a text of no known form,
+  so neither is guessed. Also removed: a long word of
   letters and digits mixed, a very long word, a long run of digits. What is
   already redacted, and the engine's own placeholder for a secret, are set
   aside first and stand as they are, and the rest of their word is judged as
@@ -197,7 +196,9 @@ It leaves the machine, so it is kept small and kept clean:
   such stages, so a step on a page that stalls each of them can be held for
   some twenty seconds before it is given up. The page the covering is drawn
   in is discarded after a failure and closed with the run.
-- No picture is kept of a page that is not the application under test.
+- No picture is kept of a page that is not the application under test, as
+  far as the step's own check shows: the check is made just before the
+  picture is taken, not at the same instant.
 - What a limit left out is counted in `evidenceLimits.leftOut`, and so is a
   picture that could not be taken.
 - The result cleans every text and path once more as it is built, by the same
@@ -205,8 +206,9 @@ It leaves the machine, so it is kept small and kept clean:
   steps). That covers what the browser said, the failed requests, what each
   step pointed at, and the two values of a comparison wherever they are
   given (the step's note, and `expected` and `observed` under the
-  requirement). A secret the executor was given is replaced in an observed
-  value before it reaches the result. A scenario is
+  requirement). An observed value is cleaned with the secrets the executor
+  was given, by the rules for anything the browser said, before it reaches
+  the result. A scenario is
   named only by a plain name. An entry that does not fit is left out and
   counted. Cleaning what is clean changes nothing: a test makes 60,000 texts
   and paths from the pieces that have broken cleaning before and holds each
@@ -227,9 +229,7 @@ still appear:
   name; a short value encoded another way; the password of an account the
   target's manifest declares;
 - in text, also: a secret in a sentence with no name the rules know ("the
-  code was …", or a name of the application's own such as `PHPSESSID`); a
-  credential's name with its value straight after it and no sign
-  or verb between ("password hunter3"); a name in one item of a list and its
+  code was …", or a name of the application's own such as `PHPSESSID`); a name in one item of a list and its
   value in the next; a short secret of mixed characters cut into pieces by
   `&`, `|` or a comma, each piece too short to look like one; what a page
   writes from a template or a function's source;
@@ -248,14 +248,15 @@ still appear:
   described as such. Measuring from outside the page is a proposed next
   step.
 
-And it errs toward removing: a message such as "password: must be at least 8
-characters", "token is missing", "session is not defined" or "tokens: 3
-remaining" loses everything after the name, and so does whatever followed a
-credential in the same line; a sentence that starts with `Basic`, `Digest`,
-`Token` or `Bearer` loses the rest ("Basic plan does not include …"); a word
-with a `?` in it loses what follows the `?`; a word of `%`-codes that hide a
-space or a sign is replaced;
-in a path, an id written in
+And it errs toward removing. A line that names a credential and goes on
+loses everything after the name: "Unexpected token < in JSON at position 0"
+becomes "Unexpected token [redacted]", "session is not defined" becomes
+"session [redacted]", and a step that points at `label "Token" …` is shown
+as far as the name. In a test of 64 ordinary console lines about one in five
+lost its end this way; the start, which says what kind of error it was,
+stayed. A sentence that starts with `Basic`, `Digest`, `Token` or `Bearer`
+loses the rest; a word with a `?` in it loses what follows the `?`; a word of
+`%`-codes that hide a space or a sign is replaced; in a path, an id written in
 groups, a name of seven words or more, and a segment with brackets, a colon
 or a comma are replaced. That is the safe side to be wrong on.
 

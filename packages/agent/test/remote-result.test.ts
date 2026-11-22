@@ -371,7 +371,7 @@ test("what was collected is taken in by the result's own rules, whoever wrote th
   assert.ok(!text.includes("<script>") && !text.includes("HUNTER2SECRET") && !text.includes("elsewhere.example") && !text.includes("null"));
   assert.ok(result.diagnostics.console.length <= 200);
   assert.ok(result.diagnostics.console.every((entry) => entry.text.length <= 300 && /^S1-[12]$/.test(entry.stepId)));
-  assert.deepEqual(result.diagnostics.network, [{ stepId: "S1-2", method: "OTHER", path: "/api/x", status: 400, kind: "other" }]);
+  assert.deepEqual(result.diagnostics.network, [{ stepId: "S1-2", method: "OTHER", path: "/api/x", status: 400, kind: "other", failure: "[redacted value]" }]);
   // Left out, and counted: the entry with a level of its own, the two requests that do not fit, and everything past the limit.
   assert.equal(result.evidenceLimits.leftOut.network, 2);
   assert.equal(result.evidenceLimits.leftOut.console, 1 + (5_002 - 200));
@@ -403,7 +403,9 @@ test("the values of a comparison are cleaned wherever the result gives them: in 
   shown.assertionResults = shown.assertionResults.map((made) => ({ ...made, pass: false, actual: "Signed in. password=shown-secret-1 ada@example.test \u202eBearer shown-secret-2" }));
   const result = remoteResult(record([shown]));
   const text = JSON.stringify(result);
-  for (const secret of ["shown-secret-1", "shown-secret-2", "ada@example.test", "\u202e"]) assert.ok(!text.includes(secret), `${JSON.stringify(secret)} in ${JSON.stringify(result.requirements.map((requirement) => requirement.observed))}`);
+  // A value with a credential's name and words before the sign, as a page might show it.
+  shown.assertionResults.push({ ...shown.assertionResults[0]!, actual: "password for admin: shown-secret-3" });
+  for (const secret of ["shown-secret-1", "shown-secret-2", "shown-secret-3", "ada@example.test", "\u202e"]) assert.ok(!text.includes(secret), `${JSON.stringify(secret)} in ${JSON.stringify(result.requirements.map((requirement) => requirement.observed))}`);
   assert.ok(result.requirements.some((requirement) => requirement.observed.startsWith("Signed in.")));
   // A scenario's name that is not text does not stop the result from being built.
   const odd = scenario("S1", "passed", 160);

@@ -18,9 +18,9 @@
  * The rules, for a word of a text:
  *   - an address is reduced to its cleaned path;
  *   - an e-mail address is replaced;
- *   - from the point a credential's value begins (after its name and a sign,
- *     or after Bearer, Basic, Digest, Negotiate or Token so written), the
- *     rest of the text is replaced: where a value ends cannot be told;
+ *   - after a credential's name (or Bearer, Basic, Digest, Negotiate or
+ *     Token), if anything follows it, the rest of the text is replaced:
+ *     neither where a value begins nor where it ends can be told;
  *   - a long word of letters and digits mixed, a very long word of any kind,
  *     and a long run of digits are replaced.
  * Secret values the caller knows are replaced first, by the caller's own
@@ -45,10 +45,6 @@ const UNSHOWN = new RegExp("[\\u0080-\\u009F\\u2028\\u2029\\u2066-\\u2069\\uFFF9
 const shown = (text: string) => text.replace(INVISIBLE, "").replace(UNSHOWN, "");
 /** Spaces of other kinds, read as the space they look like. */
 const SPACES = new RegExp("[\\u00A0\\u1680\\u2000-\\u200A\\u202F\\u205F\\u3000]", "g");
-/** A word made of signs only: no letter and no digit of any writing. */
-const SIGNS_ONLY = /^[^\p{L}\p{N}\uE000\uE001]+$/u;
-/** A sign that a value follows, at the start of a word. */
-const SIGN_FIRST = new RegExp("^[=:\\u2192\\u2014\\u2013\\u21D2\\uFF1D\\uFF1A]");
 
 const isLetter = (code: number) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code > 127;
 const isDigit = (code: number) => code >= 48 && code <= 57;
@@ -100,7 +96,16 @@ function ordinaryPart(part: string): boolean {
  */
 export function cleanPathWith(scrub: (text: string) => string, pathname: string): string {
   try {
-    return shown(cleanedPath(scrub, pathname));
+    const out = shown(cleanedPath(scrub, pathname));
+    // What comes out is read once more as a whole, decoded: a secret the caller knows that the cleaning itself
+    // put together again (by dropping what stood between its parts) is found here.
+    let whole = out;
+    for (let round = 0; round < 3 && whole.includes("%"); round++) {
+      const next = decodeURIComponent(whole);
+      if (next === whole) break;
+      whole = next;
+    }
+    return scrub(out) !== out || scrub(whole) !== whole ? "/[redacted]" : out;
   } catch {
     // Nothing a page can put in an address may stop the run: what cannot be read is not kept.
     return "/[redacted]";
@@ -126,7 +131,7 @@ function cleanedPath(scrub: (text: string) => string, pathname: string): string 
   const out: string[] = [];
   for (const raw of scrubbed.split("/")) {
     if (raw === "" || raw === "." || raw === "..") continue;
-    if (PLACEHOLDER.test(raw) || REDACTED.has(raw)) {
+    if ((PLACEHOLDER.test(raw) && !opaque(raw.slice(9, -2))) || REDACTED.has(raw)) {
       out.push(raw);
       continue;
     }
@@ -137,7 +142,7 @@ function cleanedPath(scrub: (text: string) => string, pathname: string): string 
     } catch {
       // Looked at as it is written.
     }
-    const cleaned = PLACEHOLDER.test(segment) ? segment : cleanSegment(segment);
+    const cleaned = PLACEHOLDER.test(segment) && !opaque(segment.slice(9, -2)) ? segment : cleanSegment(segment);
     // What is left of a segment may be nothing, or a step up: neither is a part of a path.
     if (cleaned !== "" && cleaned !== "." && cleaned !== "..") out.push(cleaned);
   }
@@ -180,7 +185,8 @@ function cleanSegment(segment: string): string {
     if (position < name.length) rebuilt += name[position] === " " ? "%20" : name[position];
     position += 1;
   }
-  return `${rebuilt}${ending}`;
+  // What replacing its parts made longer than a name is, is not kept: the same answer whether it is read now or again.
+  return rebuilt.length + ending.length > 60 ? (ending === "" ? "[redacted]" : `[redacted]${ending}`) : `${rebuilt}${ending}`;
 }
 
 /** Written so that a path stays plain printable characters, with nothing a reader could take for markup. */
@@ -217,8 +223,6 @@ function opaque(given: string): boolean {
   return false;
 }
 
-/** Signs and words that stand between a credential's name and its value. */
-const JOINS = new Set(["is", "was", "are", "equals", "is:", "="]);
 /** The word that says what kind of credential follows. */
 const isKind = (word: string) => ["Basic", "Digest", "Negotiate", "Token"].includes(word) || /^bearer(?![A-Za-z])/i.test(word);
 
@@ -252,19 +256,20 @@ function decoded(scrub: (text: string) => string, word: string): string | undefi
  * caller knows; everything else is done here.
  *
  * The text is read once, a character at a time, into words and the signs
- * between them, and each word is judged by itself. One thing is carried from
- * a word to the next: that a credential was just named.
+ * between them, and each word is judged by itself. Nothing is carried from a
+ * word to the next.
  *
- * Where a credential's value begins can be told: after its name and a sign.
- * Where it ends cannot, in a text of no known form: at a space, a comma, a
- * closing quote, or none of them. So nothing here tries. From the point a
- * credential's value begins, **the rest of the text is replaced**. A message
- * loses its end. Once a credential has been named, any sign met later in the
- * text is taken as the start of its value, whatever stands between.
+ * Where a credential's value begins and ends cannot be told in a text of no
+ * known form: after a sign, a verb, a bracket, a quote, other words, or none
+ * of them, in any writing. So nothing here tries. When a word is a
+ * credential's name and anything but closing quotes, brackets and stops
+ * follows it, **the rest of the text is replaced**. A message loses its end.
  */
 export function cleanTextWith(scrub: (text: string) => string, text: string): string {
   try {
-    return shown(cleanedText(scrub, text));
+    const out = shown(cleanedText(scrub, text));
+    // A secret the caller knows that the cleaning itself put together is replaced in what comes out.
+    return scrub(out) === out ? out : shown(cleanedText(scrub, scrub(out)));
   } catch {
     // Nothing a page can say may stop the run: what cannot be read is not kept.
     return "[redacted]";
@@ -295,10 +300,6 @@ function cleanedText(scrub: (text: string) => string, text: string): string {
 
   let out = "";
   let words = 0;
-  /** Set when the word before was a credential's name and nothing else. */
-  let named = false;
-  /** Set once a credential has been named anywhere before: a sign met from then on is taken as the start of its value. */
-  let pending = false;
   /** Set when a credential's value begins: nothing after this point is kept. */
   let stop = false;
 
@@ -309,15 +310,6 @@ function cleanedText(scrub: (text: string) => string, text: string): string {
       i += 1;
       const space = char === " " || char === "\t" || char === "\n" || char === "\r";
       const quote = char === '"' || char === "'" || char === "`";
-      // A name, then "|" or ">" or an opening bracket: the value follows.
-      if (named && !space && !quote) {
-        if (char === ">" || char === "|" || char === "[" || char === "{" || char === "(") {
-          out += `${char}[redacted]`;
-          stop = true;
-          continue;
-        }
-        named = false;
-      }
       out += space ? " " : char;
       continue;
     }
@@ -339,7 +331,11 @@ function cleanedText(scrub: (text: string) => string, text: string): string {
     i = end;
     words += 1;
     // A word the cut went through is not whole, and may be the half of a secret.
-    if (cut && last) break;
+    if (cut && last) {
+      // Not left looking as if nothing was said.
+      out += out.trim() === "" ? "[redacted value]" : " [redacted value]";
+      break;
+    }
     // An address and a path are decoded where they are cleaned, a part at a time.
     if (word.includes("%") && !word.includes("://") && !word.startsWith("/")) {
       // What is already clean in it stands; the parts between are decoded each by itself.
@@ -347,22 +343,9 @@ function cleanedText(scrub: (text: string) => string, text: string): string {
       const plain = parts.includes(undefined) ? undefined : parts.join("");
       if (plain === undefined) {
         out += `[redacted value]${trail}`;
-        named = false;
         continue;
       }
       word = plain;
-    }
-    named = false;
-    if (pending) {
-      // A sign or a verb by itself, and then the value; or a sign with the value stuck to it. Whatever stood
-      // between the name and the sign (a closing bracket, a quote, other words) does not make it less a value.
-      const alone = JOINS.has(word.toLowerCase()) || (SIGNS_ONLY.test(word) && !word.startsWith("/") && !/^[.!?\u2026]+$/.test(word));
-      if (alone || SIGN_FIRST.test(word)) {
-        // The sign as written when it is one of the usual ones; any other is written as "=".
-        out += `${alone ? `${JOINS.has(word.toLowerCase()) || [":", "=>", "->", "-", ":=", "=="].includes(word) ? word : "="} ` : word[0]}[redacted]`;
-        stop = true;
-        continue;
-      }
     }
     HELD.lastIndex = 0;
     if (HELD.test(word) && word.replace(HELD, "") === "") {
@@ -370,10 +353,15 @@ function cleanedText(scrub: (text: string) => string, text: string): string {
       continue;
     }
     const cleaned = cleanWord(scrub, word, (index) => held[index] ?? "[redacted]");
-    out += cleaned.text + (cleaned.then === "stop" ? "" : trail);
+    out += cleaned.text + (cleaned.then === undefined ? trail : "");
     if (cleaned.then === "stop") stop = true;
-    named = cleaned.then === "named";
-    if (named) pending = true;
+    if (cleaned.then === "named") {
+      // A credential has been named. Whether what follows is its value cannot be told from the signs and words
+      // between, in whatever writing: so if anything at all follows, none of it is kept.
+      const rest = `${trail}${read.slice(i)}`;
+      out += /^[\s"'`)\]}.,;!?]*$/.test(rest) ? rest.replace(/\s+/g, " ") : " [redacted]";
+      stop = true;
+    }
   }
   const flat = out.replace(/ {2,}/g, " ").trim().replace(HELD, (_mark, index) => held[Number(index)] ?? "[redacted]");
   if (flat.length <= TEXT_KEPT) return flat;
@@ -387,7 +375,8 @@ function cleanedText(scrub: (text: string) => string, text: string): string {
  * credential's name with nothing after it yet.
  */
 function cleanWord(scrub: (text: string) => string, word: string, heldAt: (index: number) => string): { text: string; then?: "stop" | "named" } {
-  if (isKind(word)) return { text: `${/^[A-Za-z]{1,9}$/.test(word) ? word : "Bearer"} [redacted]`, then: "stop" };
+  // The word that says what kind of credential follows: as a credential's name, whatever follows it goes.
+  if (isKind(word)) return { text: /^[A-Za-z]{1,9}[.!?]*$/.test(word) ? word : "Bearer", then: "named" };
   // A name further into the word: "Error:password=…", ":password:", "a=password=…". Not in an address, a path or a
   // query, which have rules of their own below.
   if (!word.includes("://") && !word.startsWith("/") && !word.includes("?")) {

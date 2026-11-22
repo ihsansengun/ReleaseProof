@@ -9,7 +9,7 @@ import { renderReport } from "../report/markdown.ts";
 import type { Manifest, Scenario, ScenarioResult, Step, Usage } from "../schema.ts";
 import { SecretVault } from "../secrets.ts";
 import { briefing, SYSTEM } from "./briefing.ts";
-import { endCapture, startCapture } from "./capture.ts";
+import { cleanText, endCapture, startCapture } from "./capture.ts";
 import { replaySteps } from "./replay.ts";
 import { ALL_TOOLS, noteResponse, requestAllowed, suppliedOf, type Session } from "./tools.ts";
 import { computeVerdict } from "./verdict.ts";
@@ -227,10 +227,15 @@ export async function closeSession(
 
   const outcome = session.outcome ?? { kind: "stopped" as const, reason: "No outcome recorded." };
   const computed = computeVerdict(session.scenario.assertions, session.assertionResults, outcome);
-  // In a run that collects what the browser showed, a value read from a page leaves with the result. A secret the
-  // executor was given is replaced in it, after the verdict is computed from the values as they were read.
+  // In a run that collects what the browser showed, a value read from a page leaves with the result. It is cleaned
+  // by the rules for anything the browser said, with the secrets the executor was given, in whatever form they are
+  // written. The verdict is computed first, from the values as they were read.
   const comparisons = capture
-    ? session.assertionResults.map((made) => ({ ...made, ...(typeof made.actual === "string" ? { actual: session.vault.scrub(made.actual) } : {}) }))
+    ? session.assertionResults.map((made) => ({
+        ...made,
+        ...(typeof made.actual === "string" ? { actual: cleanText(session, made.actual) } : {}),
+        ...(typeof made.expected === "string" ? { expected: session.vault.scrub(made.expected) } : {}),
+      }))
     : session.assertionResults;
   // A confined session whose page was somewhere else at any moment does not
   // pass, also when every comparison had been made before it left. A recorded

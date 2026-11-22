@@ -33,12 +33,12 @@ cost depends on input an application under test controls.
 
 1. **Bounded, structured cleaning.** A text is cut to 4,000 characters and
    read once, a character at a time, into words and the signs between them
-   (quotes, brackets, commas). One thing carries from word to word: that a
-   credential was just named. From the point its value begins, the rest of
-   the text is replaced. Two earlier versions tried to tell where a value
-   ends (at a space, a sign, a closing quote) and each left part of some
-   value showing; the end of a value in a text of no known form cannot be
-   told, so it is no longer guessed. There is no pattern
+   (quotes, brackets, commas). Nothing is carried from word to word. When a
+   word is a credential's name and anything follows it, the rest of the
+   text is replaced. Three earlier versions tried to tell where a value
+   ends, then where it begins (a sign after the name, then a sign anywhere
+   later), and each left some value showing; neither can be told in a text
+   of no known form, so neither is guessed. There is no pattern
    that can go back over what it has read, so the time taken grows with the
    length of the text and no faster. Tests hold each pattern once found slow
    to under 150 ms, and a whole scenario's worst case to under two seconds.

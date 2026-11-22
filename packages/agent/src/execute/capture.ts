@@ -214,7 +214,7 @@ export async function captureStep(session: Session, began: number, mayPicture: {
     let picture: Buffer = raw;
     let name = `step-${index}.png`;
     if (areas.length > 0 || raw.length > CAPTURE_LIMITS.screenshotBytes) {
-      // Covered, and compressed if need be, in a page of the engine's own. The picture as taken is never written anywhere.
+      // Covered, and compressed if need be, in a page of the engine's own. The picture as taken is not written when there is anything to cover.
       const drawn = await redraw(session, collector, raw, areas, raw.length > CAPTURE_LIMITS.screenshotBytes);
       picture = drawn.picture;
       if (drawn.jpeg) name = `step-${index}.jpg`;
