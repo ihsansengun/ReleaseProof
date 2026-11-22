@@ -3,7 +3,9 @@
 // not trusted. Built from hand-made run records: no browser, no model.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { remoteResult, REMOTE_RESULT_FORMAT_VERSION } from "../src/remote/result.ts";
+import { evidenceIdOf, remoteResult, REMOTE_RESULT_FORMAT_VERSION } from "../src/remote/result.ts";
+
+const RUN_ID = "a0000000-0000-4000-8000-000000000410";
 import type { RemoteRun } from "../src/remote/run.ts";
 import type { ScenarioResult, Verdict } from "../src/schema.ts";
 
@@ -137,10 +139,13 @@ test("evidence is named by its place in the output, and says what it shows, not 
   const result = remoteResult(record([scenario("S1", "passed", 160)]));
   assert.deepEqual(
     result.evidence.map((file) => [file.id, file.mediaType, file.path]),
-    [["S1-2-screenshot", "image/png", "scenarios/S1/check-A1.png"]],
+    [[evidenceIdOf(RUN_ID, "S1-2", "screenshot"), "image/png", "scenarios/S1/check-A1.png"]],
   );
   assert.ok(!JSON.stringify(result).includes("/somewhere/on/this/machine"), "no path of the engine's own machine");
-  assert.deepEqual(result.steps.find((step) => step.action === "check")!.screenshot, { evidenceId: "S1-2-screenshot" });
+  assert.deepEqual(result.steps.find((step) => step.action === "check")!.screenshot, { evidenceId: evidenceIdOf(RUN_ID, "S1-2", "screenshot") });
+  // The form the result contract asks of an evidence id, and the same each time.
+  assert.match(result.evidence[0]!.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.notEqual(evidenceIdOf(RUN_ID, "S1-2", "screenshot"), evidenceIdOf(RUN_ID, "S1-3", "screenshot"));
   // A screenshot exists, and the requirement is still not verified.
   assert.equal(result.requirements[0]!.status, "unverified");
 });

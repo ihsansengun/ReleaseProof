@@ -27,6 +27,7 @@
  * browser showed. Its presence proves nothing about a requirement, and this
  * file never derives a status from one.
  */
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { assess, type RequirementStatus } from "../report/readiness.ts";
 import type { ScenarioResult, Verdict } from "../schema.ts";
@@ -137,6 +138,15 @@ const REASON: Record<RequirementStatus, (made: Compared) => string> = {
 
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
+/**
+ * The id of a file of evidence: the same for the same file of the same run,
+ * and in the form the result contract asks of an evidence id.
+ */
+export function evidenceIdOf(runId: string, stepId: string, kind: string): string {
+  const hex = createHash("sha256").update(["releaseproof-evidence-v1", runId, stepId, kind].join("\n"), "utf8").digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 /** The steps an executor can take. Anything else a recording calls a step is not named here. */
 const ACTIONS = new Set(["navigate", "click", "fill", "select", "press", "upload", "api_request", "observe", "check", "finish"]);
 const LOCATED_BY = new Set(["role", "label", "text", "testid", "labelled", "cell"]);
@@ -222,7 +232,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       const requirementIds = requirementId ? [requirementId] : [];
       let screenshot: RemoteResult["steps"][number]["screenshot"];
       if (made?.screenshot) {
-        const evidenceId = `${id}-screenshot`;
+        const evidenceId = evidenceIdOf(run.runId, id, "screenshot");
         evidence.push({ id: evidenceId, label: `What the browser showed when ${assertionId} was compared`, mediaType: "image/png", path: path.posix.join("scenarios", result.scenarioId, path.basename(made.screenshot)), scenarioId: result.scenarioId });
         screenshot = { evidenceId };
       }

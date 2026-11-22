@@ -35,7 +35,7 @@ Adding a field needs no new version; changing what a field means does.
 | `profiles[]` | The browser the run used and the page size the run set. Empty when nothing was executed. |
 | `telemetry` | For each kind of evidence, `collected` or `not collected`. |
 | `diagnostics` | `console`, `network`, `analytics`: empty lists until the engine collects them, with `telemetry` saying so. |
-| `evidence[]` | `{ id, label, mediaType, path, scenarioId }`: files the run wrote, by a path inside the output directory. |
+| `evidence[]` | `{ id, label, mediaType, path, scenarioId }`: files the run wrote, by a path inside the output directory. `id` is in the form the result contract asks of an evidence id, and is the same for the same file of the same run. The file itself is not in `result.json`. |
 | `extensions` | For fields a later engine adds before they are part of this schema. |
 
 ## Whose words are in it
