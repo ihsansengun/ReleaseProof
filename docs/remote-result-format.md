@@ -30,12 +30,12 @@ Adding a field needs no new version; changing what a field means does.
 | `producer` | `{ name, resultSchema, kind: "remote-run", executionMode }`. |
 | `target`, `snapshots` | Where the run went, and the approved criteria snapshots it used, each with its hash and approver. |
 | `coverage` | Requirements by status, `observedOnly`, and scenarios planned, executed and not executed. |
-| `requirements[]` | `{ id, status, observedStatus, text, reason, expected, observed, source, stepIds }`. `text` is the approved text as quoted from the snapshot, never the plan's own wording of it. |
+| `requirements[]` | `{ id, status, observedStatus, text, reason, expected, observed, source, stepIds }`. `text` is the approved text as quoted from the snapshot, never the plan's own wording of it. `expected` and `observed` give a compared value only when it is a plain number or amount, and otherwise say `not shown`. |
 | `steps[]` | `{ id, scenarioId, action, target, outcome, requirementIds, note, atMs?, durationMs?, screenshot? }`. `outcome` is `ok`, `mismatch` or `error`. `atMs` is counted from the start of the run's first scenario. |
 | `profiles[]` | The browser the run used and the page size the run set. Empty when nothing was executed. |
 | `telemetry` | For each kind of evidence, `collected` or `not collected`. |
-| `diagnostics.console[]` | `{ stepId, level, text }`: errors the page wrote to its console (`error`) and exceptions nothing caught (`uncaught`). Ordinary lines and warnings are not kept. |
-| `diagnostics.network[]` | `{ stepId, method, path, status, kind, failure? }`: requests to the application answered with 400 or above, and requests that got no answer (`status` 0). |
+| `diagnostics.console[]` | `{ stepId, level, source?, count }`: errors the page wrote to its console (`error`) and exceptions nothing caught (`uncaught`). What an error said is not kept. `source` is `{ path, line?, column? }`, given only when the browser places the error in a file of the application under test; `count` is how often the same error from the same place happened in the step. Ordinary lines and warnings are not kept. |
+| `diagnostics.network[]` | `{ stepId, method, path, status, kind }`: requests to the application answered with 400 or above, and requests that got no answer (`status` 0). |
 | `diagnostics.analytics` | An empty list; not collected yet. |
 | `evidenceLimits.leftOut` | How many pictures, console entries and network entries the size limits left out. |
 | `evidence[]` | `{ id, label, mediaType, path, scenarioId }`: files the run wrote, by a path inside the output directory. `id` is in the form the result contract asks of an evidence id, and is the same for the same file of the same run. The file itself is not in `result.json`. |
@@ -54,8 +54,12 @@ if the engine said it:
   made, not copied from what a scenario or a step printed;
 - a step's `action` is one of the steps an executor can take, or "unknown
   step";
-- a step's `target` gives the path asked for without its query, fragment,
-  parameters or host, or an element by how it was located.
+- a step's `target` gives the path asked for, cleaned, without its query,
+  fragment, parameters or host; or an element by the kind of locator that
+  found it and, for a known role, the role. The words a locator looks for
+  are text of the page and are not given;
+- a step's `note` says "match" or "mismatch", with the two values only when
+  each is a plain number or amount.
 
 What does remain of other hands, and is marked as such by where it stands:
 
@@ -135,146 +139,113 @@ scenario that ran listened. An empty list beside `collected` means the run
 listened and heard no error. That is a fact about the console, not about the
 application being right.
 
-It leaves the machine, so it is kept small and kept clean:
+### No free text leaves the machine
+
+A console message, an exception's words, the words of a locator and a value
+read from a page are written by the application under test, in no known
+form. An earlier version of this work cleaned such text by rules. Nine
+independent reviews each found text that the rules of the review before had
+let through: a credential after a sign the rules did not know, a secret put
+together again by the cleaning itself, a value glued to its name by a line
+break. Each fix also removed more of what an ordinary message says. Free
+text cannot be made safe by rules of that kind, so it is **not kept in any
+form, and there is no fallback that keeps it**. Richer diagnostics are a
+separate feature, to be designed for security first.
+
+What is kept instead has a form that is checked, by the collector and again
+when the result is built. A value that does not fit is left out or said not
+to be shown; nothing guesses.
+
+| Kept | Form | Never kept |
+|---|---|---|
+| A console error or uncaught exception | Its kind, its step, a count, and where the browser places it if that is a file of the application: a cleaned path, a line, a column | What it said; a trace; anything from another origin |
+| A failed request | Step, method from a known list, cleaned path, status, the browser's kind of request | Query, fragment, host, headers, bodies, the browser's reason |
+| A step | An action from a known list; a cleaned path, or the kind of locator and a known role | A locator's words; what was typed, sent or answered; what the step printed |
+| A compared value | Itself, if it is a plain number or amount of at most 24 characters and 12 digits | Any value with words in it: `not shown` |
+| A picture after a step | PNG or JPEG named `step-N`, secret fields covered | See below |
+
+**A path is closed by default.** A query, a fragment and `;parameters` are
+cut off. Each segment is decoded and kept only if it is plain printable
+characters and reads as an ordinary name, a short number, or a file name
+whose parts do; anything else becomes `[redacted]`. A mix of letters and
+digits longer than six characters is replaced. A segment that names a
+credential or a link meant for one person (`token`, `password`, `session`,
+`otp`, `pin`, `reset`, `verify` and the like) is kept only as that plain
+word, and **every segment after it is replaced**. A path that holds a secret
+the executor was given, read as a whole and decoded up to three times, with
+or without the empty and hidden segments a reader would skip, is replaced
+whole; so is a path with an address inside it. At most 20 segments and 200
+characters are kept. Cleaning a cleaned path changes nothing; a test makes
+120,000 paths from the pieces that broke earlier versions and holds each to
+that, to plain printable output, and to holding no known secret.
+
+Limits:
 
 | | Limit |
-| --- | --- |
-| One picture | 400,000 bytes. A larger PNG is taken again as a JPEG; if still larger it is left out |
-| All pictures of one scenario | 3,000,000 bytes |
-| Console entries, and network entries, per scenario | 200 each, and 40 from any one step |
-| Any one text | 300 characters, of the first 4,000 a page wrote; the rest is not looked at |
+|---|---|
+| One picture | 400 kB; a larger one is redrawn as JPEG, and left out if still too large |
+| All pictures of a scenario | 3 MB |
+| Console entries, and network entries, per scenario | 200, and 40 from any one step |
 
-- Text is cleaned word by word, not by patterns run over a whole line
-  (`packages/agent/src/execute/clean.ts`; why, and what comes next, is in
-  `docs/evidence-redaction-plan.md`).
-  The secrets the executor was given go first; then the text is cut to 4,000
-  characters, and a word the cut went through is dropped. It is read once
-  into words and the signs between them. Removed: an address down to its
-  cleaned path, wherever in a word it starts; e-mail addresses; **everything after a
-  credential's name**. A name is a word that is, or holds, one the rules
-  know (`password`, `access_token`, `clientSecret`, `pwd`, `x-auth`,
-  `Cookie`, `Authorization`, `session`, `key` and the like), or `Bearer`,
-  `Basic`, `Digest`, `Negotiate` or `Token`, wherever in a word it stands
-  (`Error:password=…`). If anything but closing quotes, closing brackets
-  and stops follows the name, none of it is kept. Earlier versions looked
-  for the sign between a name and its value, and then for a sign anywhere
-  later; each time a review found another way of writing one. Neither where
-  a value begins nor where it ends can be told in a text of no known form,
-  so neither is guessed. Also removed: a long word of
-  letters and digits mixed, a very long word, a long run of digits. What is
-  already redacted, and the engine's own placeholder for a secret, are set
-  aside first and stand as they are, and the rest of their word is judged as
-  any other. The time this takes grows with the length of the text and no
-  faster.
-- An address, in a network entry or inside a console text, is given as its
-  path: no query, fragment, parameters or host. A path is closed by default:
-  a segment is kept only if it reads as an ordinary name or a short number
-  (`/api/v2/international-shipping-rates`, `/orders/12345`). Anything else is
-  replaced: an e-mail address, a token, an id written in groups, `name=value`
-  under a credential's name. A file keeps the ordinary parts of its name and
-  its ending (`app-[redacted].js`).
-- A picture cannot be cleaned after it is taken. Password, card and
+What a limit left out is counted in `evidenceLimits.leftOut`, and so is a
+picture that could not be taken. Nothing a page says can stop the run: an
+entry that cannot be taken in is counted and left out.
+
+### Pictures
+
+- A picture is of the window as a person would see it. Password, card and
   one-time-code fields (by type, or by what `autocomplete` says) in the page
   and in its frames, and every field the executor typed a secret into, are
   covered with a flat colour. The covering is drawn onto the picture in a
-  page of the engine's own, apart from the application's. **Nothing is laid
-  over the application's page and nothing in it is changed**, so taking
-  pictures does not alter what a later step reads. A test runs a page that
-  counts every change to its own document, and it counts none. The fields
-  are found by asking the page where they are, which runs in the page: a
-  page written to watch for that question can tell it was asked, and one
-  written to answer it falsely can leave its own field uncovered. That is a
-  page working against the run, which these runs do not defend against (see
-  below). If the question cannot be answered at all, no picture is kept.
+  page of the engine's own, apart from the application's. Nothing is laid
+  over the application's page and nothing in it is changed. A test runs a
+  page that counts every change to its own document, and it counts none.
+- A field the executor typed a secret into is held by its element, not by
+  the way it was found, so it stays covered when its label changes.
 - **Every field the page reports a place for is covered, or no picture is
-  kept.** A place that is not four finite numbers counts as no answer, and
-  no picture is kept. A place that is false but well-formed (no size, or
-  somewhere off the window) is believed: see the residual risk below. There
-  is no count beyond which fields are left showing. A page with more than 2,000 such
-  fields or more than 40 frames, or on which any one stage of finding or
-  covering them takes over four seconds, gets no picture. There are several
-  such stages, so a step on a page that stalls each of them can be held for
-  some twenty seconds before it is given up. The page the covering is drawn
-  in is discarded after a failure and closed with the run.
+  kept.** A place that is not four finite numbers counts as no answer. More
+  than 2,000 such fields, more than 40 frames, or any stage taking over four
+  seconds, and no picture is kept. Several stages can each take that long,
+  so a stalling page can hold a step for some twenty seconds.
 - No picture is kept of a page that is not the application under test, as
   far as the step's own check shows: the check is made just before the
   picture is taken, not at the same instant.
-- What a limit left out is counted in `evidenceLimits.leftOut`, and so is a
-  picture that could not be taken.
-- The result cleans every text and path once more as it is built, by the same
-  rules, and checks each entry's form (kinds, lengths, whole numbers, known
-  steps). That covers what the browser said, the failed requests, what each
-  step pointed at, and the two values of a comparison wherever they are
-  given (the step's note, and `expected` and `observed` under the
-  requirement). An observed value is cleaned with the secrets the executor
-  was given, by the rules for anything the browser said, before it reaches
-  the result. A scenario is
-  named only by a plain name. An entry that does not fit is left out and
-  counted. Cleaning what is clean changes nothing: a test makes 60,000 texts
-  and paths from the pieces that have broken cleaning before and holds each
-  to that, to no error, and to nothing hidden in what comes out.
-- Nothing a page says can stop the run. A line that is not text at all (half
-  of a character, a code that decodes to nothing readable) is cleaned or
-  left out and counted. The characters that are not shown, or that turn the
-  reading of a line around, which the rules list (control characters,
-  zero-width and direction marks, variation selectors, tag characters) are
-  removed, also when written as `%`-codes any
-  number of times over; a word whose codes cannot be read is replaced.
 
-**What this does not catch.** The rules know shapes, not meanings. These can
-still appear:
+**Residual risk: page-controlled field geometry.** Where a field is, is
+asked of the page itself, in the page's own script world. A page can see
+that it was asked, and a page that answers with a false but well-formed
+place leaves its own secret field uncovered in a picture that is kept.
+Covering protects against an ordinary application showing a password field.
+**It is not safe against a hostile page** and must not be described as such.
+Also not covered: anything a page shows as text; a secret in a field of
+another kind (a password switched to plain text by a "show" button, a text
+area); a field inside a closed component.
 
-- in text: a secret with no name beside it ("the code is 493817"); a card
-  number written in groups, a telephone number, a postal address, a person's
-  name; a short value encoded another way; the password of an account the
-  target's manifest declares;
-- in text, also: a secret in a sentence with no name the rules know ("the
-  code was …", or a name of the application's own such as `PHPSESSID`); a name in one item of a list and its
-  value in the next; a short secret of mixed characters cut into pieces by
-  `&`, `|` or a comma, each piece too short to look like one; what a page
-  writes from a template or a function's source;
-- in a picture: anything the page shows as text; a field of another kind
-  that holds a secret (a password shown in a plain text field, a text area);
-  a field inside a closed component, which the engine cannot see into; a
-  field that jumps about in the instant between being looked for and the
-  picture being taken (it is looked for before and after and both places are
-  covered, but one that moves several times in that instant can show);
-- in a picture, **the residual risk from page-controlled field geometry**:
-  where a field is, is asked of the page itself, in the page's own script
-  world. A page can therefore see that it was asked, and a page that answers
-  with a false place leaves its own secret field uncovered in a picture that
-  is kept. Covering protects against an ordinary application showing a
-  password field; **it is not safe against a hostile page** and must not be
-  described as such. Measuring from outside the page is a proposed next
-  step.
+### What stays on the machine
 
-And it errs toward removing. A line that names a credential and goes on
-loses everything after the name: "Unexpected token < in JSON at position 0"
-becomes "Unexpected token [redacted]", "session is not defined" becomes
-"session [redacted]", and a step that points at `label "Token" …` is shown
-as far as the name. In a test of 64 ordinary console lines about one in five
-lost its end this way; the start, which says what kind of error it was,
-stayed. A sentence that starts with `Basic`, `Digest`, `Token` or `Bearer`
-loses the rest; a word with a `?` in it loses what follows the `?`; a word of
-`%`-codes that hide a space or a sign is replaced; in a path, an id written in
-groups, a name of seven words or more, and a segment with brackets, a colon
-or a comma are replaced. That is the safe side to be wrong on.
+`filesThatMayLeave(result)` lists the only files of a run's directory that
+may be uploaded, stored elsewhere or shown: `result.json` and the `step-N`
+pictures it names. Anything that carries a run's output off the machine must
+take its list from there and nowhere else.
 
-That is why real customer data and real credentials stay out of these runs
-for now.
+- **A remote run records no browser trace and takes no picture at a
+  comparison.** Both would hold what the page showed with nothing covered,
+  so they are not written at all. A test checks that a run's directory has
+  no `trace.zip` and no `check-….png`.
+- Each scenario's own record and report (`scenarios/<id>/result.json`,
+  `report.md`) hold what steps printed and what pages said, uncleaned. They
+  are the run's working record, are not in the list, and stay on the
+  machine.
+- Hosted execution stays blocked until the retention of that working record
+  and access to it are controlled (KAN-16).
 
 A request the run itself stopped (to any other origin) is not listed as a
-failure of the application. The picture the shared comparison code takes at a
-comparison (`check-….png`, of the whole page, nothing covered) and the
-browser trace (`trace.zip`, which holds pictures and copies of the page)
-stay in the run's directory and are not part of the result. **Nothing in
-them is covered or cleaned.** "No picture is kept if covering fails" is true
-of the `step-….png` files the result names, and not of the run's directory
-as a whole: that directory must be treated as holding whatever the page
-showed, and is not to be uploaded or shared as it is.
+failure of the application.
 
-The pull-request path does not collect any of this: it is off unless a run
-asks.
+Real customer data and real credentials stay out of these runs for now.
+
+The pull-request path collects none of this and is unchanged: it records its
+trace and its comparison pictures as before, and uses its own `redact`.
 
 ## What is not in it yet
 

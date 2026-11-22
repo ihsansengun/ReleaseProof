@@ -10,11 +10,13 @@
  *
  * It leaves the machine, so it is kept small and kept clean:
  *
- *   - text is cut to a length, loses the secrets the executor was given, and
- *     is then cleaned word by word (`clean.ts`): addresses down to their
- *     path, e-mail addresses, values of credentials, long opaque values;
+ *   - no text a page wrote is kept: not a console message, not an
+ *     exception's words. Of an error only its kind, the step it happened in,
+ *     where in the application's own files it came from (a cleaned path, a
+ *     line and a column) and how often it happened are kept;
  *   - an address is given as its path, without query, fragment or host, and
- *     each segment of the path is kept only if it reads as an ordinary name;
+ *     each segment of the path is kept only if it reads as an ordinary name
+ *     (`clean.ts`);
  *   - a picture cannot be redacted after it is taken, so before each one
  *     every password, card and one-time-code field in the page itself, and
  *     every field the executor typed a secret into, is covered where the
@@ -28,7 +30,7 @@
  */
 import path from "node:path";
 import type { ConsoleMessage, Locator, Page, Request, Response, ElementHandle } from "playwright";
-import { cleanPathWith, cleanTextWith, TEXT_KEPT, TEXT_READ } from "./clean.ts";
+import { cleanPathWith } from "./clean.ts";
 import type { Session } from "./tools.ts";
 
 export const CAPTURE_LIMITS = {
@@ -38,12 +40,8 @@ export const CAPTURE_LIMITS = {
   screenshotBytesPerScenario: 3_000_000,
   /** Console and network entries kept per scenario, each. */
   entries: 200,
-  /** Characters of any one text. */
-  text: TEXT_KEPT,
   /** Entries of each kind kept from any one step, so that a noisy step does not use up the whole allowance. */
   entriesPerStep: 40,
-  /** Characters of a text that are looked at at all. The rest is dropped before anything else is done with it. */
-  textRead: TEXT_READ,
 } as const;
 
 const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
@@ -60,7 +58,12 @@ export type CapturedStep = {
   noScreenshot?: string;
 };
 
-export type CapturedConsole = { step: number; level: "error" | "uncaught"; text: string };
+/**
+ * An error the page wrote to its console, or one it did not catch. What it said is not kept. `source` is where
+ * the browser says it came from, when that is a file of the application under test; `count` is how many times
+ * the same error from the same place happened in the step.
+ */
+export type CapturedConsole = { step: number; level: "error" | "uncaught"; source?: { path: string; line?: number; column?: number }; count: number };
 export type CapturedRequest = {
   step: number;
   method: string;
@@ -69,8 +72,6 @@ export type CapturedRequest = {
   /** The status answered. 0 when the request got no answer. */
   status: number;
   kind: string;
-  /** Why there was no answer, when there was none. */
-  failure?: string;
 };
 
 export type Capture = {
@@ -98,11 +99,8 @@ type Collector = {
 
 const collectors = new WeakMap<Session, Collector>();
 
-/** A text made fit to leave the machine: the session's own secrets first, then the rules in `clean.ts`. */
-export const cleanText = (session: Pick<Session, "vault">, text: string): string => cleanTextWith((given) => session.vault.scrub(given), text);
 /** A path made fit to leave the machine, segment by segment. */
 export const cleanPath = (session: Pick<Session, "vault">, pathname: string): string => cleanPathWith((given) => session.vault.scrub(given), pathname);
-const clean = cleanText;
 
 /** The cleaned path of an address. Undefined when the address is not on the application. */
 function pathOf(session: Session, address: string, origin: string): string | undefined {
@@ -122,10 +120,21 @@ export function startCapture(session: Session, startedAt: number): Capture {
   // What happens while or after the last step is that step's: there is no step after it to belong to.
   const step = () => Math.max(1, Math.min(session.steps.length + 1, session.outcome ? session.steps.length : Number.MAX_SAFE_INTEGER));
   const room = (kept: { step: number }[], at: number) => kept.length < CAPTURE_LIMITS.entries && kept.filter((entry) => entry.step === at).length < CAPTURE_LIMITS.entriesPerStep;
-  const said = (level: CapturedConsole["level"], text: string) => {
+  /** A whole number a line or a column can be. */
+  const place = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < 10_000_000 ? value : undefined);
+  const said = (level: CapturedConsole["level"], from?: { url?: unknown; line?: unknown; column?: unknown }) => {
     const at = step();
+    // Where it came from, only if that is a file of the application itself.
+    const where = typeof from?.url === "string" ? pathOf(session, from.url, origin) : undefined;
+    const line = where === undefined ? undefined : place(from?.line);
+    const column = line === undefined ? undefined : place(from?.column);
+    const same = capture.console.find((entry) => entry.step === at && entry.level === level && entry.source?.path === where && entry.source?.line === line && entry.source?.column === column);
+    if (same) {
+      same.count = Math.min(same.count + 1, 1_000_000);
+      return;
+    }
     if (!room(capture.console, at)) capture.leftOut.console += 1;
-    else capture.console.push({ step: at, level, text: clean(session, text) });
+    else capture.console.push({ step: at, level, ...(where === undefined ? {} : { source: { path: where, ...(line === undefined ? {} : { line }), ...(column === undefined ? {} : { column }) } }), count: 1 });
   };
   const failed = (entry: Omit<CapturedRequest, "step">) => {
     const at = step();
@@ -143,14 +152,23 @@ export function startCapture(session: Session, startedAt: number): Capture {
   const methodOf = (method: string) => (METHODS.has(method.toUpperCase()) ? method.toUpperCase() : "OTHER");
 
   const onConsole = safely<ConsoleMessage>("console", (message) => {
-    if (message.type() === "error") said("error", message.text());
+    if (message.type() !== "error") return;
+    // What the message says is never read. Where the browser says it was written is.
+    const from = message.location();
+    said("error", { url: from?.url, line: from?.lineNumber === undefined ? undefined : from.lineNumber + 1, column: from?.columnNumber === undefined ? undefined : from.columnNumber + 1 });
   });
-  const onPageError = safely<Error>("console", (error) => said("uncaught", String(error?.message ?? "").slice(0, 100_000).split("\n")[0] ?? ""));
+  const onPageError = safely<Error>("console", (error) => {
+    // The first place in the error's own trace that is an address with a line and a column. The trace is the
+    // page's text: nothing of it is kept but that address, checked as any other, and the two numbers.
+    const trace = typeof error?.stack === "string" ? error.stack.slice(0, 4_000) : "";
+    const found = /(https?:\/\/[^\s()'"<>]{1,500}):(\d{1,7}):(\d{1,7})/.exec(trace);
+    said("uncaught", found ? { url: found[1], line: Number(found[2]), column: Number(found[3]) } : undefined);
+  });
   const onRequestFailed = safely<Request>("network", (request) => {
     const where = pathOf(session, request.url(), origin);
     // A request to anywhere else was stopped by the run itself. That is the run's doing, not a failure of the application.
     if (where === undefined) return;
-    failed({ method: methodOf(request.method()), path: where, status: 0, kind: request.resourceType(), failure: clean(session, request.failure()?.errorText ?? "no answer") });
+    failed({ method: methodOf(request.method()), path: where, status: 0, kind: request.resourceType() });
   });
   const onResponse = safely<Response>("network", (response) => {
     if (response.status() < 400) return;

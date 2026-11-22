@@ -5,7 +5,7 @@ import { evaluateFormula, formulaVariables } from "../formula.ts";
 import { reconcile, scaleUnclear } from "../units.ts";
 import { BlockedCause, type ApplicationError, type ErrorSignal, type AssertionResult, type Evidence, type Outcome, type Scenario, type Step } from "../schema.ts";
 import type { SecretVault } from "../secrets.ts";
-import { noteSecretField } from "./capture.ts";
+import { capturing, noteSecretField } from "./capture.ts";
 import { answerNotEvidence, arrival, foundInOwnText, newState, noteInput, noteOpened, ownField, pageNotEvidence, placeOf, restoredField, type SuppliedState } from "./supplied.ts";
 
 /** Everything one scenario execution accumulates. */
@@ -1320,8 +1320,10 @@ const handlers: Handlers = {
     // Whether an element is there is not a reading of what it holds.
     await requireEvidence(s, `Assertion ${assertionId} was not compared`, target, locator, assertion.kind !== "present" && assertion.kind !== "absent");
     const evidence = await gatherEvidence(s, assertion, target, { locator, raw, matched, scope, ...counted });
-    const shot = await screenshot(s, `check-${assertionId}`, locator);
-    s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, screenshot: shot });
+    // The picture of the whole page at a comparison has nothing in it covered. A run that collects what may leave
+    // the machine takes its own pictures, covered, after every step, and does not take this one.
+    const shot = capturing(s) ? undefined : await screenshot(s, `check-${assertionId}`, locator);
+    s.assertionResults.push({ assertionId, expected, actual, pass, target, ...(readAs === undefined ? {} : { readAs }), evidence, ...(shot === undefined ? {} : { screenshot: shot }) });
     return `Recorded ${assertionId}: expected ${expected}, actual ${actual}${readAs === undefined ? "" : ` (read as ${readAs}, converted to the assertion's unit)`} -> ${pass ? "match" : "MISMATCH"}. This result is final.`;
   },
 

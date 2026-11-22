@@ -9,7 +9,7 @@ import { renderReport } from "../report/markdown.ts";
 import type { Manifest, Scenario, ScenarioResult, Step, Usage } from "../schema.ts";
 import { SecretVault } from "../secrets.ts";
 import { briefing, SYSTEM } from "./briefing.ts";
-import { cleanText, endCapture, startCapture } from "./capture.ts";
+import { endCapture, startCapture } from "./capture.ts";
 import { replaySteps } from "./replay.ts";
 import { ALL_TOOLS, noteResponse, requestAllowed, suppliedOf, type Session } from "./tools.ts";
 import { computeVerdict } from "./verdict.ts";
@@ -100,7 +100,9 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
       else void socket.close({ code: 1008, reason: "not the application under test" });
     });
   }
-  await context.tracing.start({ screenshots: true, snapshots: true });
+  // A browser trace holds pictures and copies of every page, with nothing covered. A run that collects what may
+  // leave the machine does not record one, so that there is none to upload or expose by mistake.
+  if (!options.capture) await context.tracing.start({ screenshots: true, snapshots: true });
 
   const session: Session = {
     scenario,
@@ -222,21 +224,11 @@ export async function closeSession(
 ): Promise<ScenarioResult> {
   const { session } = open;
   const capture = endCapture(session);
-  await session.context.tracing.stop({ path: path.join(session.outDir, "trace.zip") });
+  if (!capture) await session.context.tracing.stop({ path: path.join(session.outDir, "trace.zip") });
   await open.browser.close();
 
   const outcome = session.outcome ?? { kind: "stopped" as const, reason: "No outcome recorded." };
   const computed = computeVerdict(session.scenario.assertions, session.assertionResults, outcome);
-  // In a run that collects what the browser showed, a value read from a page leaves with the result. It is cleaned
-  // by the rules for anything the browser said, with the secrets the executor was given, in whatever form they are
-  // written. The verdict is computed first, from the values as they were read.
-  const comparisons = capture
-    ? session.assertionResults.map((made) => ({
-        ...made,
-        ...(typeof made.actual === "string" ? { actual: cleanText(session, made.actual) } : {}),
-        ...(typeof made.expected === "string" ? { expected: session.vault.scrub(made.expected) } : {}),
-      }))
-    : session.assertionResults;
   // A confined session whose page was somewhere else at any moment does not
   // pass, also when every comparison had been made before it left. A recorded
   // mismatch stays a failure.
@@ -252,7 +244,7 @@ export async function closeSession(
     verdict,
     reason: session.vault.scrub(reason),
     environment: { baseUrl: session.baseUrl, deployedSha: open.sha, expectedSha: open.expectedSha, commitEstablished: open.commitEstablished },
-    assertionResults: comparisons,
+    assertionResults: session.assertionResults,
     ...(session.appErrors?.length ? { applicationErrors: session.appErrors } : {}),
     ...(outcome.kind === "blocked" && outcome.cause ? { blockedCause: outcome.cause } : {}),
     ...(session.errorSignals?.length ? { errorSignals: session.errorSignals } : {}),

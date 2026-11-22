@@ -1,115 +1,88 @@
-# Cleaning what leaves the machine: where it stands and where it goes
+# Evidence from the browser: what is kept, and why free text is not
 
-Status: **plan**. Steps 1 and 2 are done for what a remote run collects.
-The rest is proposed, not started.
+Status: decided in engine pull request #45. This replaces an earlier plan to
+clean free text by structured rules.
 
-## Why this page exists
+## What was tried
 
-What a browser said during a run (console errors, the addresses of failed
-requests) leaves the machine in the result, so it has to be cleaned of
-credentials, e-mail addresses, tokens and the secrets the executor was given.
+A remote run collects what the browser showed and said so that a report can
+show it. The first versions cleaned console messages and other text by
+rules before keeping them: patterns over the whole line, then a word-by-word
+reader, then "remove everything after a credential's name".
 
-The first three attempts cleaned a text by running patterns over the whole of
-it. Each was reviewed independently, and each failed in the same two ways:
+Nine independent reviews each found text the rules of the review before had
+let through. Among them:
 
-| Attempt | What went wrong |
-| --- | --- |
-| The shared `redact`, over the whole console line | Its time grows with the square of the line: one 150,000-character line held a run for 20 seconds, past its time limit |
-| A second pattern for names such as `access_token` | Its time grew with the cube of a line made of its own words: five lines, 20 seconds |
-| Bounding that pattern and cleaning paths by another rule | A credential that was the first name in a printed object stopped being redacted; a long name hid its value; ordinary paths of 32 characters were wiped whole; cleaning twice doubled a bracket |
+| Round | What got through |
+|---|---|
+| 1 to 3 | Lines whose cleaning took seconds; a credential that was the first name in a printed object |
+| 4 and 5 | Names in quotes; a value kept after its first punctuation mark |
+| 6 | A line that stopped the engine; `login?next=home&password=…`; a known secret written in `%`-codes |
+| 7 | `config['password'] = '…'`; values under a requirement never cleaned |
+| 8 | `password for admin: …`; a known secret put together again by the path cleaner |
+| 9 | `password\r…` glued by the cleaner itself; `token-…`; `/reset/token/…` |
 
-A fourth review, of the first word-by-word version, found gaps of its own: a
-quoted name followed by a space, as JSON is printed, kept its value; a word
-holding something already redacted skipped every rule; fields beyond the two
-hundredth were left uncovered in a picture. Those were faults of rules, not
-of method. Each was fixed by a rule and a row in a table of tests, and none
-of the fixes changed the time taken.
+Each fix also removed more of ordinary messages: by the ninth round one
+console line in four lost its diagnosis.
 
-The lesson: a general pattern over an arbitrary text is fragile in both
-directions. A small change to what it matches changes what it misses, and its
-cost depends on input an application under test controls.
+The lesson: text of no known form, written by the application under test,
+cannot be made safe by rules about what a secret looks like. Where a value
+begins and ends cannot be told, and every rule that guesses is one way of
+writing behind.
 
-## What is in place now (`packages/agent/src/execute/clean.ts`)
+## What is done instead
 
-1. **Bounded, structured cleaning.** A text is cut to 4,000 characters and
-   read once, a character at a time, into words and the signs between them
-   (quotes, brackets, commas). Nothing is carried from word to word. When a
-   word is a credential's name and anything follows it, the rest of the
-   text is replaced. Three earlier versions tried to tell where a value
-   ends, then where it begins (a sign after the name, then a sign anywhere
-   later), and each left some value showing; neither can be told in a text
-   of no known form, so neither is guessed. There is no pattern
-   that can go back over what it has read, so the time taken grows with the
-   length of the text and no faster. Tests hold each pattern once found slow
-   to under 150 ms, and a whole scenario's worst case to under two seconds.
-2. **Addresses are parsed, not matched.** An address is given to the URL
-   parser, and only its path is kept. A path is cleaned segment by segment and
-   is closed by default: a segment stays only if it reads as an ordinary name
-   or a short number.
-3. **Known secret values first.** The secrets the executor was given are
-   replaced by the session's own function before anything else, and the
-   placeholder it leaves stands untouched.
-4. **One function, used twice.** The collector cleans as it collects, and the
-   result cleans again as it is built, by the same rules. Cleaning what is
-   clean changes nothing; a test asserts it.
+Free text is not kept. There is no fallback that keeps it.
 
-The pull-request path does not use this. It keeps the shared `redact`
-(`packages/agent/src/report/diagnostics.ts`), unchanged.
+Kept are values with a form that can be checked, each checked where it is
+collected and again where the result is built:
 
-## What it still does not do
+- of a console error or an uncaught exception: its kind, its step, how often
+  it happened, and where the browser places it if that is a file of the
+  application (a cleaned path, a line, a column);
+- of a failed request: step, method, cleaned path, status, kind;
+- of a step: a known action, and a cleaned path or the kind of locator;
+- of a compared value: the value, only if it is a plain number or amount;
+- pictures after each step, with secret fields covered.
 
-- It knows shapes, not meanings. A secret with no name beside it ("the code is
-  493817"), a card number written in groups, a telephone number, a postal
-  address or a person's name passes.
-- A value encoded another way (base64 of a password) passes unless it is long
-  enough to look opaque. Percent-encoding is decoded before a word is judged.
-- It cannot clean a picture. Fields are covered before a picture is kept, by
-  kind (password, card, one-time code) and where the executor typed a secret.
-  Anything a page shows as text is in the picture.
-- It errs toward removing: "password: must be at least 8 characters" loses
-  everything after the name; an id written in groups is replaced in a path.
-- It asks the page where its secret fields are. A page written to answer
-  falsely can leave one uncovered; measuring from outside the page (the
-  browser's own protocol) would close that, and is not done yet. Covering is
-  not safe against a hostile page.
-- The shared comparison picture (`check-….png`) and the browser trace in the
-  run's directory are neither covered nor cleaned. They are not part of the
-  result, but they are on disk. For a hosted run they must be left out,
-  covered the same way, or not written.
+A path is closed by default (`packages/agent/src/execute/clean.ts`): a
+segment is kept only if it reads as an ordinary name, and nothing after a
+segment that names a credential is kept. `docs/remote-result-format.md` has
+the rules and the limits.
 
-## Proposed next steps
+A remote run records no browser trace and takes no uncovered picture at a
+comparison. `filesThatMayLeave` names the only files that may leave a run's
+directory.
 
-Each is a small pull request of its own. None is started.
+The pull-request path is unchanged.
 
-1. **Move the pull-request path's summaries onto the same cleaner**, behind a
-   comparison first: run both over the recorded diagnostics of existing runs
-   and list every difference, so that nothing a report shows today is lost
-   without being seen. Then retire the quadratic patterns in `redact`.
-2. **A register of secret values, not only of the executor's.** Today the
-   session knows the secrets it was given. Add: the passwords of accounts a
-   target's manifest declares, any value a run's request marks as secret, and
-   values read from fields that were covered. Redact each exactly, and its
-   common encodings (percent, base64, hex), wherever it appears, before any
-   rule about shapes runs.
-3. **Structured entries end to end.** Keep a console message as its parts
-   (the text template and its arguments) where the browser gives them, and a
-   request as method, path and status. Clean each part by its kind. A printed
-   object is then cleaned as names and values, not as a line of text.
-4. **Tests that generate their input.** Property tests: for any text built
-   around a planted secret, the secret is not in the output; cleaning twice
-   equals cleaning once; time stays under a bound for any input up to the
-   limit. A corpus of real console output from the demo applications, kept as
-   a fixture, to catch over-redaction.
-5. **A switch for strictness.** For runs against applications with personal
-   data: keep no console text at all, only that an error happened, its kind,
-   and the step. Text is opt-in per project.
-6. **Pictures.** Cover by more than kind: every field a person can type into,
-   on request; and regions a project names. Decide, with the storage design,
-   who may see a picture and for how long (private object storage,
-   authenticated access, retention limits).
+## What this costs
 
-## What stays true whatever is built
+A report of a remote run can say that an error happened, in which step, how
+often, and at which line of which file. It cannot say what the error said.
+It can show a compared value that is a number, and says `not shown` for one
+that is words.
 
-Real customer data and real credentials stay out of runs until steps 2, 5 and
-6 exist and have been reviewed. Cleaning lowers the chance of a leak. It does
-not make it safe to point this at data that must not leak.
+## Residual risks
+
+- **Pictures.** Covering asks the page where its secret fields are. A page
+  that answers falsely leaves a field uncovered. Not safe against a hostile
+  page. Anything a page shows as text is in the picture.
+- **Paths.** A secret with no name before it, written as a plain word or a
+  short number in a path (`/users/42/correcthorse`), is kept. A path names
+  what was asked for, and cannot be closed further without losing that.
+- **The run's working record** on the machine is uncleaned. Hosted execution
+  is blocked until its retention and access are controlled (KAN-16).
+
+## Richer diagnostics, later
+
+What an error said is the most useful thing left out. Bringing any of it
+back is a feature of its own, to be designed for security first and
+reviewed independently before it is built. Starting points, none begun:
+
+1. An allow-list of message shapes the browser itself writes ("Failed to
+   load resource: the server responded with a status of N"), matched whole.
+2. The error's class name alone (`TypeError`), from a fixed list.
+3. Text shown only to the person who owns the application, never stored
+   with the result, from a store with its own access rule and retention.
+4. A stated policy on personal data, which no rule about credentials covers.

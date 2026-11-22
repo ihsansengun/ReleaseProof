@@ -3,7 +3,8 @@
 // not trusted. Built from hand-made run records: no browser, no model.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evidenceIdOf, remoteResult, REMOTE_RESULT_FORMAT_VERSION } from "../src/remote/result.ts";
+import { evidenceIdOf, filesThatMayLeave, remoteResult, REMOTE_RESULT_FORMAT_VERSION } from "../src/remote/result.ts";
+import { LEAKED_BEFORE, LEAKED_PATHS, SECRETS_BEFORE } from "./leaked-before.ts";
 
 const RUN_ID = "a0000000-0000-4000-8000-000000000410";
 import type { RemoteRun } from "../src/remote/run.ts";
@@ -200,7 +201,7 @@ test("what a step printed, what a scenario said of itself and a query in an addr
   const result = remoteResult(record([leaky]));
   const text = JSON.stringify(result);
   for (const secret of ["typed-secret-1", "query-secret-2", "answer-secret-3"]) assert.ok(!text.includes(secret), secret);
-  assert.equal(result.steps[0]!.target, "/reset (rest of the address not shown)");
+  assert.equal(result.steps[0]!.target, "/reset");
   assert.equal(result.steps[1]!.target, "POST /api/sign-in");
 });
 
@@ -216,10 +217,10 @@ test("a step is named only if it is one an executor can take, and pointed at onl
   });
   const result = remoteResult(record([odd]));
   assert.deepEqual(result.steps.map((step) => step.action), ["unknown step", "click", "navigate", "click", "check"]);
-  assert.equal(result.steps[0]!.target, "/ready%20for%20release (rest of the address not shown)");
+  assert.equal(result.steps[0]!.target, "/[redacted]");
   assert.equal(result.steps[1]!.target, "");
-  assert.equal(result.steps[2]!.target, "/a (rest of the address not shown)");
-  assert.ok(result.steps[3]!.target.length <= 100, "a locator's words are cut short");
+  assert.equal(result.steps[2]!.target, "/a");
+  assert.equal(result.steps[3]!.target, "an element found by role button", "a locator is described by its kind, not by its words");
   assert.equal(result.steps[4]!.target, "an answer");
   const text = JSON.stringify(result);
   for (const words of ["VERIFIED BY OWNER", "RELEASE APPROVED", "Engine verdict", "pw-in-address", "sid-in-address", "elsewhere.test", "PASSED by the engine", "ready.for.release"]) assert.ok(!text.includes(words), words);
@@ -296,17 +297,17 @@ test("the result has no pull-request or ticket field", () => {
 
 test("console errors and failed requests are tied to their steps, and say nothing about any requirement", () => {
   const noisy = scenario("S1", "passed", 160);
-  noisy.capture!.console.push({ step: 1, level: "error", text: "Failed to load resource" }, { step: 2, level: "uncaught", text: "TypeError: x is undefined" });
-  noisy.capture!.network.push({ step: 1, method: "GET", path: "/api/points", status: 500, kind: "fetch" }, { step: 2, method: "GET", path: "/logo.png", status: 0, kind: "image", failure: "net::ERR_FAILED" });
+  noisy.capture!.console.push({ step: 1, level: "error", source: { path: "/api/points", line: 1, column: 1 }, count: 3 }, { step: 2, level: "uncaught", count: 1 });
+  noisy.capture!.network.push({ step: 1, method: "GET", path: "/api/points", status: 500, kind: "fetch" }, { step: 2, method: "GET", path: "/logo.png", status: 0, kind: "image" });
   const quiet = remoteResult(record([scenario("S1", "passed", 160)]));
   const result = remoteResult(record([noisy]));
   assert.deepEqual(result.diagnostics.console, [
-    { stepId: "S1-1", level: "error", text: "Failed to load resource" },
-    { stepId: "S1-2", level: "uncaught", text: "TypeError: x is undefined" },
+    { stepId: "S1-1", level: "error", source: { path: "/api/points", line: 1, column: 1 }, count: 3 },
+    { stepId: "S1-2", level: "uncaught", count: 1 },
   ]);
   assert.deepEqual(result.diagnostics.network, [
     { stepId: "S1-1", method: "GET", path: "/api/points", status: 500, kind: "fetch" },
-    { stepId: "S1-2", method: "GET", path: "/logo.png", status: 0, kind: "image", failure: "net::ERR_FAILED" },
+    { stepId: "S1-2", method: "GET", path: "/logo.png", status: 0, kind: "image" },
   ]);
   // Errors in the console change no verdict, no requirement and no count; and their absence earns nothing.
   for (const key of ["verdict", "verdictBasis", "requirements", "coverage", "executionStatus"] as const) assert.deepEqual(result[key], quiet[key], key);
@@ -321,6 +322,13 @@ test("a picture after every step changes no status, and a step with no picture n
   assert.equal(result.evidence.length, 1);
   assert.equal(result.requirements[0]!.status, "unverified");
   assert.equal(result.verdict, "unverified");
+});
+
+test("the files that may leave a run's directory are the result and the pictures it names, and nothing else", () => {
+  const pictured = scenario("S1", "passed", 160);
+  pictured.capture!.steps = [{ step: 1, atMs: 0, durationMs: 5, screenshot: "step-1.png" }, { step: 2, atMs: 5, durationMs: 5, screenshot: "../../trace.zip" }, { step: 2, atMs: 5, durationMs: 5, screenshot: "check-A1.png" }];
+  const files = filesThatMayLeave(remoteResult(record([pictured])));
+  assert.deepEqual(files, ["result.json", "scenarios/S1/step-1.png"]);
 });
 
 test("a picture is named only by a file name the engine itself gives", () => {
@@ -354,14 +362,17 @@ test("what was collected is taken in by the result's own rules, whoever wrote th
   hostile.capture = {
     steps: [{ step: 1, atMs: Number.NaN, durationMs: -7, screenshot: "step-1.png" }, { step: 2, atMs: 350, durationMs: 120.6, screenshot: "step-2.png" }],
     console: [
-      { step: 1, level: "<script>alert(1)</script>" as never, text: "x" },
-      { step: 99, level: "error", text: `password=hunter2 ${"y".repeat(100_000)}` },
-      ...Array.from({ length: 5_000 }, () => ({ step: 2, level: "error" as const, text: "line" })),
+      { step: 1, level: "<script>alert(1)</script>" as never, count: 1 },
+      // A record that still carries a text, as an earlier collector wrote one: the text is not read.
+      { step: 99, level: "error", count: 1, text: `password=hunter2 ${"y".repeat(100_000)}`, source: { path: "/app.js?token=in-source-1", line: 3.5, column: "<b>" } } as never,
+      { step: 1, level: "error", count: 0 },
+      { step: 1, level: "error", count: 1, source: { path: "https://elsewhere.example/reset/token/in-source-2", line: 7, column: 9 } },
+      ...Array.from({ length: 5_000 }, () => ({ step: 2, level: "error" as const, count: 1 })),
     ],
     network: [
       { step: 1, method: "HUNTER2SECRET", path: "https://elsewhere.example/x?token=abc#frag", status: 500, kind: "fetch" },
       { step: -5, method: "GET", path: "/ok", status: Number.NaN, kind: "fetch" },
-      { step: 2, method: "HUNTER2SECRET", path: "/api/x", status: 400, kind: "K".repeat(50_000), failure: "f".repeat(50_000) },
+      { step: 2, method: "HUNTER2SECRET", path: "/api/x", status: 400, kind: "K".repeat(50_000), failure: "f".repeat(50_000) } as never,
     ],
     leftOut: { screenshots: -3, console: 1.5, network: null as never },
   };
@@ -370,11 +381,17 @@ test("what was collected is taken in by the result's own rules, whoever wrote th
   assert.ok(text.length < 120_000, `the result stays small: ${text.length}`);
   assert.ok(!text.includes("<script>") && !text.includes("HUNTER2SECRET") && !text.includes("elsewhere.example") && !text.includes("null"));
   assert.ok(result.diagnostics.console.length <= 200);
-  assert.ok(result.diagnostics.console.every((entry) => entry.text.length <= 300 && /^S1-[12]$/.test(entry.stepId)));
-  assert.deepEqual(result.diagnostics.network, [{ stepId: "S1-2", method: "OTHER", path: "/api/x", status: 400, kind: "other", failure: "[redacted value]" }]);
+  for (const entry of result.diagnostics.console) {
+    assert.ok(Object.keys(entry).every((key) => ["stepId", "level", "source", "count"].includes(key)) && /^S1-[12]$/.test(entry.stepId), JSON.stringify(entry));
+  }
+  for (const gone of ["password", "hunter2", "yyyy", "in-source-1", "in-source-2", "<b>", "3.5", "ffff"]) assert.ok(!text.includes(gone), gone);
+  // A place that is not a path of the application, or a line that is not a whole number, is not given.
+  assert.deepEqual(result.diagnostics.console[0], { stepId: "S1-2", level: "error", source: { path: "/app.js" }, count: 1 });
+  assert.deepEqual(result.diagnostics.console[1], { stepId: "S1-1", level: "error", count: 1 });
+  assert.deepEqual(result.diagnostics.network, [{ stepId: "S1-2", method: "OTHER", path: "/api/x", status: 400, kind: "other" }]);
   // Left out, and counted: the entry with a level of its own, the two requests that do not fit, and everything past the limit.
   assert.equal(result.evidenceLimits.leftOut.network, 2);
-  assert.equal(result.evidenceLimits.leftOut.console, 1 + (5_002 - 200));
+  assert.equal(result.evidenceLimits.leftOut.console, 2 + (5_004 - 200));
   assert.equal(result.evidenceLimits.leftOut.screenshots, 0);
   assert.equal(result.steps[0]!.atMs, undefined);
   assert.equal(result.steps[0]!.durationMs, undefined);
@@ -382,7 +399,7 @@ test("what was collected is taken in by the result's own rules, whoever wrote th
   assert.equal(result.verdict, "unverified");
 });
 
-test("what a step pointed at is cleaned like any other text: a token in a path, a credential in a locator's words", () => {
+test("what a step pointed at is given by its kind and a cleaned path: never a locator's words", () => {
   const pointed = scenario("S1", "unverified", null, {
     steps: [
       { tool: "navigate", input: { path: "/reset/tok4f9a8b7c6d5e4f3a2b1c" }, ok: true, summary: "" },
@@ -398,7 +415,31 @@ test("what a step pointed at is cleaned like any other text: a token in a path, 
   assert.equal(result.steps[3]!.target, "/account/settings");
 });
 
-test("the values of a comparison are cleaned wherever the result gives them: in the step's note and under the requirement", () => {
+test("nothing that got through an earlier way of cleaning reaches the result, whichever field carried it", () => {
+  const steps = [
+    ...LEAKED_BEFORE.map((line) => ({ tool: "click", input: { element: { by: "text", value: line } }, ok: true, summary: line })),
+    ...LEAKED_PATHS.map((way) => ({ tool: "navigate", input: { path: way }, ok: true, summary: `URL: ${way}` })),
+    ...LEAKED_BEFORE.map((line) => ({ tool: "navigate", input: { path: `/${line}` }, ok: true, summary: "" })),
+  ];
+  const leaky = scenario("S1", "failed", 0, { steps, reason: LEAKED_BEFORE.join(" ") });
+  leaky.assertionResults = LEAKED_BEFORE.map((line, index) => ({ ...leaky.assertionResults[0]!, pass: index % 2 === 0, actual: line, expected: line }));
+  leaky.capture = {
+    steps: [],
+    // As an earlier collector wrote entries, with the text in them; and with the text where a place should be.
+    console: LEAKED_BEFORE.flatMap((line) => [{ step: 1, level: "error", count: 1, text: line }, { step: 1, level: "uncaught", count: 1, source: { path: `/${line}`, line: 1, column: 1 } }]) as never,
+    network: [...LEAKED_PATHS, ...LEAKED_BEFORE.map((line) => `/${line}`)].map((way) => ({ step: 1, method: "GET", path: way, status: 500, kind: "fetch", failure: way })) as never,
+    leftOut: { screenshots: 0, console: 0, network: 0 },
+  };
+  const result = remoteResult(record([leaky]));
+  const text = JSON.stringify(result);
+  for (const secret of SECRETS_BEFORE) assert.ok(!text.includes(secret), `${JSON.stringify(secret)} in the result`);
+  // In every field a page or a recording could have written to: plain printable characters only.
+  const fromOutside = JSON.stringify([result.steps, result.diagnostics, result.evidence, result.requirements.map((requirement) => [requirement.expected, requirement.observed, requirement.stepIds])]);
+  const odd = /[^\x20-\x7e]/.exec(fromOutside);
+  assert.equal(odd, null, odd ? `a character that is not plain: ${JSON.stringify(fromOutside.slice(Math.max(0, odd.index - 120), odd.index + 20))}` : "");
+});
+
+test("a value of a comparison is given only when it is a plain number, in the step's note and under the requirement alike", () => {
   const shown = scenario("S1", "failed", 0);
   shown.assertionResults = shown.assertionResults.map((made) => ({ ...made, pass: false, actual: "Signed in. password=shown-secret-1 ada@example.test \u202eBearer shown-secret-2" }));
   const result = remoteResult(record([shown]));
@@ -406,7 +447,11 @@ test("the values of a comparison are cleaned wherever the result gives them: in 
   // A value with a credential's name and words before the sign, as a page might show it.
   shown.assertionResults.push({ ...shown.assertionResults[0]!, actual: "password for admin: shown-secret-3" });
   for (const secret of ["shown-secret-1", "shown-secret-2", "shown-secret-3", "ada@example.test", "\u202e"]) assert.ok(!text.includes(secret), `${JSON.stringify(secret)} in ${JSON.stringify(result.requirements.map((requirement) => requirement.observed))}`);
-  assert.ok(result.requirements.some((requirement) => requirement.observed.startsWith("Signed in.")));
+  // A value that is words is said not to be shown. One that is a plain number is given.
+  assert.ok(result.requirements.every((requirement) => requirement.observed.split("; ").every((value) => value === "not shown")), JSON.stringify(result.requirements.map((requirement) => requirement.observed)));
+  assert.ok(result.steps.some((step) => /^Expected 160, observed not shown: mismatch\.$/.test(step.note)), JSON.stringify(result.steps.map((step) => step.note)));
+  const plain = remoteResult(record([scenario("S1", "failed", 40)]));
+  assert.ok(plain.requirements.some((requirement) => requirement.expected === "160" && requirement.observed === "40"));
   // A scenario's name that is not text does not stop the result from being built.
   const odd = scenario("S1", "passed", 160);
   (odd as { scenarioId: unknown }).scenarioId = 12345;
@@ -428,7 +473,7 @@ test("a scenario is named only by a plain name, and a record that is not one doe
 test("an entry that cannot be read is left out and counted, and the rest of the result stands", () => {
   const odd = scenario("S1", "passed", 160);
   odd.capture!.network.push({ step: 1, method: "GET", path: "/a/\ud800", status: 404, kind: "fetch" }, { step: 1, method: "GET", path: "/ok", status: 404, kind: "fetch" });
-  odd.capture!.console.push({ step: 1, level: "error", text: "lone \udc00 surrogate password=hunter2" });
+  odd.capture!.console.push({ step: 1, level: "error", count: 1, source: { path: "/a/\udc00/hunter2x9", line: 1 } });
   const result = remoteResult(record([odd]));
   assert.ok(result.diagnostics.network.some((entry) => entry.path === "/ok"));
   assert.ok(!JSON.stringify(result).includes("hunter2"));

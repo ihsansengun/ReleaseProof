@@ -29,7 +29,7 @@
  */
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { cleanPathWith, cleanTextWith } from "../execute/clean.ts";
+import { cleanPathWith, plainAmount } from "../execute/clean.ts";
 import { assess, type RequirementStatus } from "../report/readiness.ts";
 import type { ScenarioResult, Verdict } from "../schema.ts";
 import type { RemoteRun } from "./run.ts";
@@ -119,9 +119,10 @@ export type RemoteResult = {
    * failures are kept: an empty list beside "collected" means the run listened and heard none.
    */
   diagnostics: {
-    console: { stepId: string; level: "error" | "uncaught"; text: string }[];
+    /** What an error said is not kept. `source` is a file of the application under test; `count` is how often it happened in the step. */
+    console: { stepId: string; level: "error" | "uncaught"; source?: { path: string; line?: number; column?: number }; count: number }[];
     /** `status` 0 means the request got no answer. `path` has no query, fragment or host. */
-    network: { stepId: string; method: string; path: string; status: number; kind: string; failure?: string }[];
+    network: { stepId: string; method: string; path: string; status: number; kind: string }[];
     analytics: unknown[];
   };
   /** How many pictures and entries the size limits left out. All zero when none was. */
@@ -170,37 +171,43 @@ const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIO
 const within = (ms: unknown): ms is number => typeof ms === "number" && Number.isFinite(ms) && ms >= 0 && ms <= 86_400_000;
 /** Console entries, and network entries, taken from one scenario. The same number the collector keeps. */
 const ENTRIES = 200;
-/** How much of a recording's own words (a locator, a path) is shown. Enough to tell steps apart. */
-const WORDS = 80;
+
+/** A path as this file gives one: from the root, plain and printable, with nothing a reader could take for an address or markup. */
+const isPath = (where: string) => /^\/(?!\/)[\x21-\x7e]*$/.test(where) && !/[\\<>"'`]|\/\//.test(where);
+/** The kinds of element a locator can name by role. Any other is not named. */
+const ROLES = new Set(["button", "link", "textbox", "checkbox", "radio", "combobox", "listbox", "option", "heading", "tab", "menuitem", "row", "cell", "dialog", "switch", "img", "list", "listitem", "navigation", "form", "table", "searchbox", "spinbutton", "slider"]);
 
 /**
- * Where a step went or what it pointed at, in a form that carries as little
- * of the recording's own text as says which step it was. A path is given
- * without its query, fragment, parameters or any host; a locator by its kind
- * and a short part of its words. What was typed, sent or answered is never
- * part of it.
+ * Where a step went or what it pointed at, in a form that holds none of the
+ * recording's or the page's own words. A path is given cleaned, without its
+ * query, fragment, parameters or any host; a locator by its kind alone, and
+ * its role when that is one of the known ones. The words a locator looks for
+ * are not given: they are text of the page. What was typed, sent or answered
+ * is never part of it.
  */
 function describeTarget(input: unknown): string {
   const given = (input !== null && typeof input === "object" ? input : {}) as { path?: unknown; method?: unknown; element?: unknown; target?: unknown };
   if (typeof given.path === "string") {
-    let pathname = "";
+    let where: string | undefined;
     try {
-      pathname = new URL(given.path, "http://target.invalid").pathname;
+      where = cleanPathWith((text) => text, new URL(given.path.slice(0, 2_000), "http://target.invalid").pathname);
     } catch {
-      pathname = "";
+      where = undefined;
     }
-    const plain = pathname.split(";")[0] ?? "";
-    const cut = plain !== given.path;
     const method = typeof given.method === "string" && METHODS.has(given.method) ? `${given.method} ` : "";
-    return `${method}${clip(plain, WORDS)}${cut ? " (rest of the address not shown)" : ""}`;
+    return where !== undefined && isPath(where) ? `${method}${where}` : `${method}a path that is not shown`;
   }
-  const element = (given.element ?? given.target) as { source?: unknown; by?: unknown; role?: unknown; value?: unknown; responseId?: unknown } | undefined;
+  const element = (given.element ?? given.target) as { source?: unknown; by?: unknown; role?: unknown; responseId?: unknown } | undefined;
   if (element === undefined || element === null || typeof element !== "object") return "";
   if (element.source === "api") return typeof element.responseId === "string" && /^R\d{1,4}$/.test(element.responseId) ? `the answer ${element.responseId}` : "an answer";
   if (typeof element.by !== "string" || !LOCATED_BY.has(element.by)) return "";
-  const role = typeof element.role === "string" && /^[a-z]{1,20}$/.test(element.role) ? ` ${element.role}` : "";
-  return `${element.by}${role} "${clip(typeof element.value === "string" ? element.value : "", WORDS)}"`;
+  const role = typeof element.role === "string" && ROLES.has(element.role) ? ` ${element.role}` : "";
+  return `an element found by ${element.by}${role}`;
 }
+
+/** A value of a comparison as this file gives it: itself when it is a plain number or amount, and otherwise said not to be shown. */
+const NOT_SHOWN = "not shown";
+const shownValue = (value: unknown): string => plainAmount(value) ?? NOT_SHOWN;
 
 /**
  * Builds the result of a remote run from its record. Pure: it reads nothing
@@ -258,14 +265,26 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     const scenarioId = typeof result.scenarioId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(result.scenarioId) ? result.scenarioId : "scenario";
     const stepOf = (value: unknown) => `${scenarioId}-${Math.min(Math.max(1, Number.isInteger(value) ? (value as number) : 1), Math.max(1, result.steps.length))}`;
     const count = (value: unknown) => (Number.isInteger(value) && (value as number) >= 0 ? Math.min(value as number, 1_000_000) : 0);
-    // Redacted once more, and without characters that are not shown, whatever the record says was done already.
-    const again = (text: string) => cleanTextWith((given) => given, text);
     const said = Array.isArray(result.capture?.console) ? result.capture.console : [];
     const asked = Array.isArray(result.capture?.network) ? result.capture.network : [];
     for (const entry of said.slice(0, ENTRIES)) {
       try {
-        if ((entry?.level !== "error" && entry?.level !== "uncaught") || typeof entry.text !== "string") leftOut.console += 1;
-        else consoleEntries.push({ stepId: stepOf(entry.step), level: entry.level, text: again(entry.text) });
+        if ((entry?.level !== "error" && entry?.level !== "uncaught") || !Number.isInteger(entry.count) || entry.count < 1) {
+          leftOut.console += 1;
+          continue;
+        }
+        // Where it came from is given only as a cleaned path with whole numbers for the line and the column.
+        const from = entry.source;
+        const where = from !== null && typeof from === "object" && typeof from.path === "string" && from.path.startsWith("/") ? cleanPathWith((given) => given, from.path) : undefined;
+        const place = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < 10_000_000 ? value : undefined);
+        const line = where === undefined ? undefined : place(from?.line);
+        const column = line === undefined ? undefined : place(from?.column);
+        consoleEntries.push({
+          stepId: stepOf(entry.step),
+          level: entry.level,
+          ...(where !== undefined && isPath(where) ? { source: { path: where, ...(line === undefined ? {} : { line }), ...(column === undefined ? {} : { column }) } } : {}),
+          count: Math.min(entry.count, 1_000_000),
+        });
       } catch {
         // An entry that cannot be read is left out, and the rest of the result stands.
         leftOut.console += 1;
@@ -283,7 +302,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       // A path as the collector writes one: from the root, one slash at a time, printable, and nothing a reader could take for an address or markup.
       // The path is cleaned again here, by the same rules, and must then be a path and nothing else.
       const where = typeof entry?.path === "string" && entry.path.startsWith("/") && !/[?#]/.test(entry.path.slice(0, 1_000)) ? cleanPathWith((given) => given, entry.path) : undefined;
-      if (status === undefined || where === undefined || !/^\/(?!\/)[\x21-\x7e]*$/.test(where) || /[\\<>"'`]|\/\//.test(where)) {
+      if (status === undefined || where === undefined || !isPath(where)) {
         leftOut.network += 1;
         return;
       }
@@ -293,7 +312,6 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         path: where,
         status,
         kind: typeof entry.kind === "string" && /^[a-z]{1,20}$/.test(entry.kind) ? entry.kind : "other",
-        ...(typeof entry.failure === "string" && again(entry.failure) !== "" ? { failure: again(entry.failure) } : {}),
       });
     }
     leftOut.screenshots += count(result.capture?.leftOut?.screenshots);
@@ -324,21 +342,20 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         id,
         scenarioId,
         action: ACTIONS.has(step.tool) ? step.tool : "unknown step",
-        // Words of the recording, and of the page where a locator quotes it: cleaned as any other text here.
-        target: again(describeTarget(step.input)),
+        target: describeTarget(step.input),
         // A comparison step that kept no comparison did not do what it was for.
         outcome: !step.ok || (step.tool === "check" && !made) ? "error" : made && !made.pass ? "mismatch" : "ok",
         requirementIds,
         ...(captured && within(started + captured.atMs) ? { atMs: Math.round(started + captured.atMs) } : {}),
         ...(captured && within(captured.durationMs) ? { durationMs: Math.round(captured.durationMs) } : {}),
         // Written here from the comparison. What a step printed can hold what a page or a request said, and stays in the run's record.
-        note: made ? `Expected ${clip(again(String(made.expected)), 120)}, observed ${clip(again(String(made.actual)), 120)}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
+        note: made ? `Expected ${shownValue(made.expected)}, observed ${shownValue(made.actual)}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
         ...(screenshot ? { screenshot } : {}),
       });
       if (requirementId) {
         stepsOf.set(requirementId, [...(stepsOf.get(requirementId) ?? []), id]);
         // The values compared, cut to a length that shows a value and not a page of text.
-        if (made) comparisonsOf.set(requirementId, [...(comparisonsOf.get(requirementId) ?? []), { expected: clip(again(String(made.expected)), 120), observed: clip(again(String(made.actual)), 120) }]);
+        if (made) comparisonsOf.set(requirementId, [...(comparisonsOf.get(requirementId) ?? []), { expected: shownValue(made.expected), observed: shownValue(made.actual) }]);
       }
     });
   }
@@ -437,4 +454,16 @@ function summaryOf(results: ScenarioResult[], executed: number, planned: number)
   const mismatched = results.reduce((sum, result) => sum + result.assertionResults.filter((made) => !made.pass).length, 0);
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   return `${executed} of ${plural(planned, "planned scenario")} ran. ${plural(matched, "comparison")} matched and ${mismatched} did not.`;
+}
+
+/**
+ * The only files of a run's directory that may be uploaded, stored elsewhere
+ * or shown: the result itself and the pictures it names. Everything else a
+ * run writes there (each scenario's own record and report, with what steps
+ * printed and what pages said) holds text that has not been cleaned, and
+ * stays on the machine. A remote run records no browser trace and takes no
+ * uncovered picture at a comparison, so there is none of either to leave.
+ */
+export function filesThatMayLeave(result: RemoteResult): string[] {
+  return ["result.json", ...result.evidence.map((entry) => entry.path).filter((file) => /^scenarios\/[A-Za-z0-9_-]{1,64}\/step-\d{1,3}\.(png|jpg)$/.test(file))];
 }

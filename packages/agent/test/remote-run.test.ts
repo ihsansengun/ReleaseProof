@@ -11,6 +11,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { filesThatMayLeave } from "../src/remote/result.ts";
 import { promisify } from "node:util";
 import { authoriseForExecution, authoriseRemoteRun, memoryLedger, scopeSha256, signedStatement, type Approval, type StartableRun, type TrustedKeys } from "../src/remote/authority.ts";
 import { admitRemoteRun, RemoteRequestRefused, sha256Hex } from "../src/remote/request.ts";
@@ -154,10 +155,17 @@ test("KAN-16 criterion 2: the approved snapshot sets the expected value, and a m
   // The comparison names the snapshot it rests on.
   const planned = result.plan.scenarios[0]!.scenario.assertions[0]!;
   assert.deepEqual(planned.provenance, { sourceId: SNAPSHOT, trust: "authoritative", origin: `criteria snapshot "${SNAPSHOT}"`, quote: QUOTE });
-  // A real screenshot was captured at the comparison.
-  const shot = path.join(dir, "scenarios", "S1", "check-A1.png");
-  assert.ok(existsSync(shot), "a screenshot of the comparison exists");
-  assert.ok(readFileSync(shot).subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "and it is a PNG image");
+  // The picture kept of a step is one the run covered itself. No picture of the whole page is taken at the
+  // comparison, and no browser trace is recorded: neither is covered, so neither is written at all.
+  const kept = readdirSync(path.join(dir, "scenarios", "S1"));
+  assert.ok(kept.some((name) => /^step-\d+\.png$/.test(name)), kept.join(" "));
+  assert.ok(readFileSync(path.join(dir, "scenarios", "S1", kept.find((name) => name.startsWith("step-"))!)).subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "and it is a PNG image");
+  assert.deepEqual(kept.filter((name) => name.startsWith("check-") || name === "trace.zip"), []);
+  // What may leave the machine is the result and the pictures it names, each of which is there.
+  const written = JSON.parse(readFileSync(path.join(dir, "result.json"), "utf8"));
+  const leaving = filesThatMayLeave(written);
+  assert.ok(leaving.length >= 2 && leaving.every((file) => file === "result.json" || /^scenarios\/S1\/step-\d+\.png$/.test(file)), leaving.join(" "));
+  for (const file of leaving) assert.ok(existsSync(path.join(dir, file)), file);
 });
 
 // ---- criterion 4: nothing but an approved snapshot sets an expected value -------
