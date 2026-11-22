@@ -114,7 +114,7 @@ export type RemoteResult = {
 };
 
 /** First match wins: the worst outcome decides. */
-const ORDER: Verdict[] = ["failed", "errored", "blocked", "unverified", "passed"];
+const WORST_FIRST: Verdict[] = ["failed", "errored", "blocked", "unverified", "passed"];
 
 const NOT_TRUSTED =
   "Which element a comparison reads is still chosen by the recording, and is not yet tied to the approved text. A match shows what the application displayed there, not that the requirement holds.";
@@ -149,7 +149,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     run.plan.scenarios.some((scenario) => scenario.status !== "runnable") ||
     assessment.requirements.length === 0 ||
     assessment.requirements.some((requirement) => requirement.status !== "verified");
-  const worst = ORDER.find((verdict) => run.results.some((result) => result.verdict === verdict)) ?? "unverified";
+  const worst = WORST_FIRST.find((verdict) => run.results.some((result) => result.verdict === verdict)) ?? "unverified";
   const observed: Verdict = worst === "passed" && incomplete ? "unverified" : worst;
   const verdict: Verdict = observed === "passed" && !trusted ? "unverified" : observed;
 
