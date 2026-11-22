@@ -1,6 +1,6 @@
 /**
  * Texts that an earlier version of this code, which cleaned what a page said by rules, let through in part or in
- * whole, as nine independent reviews found them. None of it is kept now in any form, so none of what is in
+ * whole, as independent reviews found them. None of it is kept now in any form, so none of what is in
  * SECRETS_BEFORE may appear anywhere in what a run collects or in its result.
  */
 export const LEAKED_BEFORE = [

@@ -87,7 +87,6 @@ type Collector = {
   screenshotBytes: number;
   /** The very elements a secret was typed into, held by themselves: a way of finding them may stop finding them. */
   secretFields: ElementHandle[];
-  origin: string;
   /** A page of the engine's own, in a context apart from the application's, in which pictures are covered. Made when first needed. */
   easel?: Page;
   /** Set when a field that holds a secret could not be kept hold of: no picture is kept from then on. */
@@ -162,7 +161,6 @@ export function startCapture(session: Session, startedAt: number, routes: readon
     startedAt,
     screenshotBytes: 0,
     secretFields: [],
-    origin,
     stop: () => {
       page.off("console", onConsole);
       page.off("pageerror", onPageError);
@@ -281,7 +279,21 @@ async function findSecretAreas(session: Session, collector: Collector): Promise<
   const areas: Area[] = await page.locator(SECRET_FIELDS).evaluateAll(rectsOf);
   if (collector.uncoverable) throw new Error("a field that holds a secret could not be taken hold of");
   // An element no longer in the page is not in the picture. Any other failure to ask is a failure to cover.
+  const held: ElementHandle[] = [];
   for (const field of collector.secretFields) {
+    // First, whether the document the element was in is still there, asked without touching the element or
+    // anything a page could have changed. Once the page has gone somewhere else that document is gone, the
+    // element with it, and there is nothing of it to cover. The page itself must still answer: if it does
+    // not, nothing is known and no picture is kept.
+    const there = await field.evaluate(() => true).then(
+      () => true,
+      () => false,
+    );
+    if (!there) {
+      await page.evaluate(() => true);
+      continue;
+    }
+    held.push(field);
     const area = await field.evaluate((element) => {
       if (!element.isConnected) return null;
       const box = (element as Element).getBoundingClientRect();
@@ -289,6 +301,7 @@ async function findSecretAreas(session: Session, collector: Collector): Promise<
     });
     if (area) areas.push(area);
   }
+  collector.secretFields = held;
   for (const frame of page.frames()) {
     if (frame === page.mainFrame()) continue;
     const inside = await frame.locator(SECRET_FIELDS).count();

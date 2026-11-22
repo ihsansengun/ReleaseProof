@@ -249,6 +249,20 @@ test("a field a secret was typed into stays covered when the way it was found st
   assert.ok(result.capture!.steps.some((taken) => taken.step >= 3 && taken.screenshot !== undefined), "a covered picture is kept after the label changed");
 });
 
+test("once the page a secret was typed into has been left, pictures are kept again: the field went with its page", async () => {
+  const { result, dir } = await run(
+    [step("navigate", { path: "/relabel" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("navigate", { path: "/quiet" }), step("navigate", { path: "/sign-in" }), FINISH],
+    true,
+  );
+  const taken = result.capture!.steps;
+  // While the field is on the page it is covered. After the page is left there is a picture of each later step.
+  assert.deepEqual(await pixel(path.join(dir, taken[1]!.screenshot!), 600, 250), [0x3a, 0x3a, 0x3a]);
+  for (const entry of taken.slice(2)) assert.match(entry.screenshot ?? "", /^step-\d\.png$/, `step ${entry.step}: ${entry.noScreenshot}`);
+  assert.equal(result.capture!.leftOut.screenshots, 0);
+  // And a password field met later is covered as any other.
+  assert.deepEqual(await pixel(path.join(dir, taken[3]!.screenshot!), 600, 400), [0x3a, 0x3a, 0x3a]);
+});
+
 test("a field whose place the page does not give as numbers gets no picture, and that is counted", async () => {
   const { result, dir } = await run([step("navigate", { path: "/unmeasured" }), FINISH], true);
   const entry = result.capture!.steps[0]!;
