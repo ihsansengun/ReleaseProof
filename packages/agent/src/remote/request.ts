@@ -38,11 +38,19 @@ const Host = z
     return !labels.includes("localhost") && labels.at(-1) !== "localdomain";
   }, "must not be a name for this machine");
 
+/**
+ * Half of a surrogate pair with no other half. It has no spelling of its own in bytes: written out as UTF-8 it
+ * becomes U+FFFD. A text holding one would therefore have the same hash as another text, the one with U+FFFD in
+ * its place, and an approval of either would stand for both.
+ */
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+const wellFormed = (text: string) => !LONE_SURROGATE.test(text);
+
 export const CriteriaSnapshot = z.strictObject({
   /** Identifies the snapshot in the result. Unique within a request. */
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/),
   /** The approved text, exactly as it was approved. */
-  content: z.string().min(1).max(200_000),
+  content: z.string().min(1).max(200_000).refine(wellFormed, "must be well-formed Unicode"),
   /** SHA-256 of `content` as UTF-8, in lowercase hexadecimal. */
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   /** Who approved it. Required: an unapproved text is not a requirement. */
@@ -51,7 +59,8 @@ export const CriteriaSnapshot = z.strictObject({
     .trim()
     .min(1)
     .max(200)
-    .regex(/^[^\u0000-\u001f\u007f-\u009f\u2028\u2029]+$/, "must not contain control characters"),
+    .regex(/^[^\u0000-\u001f\u007f-\u009f\u2028\u2029]+$/, "must not contain control characters")
+    .refine(wellFormed, "must be well-formed Unicode"),
   approvedAt: z.iso.datetime({ offset: true }),
 });
 export type CriteriaSnapshot = z.infer<typeof CriteriaSnapshot>;

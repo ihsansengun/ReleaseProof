@@ -95,7 +95,7 @@ test("KAN-16 criterion 2: a matching hash does not make a snapshot authoritative
 });
 
 test("KAN-16 criterion 2: the hash is of the exact text, as UTF-8", () => {
-  const text = "Le total s'affiche en € — arrondi au centime.\n";
+  const text = "Le total s'affiche en \u20ac \u2014 arrondi au centime.\n";
   const admitted = admitRemoteRun(request({ criteria: [snapshot({ content: text, sha256: sha256Hex(text) })] }), NOW);
   assert.equal(admitted.snapshots[0].content, text);
   // A known value, so that the function is not only compared with itself.
@@ -128,7 +128,7 @@ for (const [what, change] of [
   ["a line removed", (text: string) => text.split("\n").slice(1).join("\n")],
   ["trailing whitespace added", (text: string) => `${text} `],
   ["line endings changed", (text: string) => text.replaceAll("\n", "\r\n")],
-  ["an invisible character inserted", (text: string) => text.replace("points", "po​ints")],
+  ["an invisible character inserted", (text: string) => text.replace("points", "po\u200bints")],
 ] as const) {
   test(`KAN-16 criterion 3: a snapshot with ${what} no longer matches its hash and is refused`, () => {
     const reasons = reasonsFor(request({ criteria: [snapshot({ content: change(CRITERIA) })] }));
@@ -233,10 +233,80 @@ test("a file that is not JSON is refused with a reason, not a crash", async () =
 });
 
 test("a target address that another URL parser could read differently is refused", () => {
-  for (const baseUrl of ["https://shop.releaseproof.test\\@evil.releaseproof.test/", "https://ｓhop.releaseproof.test/"]) {
+  for (const baseUrl of ["https://shop.releaseproof.test\\@evil.releaseproof.test/", "https://\uff53hop.releaseproof.test/"]) {
     assert.throws(
       () => admitRemoteRun(request({ target: { baseUrl, allowedHosts: ["shop.releaseproof.test"] } }), NOW),
       /plain ASCII with no backslash/,
     );
+  }
+});
+
+// ---- RPAI-39: approved text has one spelling in bytes --------------------------
+
+/** The reasons a request is refused with, or a failure of the test if it is admitted. */
+function refusedBecause(raw: unknown): string {
+  try {
+    admitRemoteRun(raw, NOW);
+  } catch (error) {
+    assert.ok(error instanceof RemoteRequestRefused, String(error));
+    return error.reasons.join(" | ");
+  }
+  assert.fail("the request was admitted");
+}
+const HIGH = String.fromCharCode(0xd800);
+const LOW = String.fromCharCode(0xdc00);
+const REPLACEMENT = String.fromCharCode(0xfffd);
+
+test("RPAI-39: approved text with half a surrogate pair is refused: it would share its hash with the text that has U+FFFD there", () => {
+  const approved = `1. A first paid order adds 100 points ${REPLACEMENT} and no more.\n`;
+  const altered = approved.replace(REPLACEMENT, HIGH);
+  // The two are different texts, and hash the same: the hash is taken of the bytes, where half a pair has none of its own.
+  assert.notEqual(altered, approved);
+  assert.equal(sha256Hex(altered), sha256Hex(approved));
+  // The text as approved is admitted, U+FFFD and all.
+  assert.equal(admitRemoteRun(request({ criteria: [snapshot({ content: approved, sha256: sha256Hex(approved) })] }), NOW).snapshots[0]!.content, approved);
+  // The altered one is refused, though its hash "matches".
+  assert.match(refusedBecause(request({ criteria: [snapshot({ content: altered, sha256: sha256Hex(approved) })] })), /criteria\.0\.content: must be well-formed Unicode/);
+  // And as it would arrive in a file.
+  const arrived = JSON.parse(JSON.stringify(request({ criteria: [snapshot({ content: altered, sha256: sha256Hex(approved) })] })));
+  assert.match(refusedBecause(arrived), /criteria\.0\.content: must be well-formed Unicode/);
+});
+
+test("RPAI-39: half a pair is found wherever it stands in approved text, and in the approver's name", () => {
+  const texts = [`${HIGH}Rule one.`, `Rule one.${LOW}`, `Rule ${LOW}${HIGH} one.`, `Rule ${HIGH}\u{10000} one.`, `Rule \u{10000}${LOW} one.`, `Rule ${HIGH}${HIGH}${LOW} one.`];
+  for (const content of texts) {
+    assert.match(refusedBecause(request({ criteria: [snapshot({ content, sha256: sha256Hex(content) })] })), /criteria\.0\.content: must be well-formed Unicode/, JSON.stringify(content));
+  }
+  // One refused straight after another, the second with its half earlier in the text.
+  const late = `A long enough rule${LOW}.`;
+  const early = `${LOW}A long enough rule.`;
+  assert.match(refusedBecause(request({ criteria: [snapshot({ content: late, sha256: sha256Hex(late) })] })), /content: must be well-formed Unicode/);
+  assert.match(refusedBecause(request({ criteria: [snapshot({ content: early, sha256: sha256Hex(early) })] })), /content: must be well-formed Unicode/);
+  for (const approvedBy of [`owner${HIGH}@releaseproof.test`, `${LOW}owner@releaseproof.test`, `owner@releaseproof.test${HIGH}`]) {
+    assert.match(refusedBecause(request({ criteria: [snapshot({ approvedBy })] })), /criteria\.0\.approvedBy: must be well-formed Unicode/, JSON.stringify(approvedBy));
+  }
+  // In the second snapshot of two as well.
+  const bad = `Rule two.${HIGH}`;
+  assert.match(refusedBecause(request({ criteria: [snapshot(), snapshot({ id: "second", content: bad, sha256: sha256Hex(bad) })] })), /criteria\.1\.content: must be well-formed Unicode/);
+});
+
+test("RPAI-39: well-formed approved text is admitted as before, in any script, with whole pairs and with U+FFFD itself", () => {
+  const texts = [
+    CRITERIA,
+    "1. Le solde affich\u00e9 est de 124 points.\n",
+    "1. \u6b8b\u9ad8\u306f124\u30dd\u30a4\u30f3\u30c8\u3067\u3059\u3002\n",
+    "1. \u05d4\u05d9\u05ea\u05e8\u05d4 \u05d4\u05d9\u05d0 124.\n",
+    "1. A paid order shows \u{1f600} and 124 points.\n",
+    `1. Text that went through a lossy decoder: ${REPLACEMENT}${REPLACEMENT}.\n`,
+    "\u{10000}\u{10ffff}",
+    `${String.fromCharCode(0xd7ff)}${String.fromCharCode(0xe000)} are not halves of anything.`,
+  ];
+  for (const content of texts) {
+    const admitted = admitRemoteRun(request({ criteria: [snapshot({ content, sha256: sha256Hex(content) })] }), NOW);
+    assert.equal(admitted.snapshots[0]!.content, content);
+    assert.equal(admitted.snapshots[0]!.sha256, sha256Hex(content));
+  }
+  for (const approvedBy of ["Zo\u00eb Owner", "\u6240\u6709\u8005", "owner \u{1f600}", `owner${REPLACEMENT}`]) {
+    assert.equal(admitRemoteRun(request({ criteria: [snapshot({ approvedBy })] }), NOW).snapshots[0]!.approvedBy, approvedBy);
   }
 });
