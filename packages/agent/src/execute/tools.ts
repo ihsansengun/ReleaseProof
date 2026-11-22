@@ -1035,7 +1035,7 @@ const handlers: Handlers = {
   async fill(s, { element, text }) {
     const field = await locate(s.page, element);
     await noteInput(suppliedOf(s), field);
-    if (s.enteringSecret) noteSecretField(s, field);
+    if (s.enteringSecret) await noteSecretField(s, field);
     await field.fill(text);
     // Some pages move the caret when a field takes the focus, and the new text
     // then lands after the old. What the field holds is checked; if it is not

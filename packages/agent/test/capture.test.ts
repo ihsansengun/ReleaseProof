@@ -65,7 +65,8 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
     }
     if (url.pathname === "/broken") return html(`<h1>Broken</h1><script>console.error("/x\\ud800=1?a"); console.error("fine after"); setTimeout(() => { throw new Error("/y\\udc00=2?b"); }, 0);</script>`);
     if (url.pathname === "/unmeasured") return html(`<script>Element.prototype.getBoundingClientRect = () => ({ x: "a", y: {}, width: 1e9, height: NaN });</script><label style="display:block;font-size:40px">Password <input type="password" style="display:block;width:1200px;height:500px;font-size:300px" value="hunter2"></label>`);
-    if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
+    if (url.pathname === "/relabel") return html(`<label for="k" id="l" style="display:block;font-size:40px">API key</label><input id="k" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button onclick="document.getElementById('l').textContent = 'Saved'">Save</button>`);
+        if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
     if (url.pathname === "/leaky") {
       return html(`<h1>Leaky</h1><script>
         console.error("access_token=acc-tok-12345 refresh_token=ref-tok-12345 client_secret=cs-12345 authToken=camel-12345 pwd=pwd-12345");
@@ -533,6 +534,19 @@ test("what cleaning must remove, and what it must leave", () => {
   assert.ok(!cleanText(across, "GET http://app.example/alpha//bravo-charlie failed").includes("bravo"));
   // What looks like the engine's placeholder but holds a key is not kept in a path either.
   assert.equal(cleanPath(session, "/%7B%7Bsecret:sEcReTt0ken1234567890abcdefXYZ%7D%7D"), "/[redacted]");
+});
+
+test("a field a secret was typed into stays covered when the way it was found stops finding it", async () => {
+  const { result, dir } = await run(
+    [step("navigate", { path: "/relabel" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "button", value: "Save" } }), FINISH],
+    true,
+  );
+  // After the label has changed its words: the picture is covered where the field is, or there is no picture.
+  for (const entry of result.capture!.steps.filter((taken) => taken.step >= 2)) {
+    if (entry.screenshot === undefined) continue;
+    assert.deepEqual(await pixel(path.join(dir, entry.screenshot), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
+  }
+  assert.ok(result.capture!.steps.some((taken) => taken.step >= 3 && taken.screenshot !== undefined), "a covered picture is kept after the label changed");
 });
 
 test("a field whose place the page does not give as numbers gets no picture, and that is counted", async () => {

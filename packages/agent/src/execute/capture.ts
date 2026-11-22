@@ -27,7 +27,7 @@
  *     limit left out is counted and said, never dropped silently.
  */
 import path from "node:path";
-import type { ConsoleMessage, Locator, Page, Request, Response } from "playwright";
+import type { ConsoleMessage, Locator, Page, Request, Response, ElementHandle } from "playwright";
 import { cleanPathWith, cleanTextWith, TEXT_KEPT, TEXT_READ } from "./clean.ts";
 import type { Session } from "./tools.ts";
 
@@ -86,10 +86,13 @@ type Collector = {
   startedAt: number;
   screenshotBytes: number;
   /** Fields the executor typed a secret into, to be covered in every picture. */
-  secretFields: Locator[];
+  /** The very elements a secret was typed into, held by themselves: a way of finding them may stop finding them. */
+  secretFields: ElementHandle[];
   origin: string;
   /** A page of the engine's own, in a context apart from the application's, in which pictures are covered. Made when first needed. */
   easel?: Page;
+  /** Set when a field that holds a secret could not be kept hold of: no picture is kept from then on. */
+  uncoverable?: boolean;
   stop: () => void;
 };
 
@@ -179,9 +182,21 @@ export function startCapture(session: Session, startedAt: number): Capture {
 /** Whether a session is collecting. */
 export const capturing = (session: Session): boolean => collectors.has(session);
 
-/** Notes a field the executor typed a secret into, so that it is covered in every later picture. */
-export function noteSecretField(session: Session, field: Locator): void {
-  collectors.get(session)?.secretFields.push(field);
+/**
+ * Notes a field the executor is about to type a secret into, so that it is covered in every later picture.
+ * The element itself is kept, not the way it was found: a label that changes its words would otherwise leave
+ * the field uncovered. If the element cannot be taken hold of, no later picture is kept at all.
+ */
+export async function noteSecretField(session: Session, field: Locator): Promise<void> {
+  const collector = collectors.get(session);
+  if (!collector) return;
+  try {
+    const found = await field.elementHandles();
+    if (found.length === 0) throw new Error("no element");
+    collector.secretFields.push(...found);
+  } catch {
+    collector.uncoverable = true;
+  }
 }
 
 /**
@@ -270,7 +285,16 @@ async function findSecretAreas(session: Session, collector: Collector): Promise<
   const page = session.page;
   if (page.frames().length > MOST_FRAMES + 1) throw new Error("too many frames to look into");
   const areas: Area[] = await page.locator(SECRET_FIELDS).evaluateAll(rectsOf);
-  for (const field of collector.secretFields) areas.push(...(await field.evaluateAll(rectsOf)));
+  if (collector.uncoverable) throw new Error("a field that holds a secret could not be taken hold of");
+  // An element no longer in the page is not in the picture. Any other failure to ask is a failure to cover.
+  for (const field of collector.secretFields) {
+    const area = await field.evaluate((element) => {
+      if (!element.isConnected) return null;
+      const box = (element as Element).getBoundingClientRect();
+      return [box.x, box.y, box.width, box.height] as [number, number, number, number];
+    });
+    if (area) areas.push(area);
+  }
   for (const frame of page.frames()) {
     if (frame === page.mainFrame()) continue;
     const inside = await frame.locator(SECRET_FIELDS).count();
