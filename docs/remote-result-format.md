@@ -146,13 +146,20 @@ It leaves the machine, so it is kept small and kept clean:
 
 - Text is cleaned word by word, not by patterns run over a whole line
   (`packages/agent/src/execute/clean.ts`; why, and what comes next, is in
-  `docs/evidence-redaction-plan.md`). It is cut to 4,000 characters first.
-  Then: the secrets the executor was given; an address down to its cleaned
-  path; e-mail addresses; the value after a name that is a credential's
-  (`password`, `access_token`, `clientSecret`, `pwd`, `Authorization: Bearer`
-  and the like), also when the value is the next word; a long word of letters
-  and digits mixed, a very long word, a long run of digits. The time this
-  takes grows with the length of the text and no faster.
+  `docs/evidence-redaction-plan.md`).
+  The secrets the executor was given go first; then the text is cut to 4,000
+  characters, and a word the cut went through is dropped. It is read once
+  into words and the signs between them. Removed: an address down to its
+  cleaned path, wherever in a word it starts; e-mail addresses; the value
+  after a name that is a credential's (`password`, `access_token`,
+  `clientSecret`, `pwd`, `x-auth`, `Authorization: Bearer` and the like),
+  whether it follows `=`, `:`, `=>`, `is`, a quote or a space, whole when it
+  is in quotes or brackets, and the values after `Cookie`; a long word of
+  letters and digits mixed, a very long word, a long run of digits. What is
+  already redacted, and the engine's own placeholder for a secret, are set
+  aside first and stand as they are, and the rest of their word is judged as
+  any other. The time this takes grows with the length of the text and no
+  faster.
 - An address, in a network entry or inside a console text, is given as its
   path: no query, fragment, parameters or host. A path is closed by default:
   a segment is kept only if it reads as an ordinary name or a short number
@@ -161,13 +168,17 @@ It leaves the machine, so it is kept small and kept clean:
   under a credential's name. A file keeps the ordinary parts of its name and
   its ending (`app-[redacted].js`).
 - A picture cannot be cleaned after it is taken. Password, card and
-  one-time-code fields in the page and in its frames, and every field the
-  executor typed a secret into, are covered with a flat colour. The covering
-  is drawn onto the picture in a page of the engine's own, apart from the
-  application's. **Nothing is laid over the application's page and nothing in
-  it is changed**, so taking pictures cannot alter what a later step reads. A
-  test runs a page that counts every change to its own document, and it
-  counts none. If a field cannot be covered, no picture is kept.
+  one-time-code fields (by type, or by what `autocomplete` says) in the page
+  and in its frames, and every field the executor typed a secret into, are
+  covered with a flat colour. The covering is drawn onto the picture in a
+  page of the engine's own, apart from the application's. **Nothing is laid
+  over the application's page and nothing in it is changed**, so taking
+  pictures cannot alter what a later step reads. A test runs a page that
+  counts every change to its own document, and it counts none.
+- **Every field found is covered, or no picture is kept.** There is no count
+  beyond which fields are left showing. A page with more than 2,000 such
+  fields or more than 40 frames, or on which finding or covering them takes
+  over four seconds, gets no picture.
 - No picture is kept of a page that is not the application under test.
 - What a limit left out is counted in `evidenceLimits.leftOut`.
 - The result cleans every text and path once more as it is built, by the same
@@ -182,12 +193,20 @@ still appear:
   number written in groups, a telephone number, a postal address, a person's
   name; a short value encoded another way; the password of an account the
   target's manifest declares;
+- in text, also: a secret in a sentence with no name the rules know ("the pw
+  was …"); a name in one item of a list and its value in the next; what a
+  page writes from a template or a function's source;
 - in a picture: anything the page shows as text; a field of another kind
-  that holds a secret (a password shown in a plain text field, a text area).
+  that holds a secret (a password shown in a plain text field, a text area);
+  a field inside a closed component, which the engine cannot see into; a
+  field that jumps about in the instant between being looked for and the
+  picture being taken (it is looked for before and after and both places are
+  covered, but one that moves several times in that instant can show).
 
 And it errs toward removing: a message such as "password: must be at least 8
-characters" loses the word after the name, and an id written in groups is
-replaced in a path. That is the safe side to be wrong on.
+characters" loses the word after the name; in a path, an id written in
+groups, a name of seven words or more, and a segment with brackets, a colon
+or a comma are replaced. That is the safe side to be wrong on.
 
 That is why real customer data and real credentials stay out of these runs
 for now.

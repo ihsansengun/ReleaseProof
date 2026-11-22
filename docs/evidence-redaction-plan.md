@@ -18,14 +18,24 @@ it. Each was reviewed independently, and each failed in the same two ways:
 | A second pattern for names such as `access_token` | Its time grew with the cube of a line made of its own words: five lines, 20 seconds |
 | Bounding that pattern and cleaning paths by another rule | A credential that was the first name in a printed object stopped being redacted; a long name hid its value; ordinary paths of 32 characters were wiped whole; cleaning twice doubled a bracket |
 
+A fourth review, of the first word-by-word version, found gaps of its own: a
+quoted name followed by a space, as JSON is printed, kept its value; a word
+holding something already redacted skipped every rule; fields beyond the two
+hundredth were left uncovered in a picture. Those were faults of rules, not
+of method. Each was fixed by a rule and a row in a table of tests, and none
+of the fixes changed the time taken.
+
 The lesson: a general pattern over an arbitrary text is fragile in both
 directions. A small change to what it matches changes what it misses, and its
 cost depends on input an application under test controls.
 
 ## What is in place now (`packages/agent/src/execute/clean.ts`)
 
-1. **Bounded, structured cleaning.** A text is cut to 4,000 characters, split
-   into words, and each word is read once, left to right. There is no pattern
+1. **Bounded, structured cleaning.** A text is cut to 4,000 characters and
+   read once, a character at a time, into words and the signs between them
+   (quotes, brackets, commas). A little state carries from word to word:
+   whether a credential was just named, and whether its value is being
+   passed over. There is no pattern
    that can go back over what it has read, so the time taken grows with the
    length of the text and no faster. Tests hold each pattern once found slow
    to under 150 ms, and a whole scenario's worst case to under two seconds.
