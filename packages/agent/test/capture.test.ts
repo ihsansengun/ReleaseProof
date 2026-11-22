@@ -15,6 +15,9 @@ import { LEAKED_BEFORE, LEAKED_PATHS, SECRETS_BEFORE } from "./leaked-before.ts"
 import { runScenario } from "../src/execute/run.ts";
 import { Manifest, type Scenario, type ScenarioResult, type Step } from "../src/schema.ts";
 
+/** What a watching page told the server it saw. */
+const hits: string[] = [];
+
 async function app(): Promise<{ baseUrl: string; server: Server }> {
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://app");
@@ -76,7 +79,9 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
     if (url.pathname === "/echo-form") return html(`<form action="/echo"><label for="k" style="display:block;font-size:40px">API key</label><input id="k" name="key" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button>Submit</button></form>`);
     if (url.pathname === "/echo") return html(`<label for="e" style="display:block;font-size:40px">Try again</label><input id="e" type="text" style="display:block;width:1200px;height:400px;font-size:200px" value="${(url.searchParams.get("key") ?? "").replace(/[^A-Za-z0-9{}:._-]/g, "")}">`);
     // A page that, once a secret has been typed, makes one question about the held field fail and then behaves again.
-    if (url.pathname === "/trap") return html(`<label for="k" style="display:block;font-size:40px">API key</label><input id="k" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button>Save</button><script>
+    if (url.pathname === "/trap") return html(`<label for="k" style="display:block;font-size:40px">API key</label><input id="k" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button id="b">Save</button><script>
+        // The page writes what was typed in its own way, so the field no longer holds the very value typed.
+        document.getElementById("b").addEventListener("click", () => { const k = document.getElementById("k"); k.value = k.value.split("").join(" "); });
         const hidden = document.createElement("input"); hidden.type = "password"; hidden.style.display = "none"; document.body.append(hidden);
         const real = Element.prototype.getBoundingClientRect; let done = false;
         Element.prototype.getBoundingClientRect = function () {
@@ -85,6 +90,23 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
           return real.call(this);
         };
       </script>`);
+    // A later page that watches for anything handed to it, and tells the server what it saw.
+    if (url.pathname === "/spy") return html(`<h1>Spy</h1><input value="nothing here"><script>
+        const has = String.prototype.includes; const beacon = navigator.sendBeacon.bind(navigator); let telling = false;
+        const seen = (value) => { if (telling || typeof value !== "string" || !has.call(value, "user.password")) return; telling = true; try { beacon("/seen", "x"); } finally { telling = false; } };
+        for (const [proto, name] of [[String.prototype, "includes"], [String.prototype, "indexOf"], [Array.prototype, "some"], [Array.prototype, "includes"]]) {
+          const real = proto[name];
+          proto[name] = function (...args) { seen(String(this)); for (const arg of args) seen(Array.isArray(arg) ? arg.join(",") : arg); return real.apply(this, args); };
+        }
+      </script>`);
+    if (url.pathname === "/seen") { hits.push("seen"); response.writeHead(204); return void response.end(); }
+    // A new page that shows what was sent in a field made by one document and placed in another.
+    if (url.pathname === "/echo-frame") return html(`<iframe id="f" style="display:block;border:0;width:1200px;height:500px"></iframe><script>
+        const field = document.createElement("input"); field.value = ${JSON.stringify((url.searchParams.get("key") ?? "").replace(/[^A-Za-z0-9{}:._-]/g, ""))};
+        field.style.cssText = "display:block;width:1100px;height:400px;font-size:200px";
+        document.getElementById("f").contentDocument.body.append(field);
+      </script>`);
+    if (url.pathname === "/echo-frame-form") return html(`<form action="/echo-frame"><label for="k" style="display:block;font-size:40px">API key</label><input id="k" name="key" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button>Submit</button></form>`);
     if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
     if (url.pathname === "/leaky") {
       return html(`<h1>Leaky</h1><script>
@@ -284,6 +306,25 @@ test("a typed secret shown again in another field is covered there: an applicati
   const taken = result.capture!.steps;
   // The page after the form was sent is a new document with a new field that holds what was typed.
   for (const entry of taken.slice(1)) {
+    assert.match(entry.screenshot ?? "", /^step-\d\.png$/, `step ${entry.step}: ${entry.noScreenshot}`);
+    assert.deepEqual(await pixel(path.join(dir, entry.screenshot!), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
+  }
+});
+
+test("the secret typed is never handed to a later page to look for: what fields hold is read out and compared in the engine", async () => {
+  hits.length = 0;
+  const { result } = await run([step("navigate", { path: "/relabel" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("navigate", { path: "/spy" }), step("navigate", { path: "/quiet" }), FINISH], true);
+  assert.equal(result.verdict, "passed");
+  assert.ok(result.capture!.steps[2]!.screenshot !== undefined, "a picture of the later page is kept");
+  assert.deepEqual(hits.filter((hit) => hit === "seen"), [], "the later page saw the typed value");
+});
+
+test("a typed secret shown again in a field made by one document and placed in another is covered", async () => {
+  const { result, dir } = await run(
+    [step("navigate", { path: "/echo-frame-form" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "button", value: "Submit" } }), FINISH],
+    true,
+  );
+  for (const entry of result.capture!.steps.slice(2)) {
     assert.match(entry.screenshot ?? "", /^step-\d\.png$/, `step ${entry.step}: ${entry.noScreenshot}`);
     assert.deepEqual(await pixel(path.join(dir, entry.screenshot!), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
   }

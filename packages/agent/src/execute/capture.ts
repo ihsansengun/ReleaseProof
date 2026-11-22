@@ -97,6 +97,8 @@ type Collector = {
    * Not asked of the page. Undefined until the browser has been asked to report them, and then nothing is known.
    */
   documents: number | undefined;
+  /** Ends the browser's reports of new documents. */
+  unwatch?: () => void;
   /** A page of the engine's own, in a context apart from the application's, in which pictures are covered. Made when first needed. */
   easel?: Page;
   /** Set when a field that holds a secret could not be kept hold of: no picture is kept from then on. */
@@ -194,6 +196,7 @@ export function startCapture(session: Session, startedAt: number, routes: readon
       browser.on("Page.frameNavigated", (event) => {
         if (event.frame.parentId === undefined && collector.documents !== undefined) collector.documents += 1;
       });
+      collector.unwatch = () => void browser.detach().catch(() => undefined);
     })
     .catch(() => undefined);
   return capture;
@@ -210,7 +213,12 @@ export const capturing = (session: Session): boolean => collectors.has(session);
 export async function noteSecretField(session: Session, field: Locator, typed?: string): Promise<void> {
   const collector = collectors.get(session);
   if (!collector) return;
-  if (typeof typed === "string" && typed !== "" && !collector.typed.includes(typed) && collector.typed.length < 50) collector.typed.push(typed);
+  if (typeof typed === "string" && typed !== "" && !collector.typed.includes(typed)) {
+    // A value longer than is read of a field could not be found again, and more values than are kept could not
+    // all be looked for: then nothing can be said to be covered, and no later picture is kept.
+    if (typed.length > VALUE_READ || collector.typed.length >= 50) collector.uncoverable = true;
+    else collector.typed.push(typed);
+  }
   try {
     const found = await field.elementHandles();
     if (found.length === 0) throw new Error("no element");
@@ -286,6 +294,23 @@ const COVER_TIMEOUT_MS = 4_000;
 const within = <T>(work: Promise<T>, ms: number): Promise<T> =>
   Promise.race([work, new Promise<T>((_resolve, reject) => setTimeout(() => reject(new Error("took too long")), ms).unref())]);
 type Area = [x: number, y: number, width: number, height: number];
+/** Form fields and editable text: where a typed value can be shown again. */
+const FIELDS = "input, textarea, [contenteditable]";
+/** The most of a field's value that is read. (At most 5,000 fields are looked at; more than that, and no picture is kept.) */
+const VALUE_READ = 4_000;
+/**
+ * What each field holds and where it is, read out of the page. Nothing is passed in. An element is asked for its
+ * value by having one, not by what kind the page's own script says it is: an element made in another document
+ * is a field all the same.
+ */
+const fieldsOf = (elements: Element[]): [string, number, number, number, number][] => {
+  if (elements.length > 5_000) throw new Error("too many fields to look at");
+  return elements.map((element) => {
+    const value = "value" in element && typeof (element as { value: unknown }).value === "string" ? (element as { value: string }).value : (element.textContent ?? "");
+    const box = element.getBoundingClientRect();
+    return [value.slice(0, 4_000), box.x, box.y, box.width, box.height];
+  });
+};
 const rectsOf = (elements: Element[]): Area[] =>
   elements.map((element) => {
     const box = element.getBoundingClientRect();
@@ -307,9 +332,10 @@ async function findSecretAreas(session: Session, collector: Collector): Promise<
   if (page.frames().length > MOST_FRAMES + 1) throw new Error("too many frames to look into");
   const areas: Area[] = await page.locator(SECRET_FIELDS).evaluateAll(rectsOf);
   if (collector.uncoverable) throw new Error("a field that holds a secret could not be taken hold of");
-  // A held element is taken to be gone only when the browser has reported a new document since it was noted.
-  // Then it is in no picture. In the same document it is asked where it is, and a failure to ask, whatever the
-  // cause, is a failure to cover: no picture is kept. A page cannot bring that about and keep its picture.
+  // A held element is let go only when the browser has reported a new document since it was noted. In the same
+  // document it is asked where it is, and a failure to ask, whatever the cause, is a failure to cover: no
+  // picture is kept. After a new document the element is ordinarily gone with the old one; a page that set out
+  // to could carry it across (through another window), and then it is found, if at all, by what it holds.
   const gone = new Set<ElementHandle>();
   for (const { handle, document } of [...collector.secretFields]) {
     if (document !== undefined && collector.documents !== undefined && document !== collector.documents) {
@@ -326,22 +352,19 @@ async function findSecretAreas(session: Session, collector: Collector): Promise<
   if (gone.size > 0) collector.secretFields = collector.secretFields.filter((held) => !gone.has(held.handle));
   // A field that holds a secret the executor typed, whichever element it is: the value may be shown again in
   // another field, by the application answering with what was sent, by the browser going back, or by a page
-  // that draws its form anew.
-  const holding = (elements: Element[], typed: string[]): [number, number, number, number][] =>
-    elements
-      .filter((element) => {
-        const held = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : (element.textContent ?? "");
-        return typed.some((value) => held.includes(value));
-      })
-      .map((element) => {
-        const box = element.getBoundingClientRect();
-        return [box.x, box.y, box.width, box.height];
-      });
-  const FIELDS = "input, textarea, [contenteditable]";
-  if (collector.typed.length > 0) areas.push(...(await page.locator(FIELDS).evaluateAll(holding, collector.typed)));
+  // that draws its form anew. What each field holds is read out and compared here, in the engine. The secret is
+  // never handed to a page or to a frame to compare: a later page, or a frame from somewhere else, has no
+  // business learning it.
+  const typed = collector.typed;
+  const holdsTyped = (held: string) => typed.some((value) => held.includes(value));
+  if (typed.length > 0) {
+    for (const [held, x, y, width, height] of await page.locator(FIELDS).evaluateAll(fieldsOf)) {
+      if (typeof held === "string" && holdsTyped(held)) areas.push([x, y, width, height]);
+    }
+  }
   for (const frame of page.frames()) {
     if (frame === page.mainFrame()) continue;
-    const inside = (await frame.locator(SECRET_FIELDS).count()) + (collector.typed.length > 0 ? (await frame.locator(FIELDS).evaluateAll(holding, collector.typed)).length : 0);
+    const inside = (await frame.locator(SECRET_FIELDS).count()) + (typed.length > 0 ? (await frame.locator(FIELDS).evaluateAll(fieldsOf)).filter(([held]) => typeof held === "string" && holdsTyped(held)).length : 0);
     if (inside === 0) continue;
     // A field in a frame is somewhere inside the frame's own box. The whole box is covered.
     const box = await (await frame.frameElement()).boundingBox();
@@ -399,6 +422,7 @@ export function endCapture(session: Session): Capture | undefined {
   const collector = collectors.get(session);
   if (!collector) return undefined;
   collector.stop();
+  collector.unwatch?.();
   // The page the pictures were drawn in is the engine's own, and is closed with the run.
   void collector.easel?.context().close().catch(() => undefined);
   collector.easel = undefined;
