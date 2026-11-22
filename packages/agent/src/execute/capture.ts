@@ -90,55 +90,81 @@ type Collector = {
 const collectors = new WeakMap<Session, Collector>();
 
 /**
+ * Credentials under names the shared redaction passes over: access_token,
+ * clientSecret, pwd and the like. Every repetition is bounded and the name
+ * must start where a word starts, so the time it takes grows with the length
+ * of the text and no faster. The engine's own placeholder ({{secret:…}}) and
+ * what is already redacted are left as they are.
+ */
+const NAMED = /(?<![A-Za-z0-9_{-])([A-Za-z0-9_-]{0,40}(?:token|secret|passw(?:or)?d|passcode|pwd|apikey|api_key|credential)[A-Za-z0-9_-]{0,40}["']?\s{0,3}[:=]\s{0,3}["']?)(?!\[redacted)([^\s"',;&}\]]{1,200})/gi;
+
+/** A part of a path segment that is a key or a token more often than a name: long, with letters and digits mixed. */
+const opaquePart = (part: string) => part.length >= 12 && /\d/.test(part) && /[A-Za-z]/.test(part);
+
+/**
+ * A path made fit to leave the machine, segment by segment: an e-mail address
+ * and a long mixed run of letters and digits are replaced, and everything else
+ * is kept, so that a failed request can still be told from another. The stem
+ * and the ending of a file name stay ("app-[redacted].js").
+ */
+export function cleanPath(session: Session, pathname: string): string {
+  // Cut first, as text is: nothing below may take time that grows faster than the path.
+  const scrubbed = session.vault.scrub((pathname.split(";")[0] ?? "/").slice(0, 1_000));
+  const segments = scrubbed
+    .split("/")
+    .filter((segment) => segment !== "")
+    .map((segment) => {
+      // The engine's own placeholder for a secret stands as it is.
+      if (/^\{\{secret:[^}]{1,80}\}\}$/.test(segment)) return segment;
+      let shown = segment;
+      try {
+        shown = decodeURIComponent(segment);
+      } catch {
+        // Looked at as it is written.
+      }
+      // Something on each side of an @, and a dot after it: an e-mail address.
+      const at = shown.indexOf("@");
+      if (at > 0 && shown.indexOf(".", at) > at + 1) return "[redacted-e-mail]";
+      const parts = segment.split(/([-_.~])/).map((part) => (opaquePart(part) ? "[redacted]" : part));
+      return parts.join("").slice(0, 80);
+    });
+  return `/${segments.join("/")}`.slice(0, 200);
+}
+
+/**
  * Makes a text fit to leave the machine. Cut first: a page can write a line of
- * any length, and nothing below may take time that grows with it. Then
- * characters that are not shown (they can split a word a pattern looks for),
- * the session's own secrets, addresses down to their path, credentials named
- * in ways the shared redaction does not know, the shared redaction, and the
- * final length.
+ * any length, and nothing below may take time that grows faster than it.
+ * Then characters that are not shown (they can split a word a pattern looks
+ * for), the session's own secrets, addresses down to their cleaned path, the
+ * shared redaction, credentials under other names, and the final length.
  */
 const clean = (session: Session, text: string): string => {
   const read = text.length > CAPTURE_LIMITS.textRead ? text.slice(0, CAPTURE_LIMITS.textRead) : text;
-  const shown = read.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\u00AD]/g, "").replace(/\s+/g, " ");
-  const flat = redact(
-    session.vault
-      .scrub(shown)
-      // An address inside a text: its path, and nothing else of it.
-      .replace(/\bhttps?:\/\/[^\s"'<>)\]]+/gi, (address) => {
-        try {
-          return new URL(address).pathname.split(";")[0] ?? "/";
-        } catch {
-          return "[address]";
-        }
-      })
-      // Names such as access_token, clientSecret or pwd, which the shared patterns pass over.
-      .replace(/([A-Za-z0-9_-]*(?:token|secret|passw(?:or)?d|passcode|pwd|apikey|api_key|credential)[A-Za-z0-9_-]*["']?\s*[:=]\s*["']?)([^\s"',;&}\]]+)/gi, "$1[redacted]"),
-  ).trim();
+  const shown = session.vault.scrub(read.replace(/[\u0000-\u0008\u000B-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\u00AD]/g, "").replace(/\s+/g, " "));
+  // An address inside a text is set aside, so that the rules for text do not take a long path for one opaque value.
+  const paths: string[] = [];
+  const held = shown.replace(/\b(?:https?|wss?):\/\/[^\s"'<>)\]]{1,2000}/gi, (address) => {
+    let path = "[address]";
+    try {
+      path = cleanPath(session, new URL(address).pathname);
+    } catch {
+      // Not an address after all.
+    }
+    paths.push(path);
+    return `\u0001${paths.length - 1}\u0001`;
+  });
+  const flat = redact(held)
+    .replace(NAMED, "$1[redacted]")
+    .replace(/\u0001(\d+)\u0001/g, (_whole, index) => paths[Number(index)] ?? "[address]")
+    .trim();
   return flat.length > CAPTURE_LIMITS.text ? `${flat.slice(0, CAPTURE_LIMITS.text - 1)}…` : flat;
 };
 
-/**
- * The path of an address, and nothing else of it, cleaned as any text is: a
- * path can hold an e-mail address, a token or the executor's own secret.
- * Undefined when the address is not on the application.
- */
+/** The cleaned path of an address. Undefined when the address is not on the application. */
 function pathOf(session: Session, address: string, origin: string): string | undefined {
   try {
     const url = new URL(address);
-    if (url.origin !== origin) return undefined;
-    let plain = url.pathname.split(";")[0] ?? "/";
-    try {
-      plain = decodeURIComponent(plain);
-    } catch {
-      // Left as it is written.
-    }
-    // A long run of letters and digits in a path is a token or a key more often than a name.
-    const opaque = plain
-      .split("/")
-      .map((segment) => (/^[A-Za-z0-9_.~-]{16,}$/.test(segment) && /\d/.test(segment) && /[A-Za-z]/.test(segment) ? "[redacted]" : segment))
-      .join("/");
-    const cleaned = clean(session, opaque).replace(/\s+/g, "");
-    return cleaned.startsWith("/") ? cleaned.slice(0, 200) : `/${cleaned.slice(0, 199)}`;
+    return url.origin === origin ? cleanPath(session, url.pathname) : undefined;
   } catch {
     return undefined;
   }

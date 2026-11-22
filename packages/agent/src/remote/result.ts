@@ -29,6 +29,7 @@
  */
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { redact } from "../report/diagnostics.ts";
 import { assess, type RequirementStatus } from "../report/readiness.ts";
 import type { ScenarioResult, Verdict } from "../schema.ts";
 import type { RemoteRun } from "./run.ts";
@@ -165,6 +166,8 @@ export function evidenceIdOf(runId: string, stepId: string, kind: string): strin
 const ACTIONS = new Set(["navigate", "click", "fill", "select", "press", "upload", "api_request", "observe", "check", "finish"]);
 const LOCATED_BY = new Set(["role", "label", "text", "testid", "labelled", "cell"]);
 const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+/** A time a run can have: from nothing up to a day, in milliseconds. */
+const within = (ms: unknown): ms is number => typeof ms === "number" && Number.isFinite(ms) && ms >= 0 && ms <= 86_400_000;
 /** Console entries, and network entries, taken from one scenario. The same number the collector keeps. */
 const ENTRIES = 200;
 /** How much of a recording's own words (a locator, a path) is shown. Enough to tell steps apart. */
@@ -253,15 +256,18 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     // machine, whoever wrote the record it is built from. An entry that does not fit is left out and counted.
     const stepOf = (value: unknown) => `${result.scenarioId}-${Math.min(Math.max(1, Number.isInteger(value) ? (value as number) : 1), Math.max(1, result.steps.length))}`;
     const count = (value: unknown) => (Number.isInteger(value) && (value as number) >= 0 ? Math.min(value as number, 1_000_000) : 0);
+    // Redacted once more, and without characters that are not shown, whatever the record says was done already.
+    const again = (text: string) => clip(redact(text.slice(0, 2_000).replace(/[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, " ")), 300);
     const said = Array.isArray(result.capture?.console) ? result.capture.console : [];
     const asked = Array.isArray(result.capture?.network) ? result.capture.network : [];
     for (const entry of said.slice(0, ENTRIES)) {
       if ((entry?.level !== "error" && entry?.level !== "uncaught") || typeof entry.text !== "string") leftOut.console += 1;
-      else consoleEntries.push({ stepId: stepOf(entry.step), level: entry.level, text: clip(entry.text, 300) });
+      else consoleEntries.push({ stepId: stepOf(entry.step), level: entry.level, text: again(entry.text) });
     }
     for (const entry of asked.slice(0, ENTRIES)) {
       const status = Number.isInteger(entry?.status) && entry.status >= 0 && entry.status <= 599 ? entry.status : undefined;
-      if (status === undefined || typeof entry.path !== "string" || !/^\/[^?#\s]*$/.test(entry.path)) {
+      // A path as the collector writes one: from the root, one slash at a time, printable, and nothing a reader could take for an address or markup.
+      if (status === undefined || typeof entry.path !== "string" || !/^\/(?!\/)[\x21-\x7e]*$/.test(entry.path) || /[?#\\<>"'`]|\/\//.test(entry.path)) {
         leftOut.network += 1;
         continue;
       }
@@ -271,7 +277,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         path: clip(entry.path, 200),
         status,
         kind: typeof entry.kind === "string" && /^[a-z]{1,20}$/.test(entry.kind) ? entry.kind : "other",
-        ...(typeof entry.failure === "string" && entry.failure !== "" ? { failure: clip(entry.failure, 300) } : {}),
+        ...(typeof entry.failure === "string" && entry.failure !== "" ? { failure: again(entry.failure) } : {}),
       });
     }
     leftOut.screenshots += count(result.capture?.leftOut?.screenshots);
@@ -291,7 +297,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         const evidenceId = evidenceIdOf(run.runId, id, "screenshot");
         evidence.push({
           id: evidenceId,
-          label: `What the browser showed after step ${index + 1} of ${result.scenarioId}`,
+          label: `What the browser showed after step ${index + 1} of ${/^[A-Za-z0-9_-]{1,64}$/.test(result.scenarioId) ? result.scenarioId : "a scenario"}`,
           mediaType: captured.screenshot.endsWith(".jpg") ? "image/jpeg" : "image/png",
           path: path.posix.join("scenarios", result.scenarioId, captured.screenshot),
           scenarioId: result.scenarioId,
@@ -306,8 +312,8 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         // A comparison step that kept no comparison did not do what it was for.
         outcome: !step.ok || (step.tool === "check" && !made) ? "error" : made && !made.pass ? "mismatch" : "ok",
         requirementIds,
-        ...(captured && Number.isFinite(started + captured.atMs) && captured.atMs >= 0 ? { atMs: Math.round(started + captured.atMs) } : {}),
-        ...(captured && Number.isFinite(captured.durationMs) && captured.durationMs >= 0 ? { durationMs: Math.round(captured.durationMs) } : {}),
+        ...(captured && within(started + captured.atMs) ? { atMs: Math.round(started + captured.atMs) } : {}),
+        ...(captured && within(captured.durationMs) ? { durationMs: Math.round(captured.durationMs) } : {}),
         // Written here from the comparison. What a step printed can hold what a page or a request said, and stays in the run's record.
         note: made ? `Expected ${clip(String(made.expected), 120)}, observed ${clip(String(made.actual), 120)}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
         ...(screenshot ? { screenshot } : {}),

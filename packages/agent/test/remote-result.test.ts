@@ -371,7 +371,7 @@ test("what was collected is taken in by the result's own rules, whoever wrote th
   assert.ok(!text.includes("<script>") && !text.includes("HUNTER2SECRET") && !text.includes("elsewhere.example") && !text.includes("null"));
   assert.ok(result.diagnostics.console.length <= 200);
   assert.ok(result.diagnostics.console.every((entry) => entry.text.length <= 300 && /^S1-[12]$/.test(entry.stepId)));
-  assert.deepEqual(result.diagnostics.network, [{ stepId: "S1-2", method: "OTHER", path: "/api/x", status: 400, kind: "other", failure: `${"f".repeat(299)}…` }]);
+  assert.deepEqual(result.diagnostics.network, [{ stepId: "S1-2", method: "OTHER", path: "/api/x", status: 400, kind: "other", failure: "[redacted value]" }]);
   // Left out, and counted: the entry with a level of its own, the two requests that do not fit, and everything past the limit.
   assert.equal(result.evidenceLimits.leftOut.network, 2);
   assert.equal(result.evidenceLimits.leftOut.console, 1 + (5_002 - 200));

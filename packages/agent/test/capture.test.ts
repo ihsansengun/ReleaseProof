@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { chromium } from "playwright";
-import { CAPTURE_LIMITS } from "../src/execute/capture.ts";
+import { CAPTURE_LIMITS, cleanPath } from "../src/execute/capture.ts";
 import { runScenario } from "../src/execute/run.ts";
 import { Manifest, type Scenario, type ScenarioResult, type Step } from "../src/schema.ts";
 
@@ -39,6 +39,16 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
           document.getElementById('a').addEventListener('animationend', done);
           document.getElementById('t').addEventListener('transitionend', done);
           requestAnimationFrame(() => (document.getElementById('t').style.opacity = '0.5'));</script>`);
+    }
+    if (url.pathname === "/words") {
+      return html(`<h1>Words</h1><script>
+        for (let i = 0; i < 5; i++) console.error("token".repeat(800));
+        console.error("apikey-_".repeat(500));
+        fetch("/" + "token".repeat(700)).catch(() => {});
+        console.error("Loading chunk failed at render (http://127.0.0.1:1/_next/static/chunks/app-1a2b3c4d5e6f7a8b.js:12:345)");
+        console.error("could not sign in with {{secret:user.password}}");
+        fetch("/api/v2/international-shipping-rates").catch(() => {});
+      </script>`);
     }
     if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
     if (url.pathname === "/leaky") {
@@ -186,4 +196,40 @@ test("credentials under other names, split by characters that are not shown, or 
   assert.ok(paths.some((p) => p.startsWith("/reset/") && p.includes("[redacted")), paths.join(" "));
   assert.ok(paths.some((p) => p.startsWith("/users/") && p.includes("[redacted")), paths.join(" "));
   assert.ok(result.capture!.network.every((entry) => ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "OTHER"].includes(entry.method)));
+});
+
+test("a line made of the very words redaction looks for costs no more than any other", async () => {
+  const began = Date.now();
+  const { result } = await run([step("navigate", { path: "/words" }), FINISH], true);
+  assert.ok(Date.now() - began < 8_000, `took ${Date.now() - began} ms`);
+  const capture = result.capture!;
+  // An ordinary long path is kept whole, a file's hash is replaced and its name and ending kept, and the engine's own placeholder stands.
+  assert.ok(capture.network.some((entry) => entry.path === "/api/v2/international-shipping-rates"), JSON.stringify(capture.network));
+  assert.ok(capture.console.some((entry) => entry.text.includes("/_next/static/chunks/app-[redacted].js")), JSON.stringify(capture.console));
+  assert.ok(capture.console.some((entry) => entry.text.includes("{{secret:user.password}}")));
+});
+
+test("a path is cleaned segment by segment: what identifies a request stays, what could be a secret goes", () => {
+  const session = { vault: { scrub: (text: string) => text.replaceAll("Zq7!vault-pw", "{{secret:u.password}}") } } as never;
+  const cases: [string, string][] = [
+    ["/api/v1/customers/orders/recent", "/api/v1/customers/orders/recent"],
+    ["/api/v2/international-shipping-rates", "/api/v2/international-shipping-rates"],
+    ["/products/blue-cotton-t-shirt-2024", "/products/blue-cotton-t-shirt-2024"],
+    ["/orders/12345", "/orders/12345"],
+    ["/orders/550e8400-e29b-41d4-a716-446655440000", "/orders/550e8400-e29b-41d4-a716-446655440000"],
+    ["/_next/static/chunks/app-1a2b3c4d5e6f7a8b.js", "/_next/static/chunks/app-[redacted].js"],
+    ["/reset/tok_live_4f9a8b7c6d5e", "/reset/tok_live_[redacted]"],
+    ["/reset/tok4f9a8b7c6d5e4f3a2b1c", "/reset/[redacted]"],
+    ["/users/ada@example.test/orders", "/users/[redacted-e-mail]/orders"],
+    ["/users/ada%40example.test/orders", "/users/[redacted-e-mail]/orders"],
+    ["/login/Zq7!vault-pw", "/login/{{secret:u.password}}"],
+    ["//elsewhere.example/x", "/elsewhere.example/x"],
+    ["/a;jsessionid=abc123def456ghi789", "/a"],
+    ["/", "/"],
+  ];
+  for (const [given, expected] of cases) assert.equal(cleanPath(session, given), expected, given);
+  // And in time that grows with the length and no faster.
+  const began = Date.now();
+  cleanPath(session, `/${"token".repeat(20_000)}/${"a1".repeat(50_000)}`);
+  assert.ok(Date.now() - began < 500, `took ${Date.now() - began} ms`);
 });
