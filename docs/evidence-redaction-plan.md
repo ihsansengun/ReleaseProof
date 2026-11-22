@@ -61,13 +61,16 @@ The pull-request path does not use this. It keeps the shared `redact`
 - It knows shapes, not meanings. A secret with no name beside it ("the code is
   493817"), a card number written in groups, a telephone number, a postal
   address or a person's name passes.
-- A value encoded another way (base64 of a password, percent-encoding inside a
-  text) passes unless it is long enough to look opaque.
+- A value encoded another way (base64 of a password) passes unless it is long
+  enough to look opaque. Percent-encoding is decoded before a word is judged.
 - It cannot clean a picture. Fields are covered before a picture is kept, by
   kind (password, card, one-time code) and where the executor typed a secret.
   Anything a page shows as text is in the picture.
 - It errs toward removing: "password: must be at least 8 characters" loses
-  the word after the name; an id written in groups is replaced in a path.
+  everything after the name; an id written in groups is replaced in a path.
+- It asks the page where its secret fields are. A page written to answer
+  falsely can leave one uncovered; measuring from outside the page (the
+  browser's own protocol) would close that, and is not done yet.
 
 ## Proposed next steps
 

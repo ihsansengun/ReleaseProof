@@ -36,8 +36,13 @@ const PATH_READ = 1_000;
 const PATH_KEPT = 200;
 
 const INVISIBLE = /[\u0000-\u0008\u000B-\u001F\u007F­​-‏‪-‮⁠-⁤﻿]/g;
-const PLACEHOLDER = /^\{\{secret:[^{}\s]{1,80}\}\}$/;
+const PLACEHOLDER = /^\{\{secret:[A-Za-z0-9_.-]{1,48}\}\}$/;
 const REDACTED = new Set(["[redacted]", "[redacted-e-mail]"]);
+
+/** Further characters that are not shown, or that turn the reading of a line around; and halves of a character with no other half. */
+const UNSHOWN = new RegExp("[\\u0080-\\u009F\\u2028\\u2029\\u2066-\\u2069\\uFFF9-\\uFFFB\\uE000\\uE001]|[\\uD800-\\uDBFF](?![\\uDC00-\\uDFFF])|(?<![\\uD800-\\uDBFF])[\\uDC00-\\uDFFF]", "g");
+/** A text with nothing in it that is not shown. */
+const shown = (text: string) => text.replace(INVISIBLE, "").replace(UNSHOWN, "");
 
 const isLetter = (code: number) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code > 127;
 const isDigit = (code: number) => code >= 48 && code <= 57;
@@ -66,7 +71,7 @@ export function namesCredential(name: string): boolean {
     if (isLetter(code) && code < 128) plain += looked[i]!.toLowerCase();
   }
   if (plain === "") return false;
-  if (["auth", "authorization", "sid", "otp", "pin", "key", "sig", "pass", "pw"].includes(plain) || plain.endsWith("auth")) return true;
+  if (["auth", "sid", "otp", "pin", "key", "sig", "pass", "pw"].includes(plain) || plain.endsWith("auth") || plain.endsWith("authorization")) return true;
   return ["token", "secret", "passw", "passphrase", "passcode", "pwd", "credential", "apikey", "privatekey", "accesskey", "secretkey", "authkey", "signature", "csrf", "xsrf", "cookie", "session", "bearer"].some((word) => plain.includes(word));
 }
 
@@ -88,9 +93,18 @@ function ordinaryPart(part: string): boolean {
  * ordinary parts of its name and its ending ("app-[redacted].js").
  */
 export function cleanPathWith(scrub: (text: string) => string, pathname: string): string {
+  try {
+    return shown(cleanedPath(scrub, pathname));
+  } catch {
+    // Nothing a page can put in an address may stop the run: what cannot be read is not kept.
+    return "/[redacted]";
+  }
+}
+
+function cleanedPath(scrub: (text: string) => string, pathname: string): string {
   const read = pathname.length > PATH_READ ? pathname.slice(0, PATH_READ) : pathname;
   const semicolon = read.indexOf(";");
-  const scrubbed = scrub(semicolon === -1 ? read : read.slice(0, semicolon)).replace(INVISIBLE, "");
+  const scrubbed = shown(scrub(shown(semicolon === -1 ? read : read.slice(0, semicolon))));
   const out: string[] = [];
   for (const raw of scrubbed.split("/")) {
     if (raw === "" || raw === "." || raw === "..") continue;
@@ -101,11 +115,13 @@ export function cleanPathWith(scrub: (text: string) => string, pathname: string)
     let segment = raw;
     try {
       // Known secrets are looked for again in what the segment says once decoded.
-      segment = scrub(decodeURIComponent(raw));
+      segment = shown(scrub(shown(decodeURIComponent(raw))));
     } catch {
       // Looked at as it is written.
     }
-    out.push(PLACEHOLDER.test(segment) ? segment : cleanSegment(segment));
+    const cleaned = PLACEHOLDER.test(segment) ? segment : cleanSegment(segment);
+    // What is left of a segment may be nothing, or a step up: neither is a part of a path.
+    if (cleaned !== "" && cleaned !== "." && cleaned !== "..") out.push(cleaned);
   }
   const joined = `/${out.join("/")}`;
   return joined.length > PATH_KEPT ? joined.slice(0, PATH_KEPT) : joined;
@@ -121,11 +137,11 @@ function cleanSegment(segment: string): string {
     const name = segment.slice(0, equals);
     if (namesCredential(name) || !ordinaryPart(name)) return "[redacted]";
     const value = cleanSegment(segment.slice(equals + 1));
-    return `${encodeURIComponent(name)}=${value}`;
+    return `${encode(name)}=${value}`;
   }
   // A file name: its ending is kept, and each part of its name is judged by itself.
   const dot = segment.lastIndexOf(".");
-  const ending = dot > 0 && segment.length - dot <= 6 && made(segment.slice(dot + 1)).others === 0 && made(segment.slice(dot + 1)).letters > 0 ? segment.slice(dot) : "";
+  const ending = dot > 0 && segment.length - dot <= 6 && /^[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*$/.test(segment.slice(dot + 1)) ? segment.slice(dot) : "";
   const name = ending === "" ? segment : segment.slice(0, dot);
   const parts = name.split(/[-_.~ +]/);
   // Many short groups is how a key is often written. Words are few.
@@ -160,8 +176,9 @@ const ADDRESS_ENDS = new Set([" ", "\t", "\n", "\r", '"', "'", "`", "<", ">"]);
 const HELD_OPEN = "";
 const HELD_CLOSE = "";
 const HELD = /(\d{1,4})/g;
+const HELD_PARTS = /(\uE000\d{1,4}\uE001)/;
 /** What is already clean, and stands as it is: the engine's placeholder for a secret, and the marks this file writes. */
-const CLEAN_ALREADY = /\{\{secret:[^{}\s]{1,80}\}\}|\[redacted(?: value| e-mail|-e-mail)?\]|\[address\]/g;
+const CLEAN_ALREADY = /\{\{secret:[A-Za-z0-9_.-]{1,48}\}\}|\[redacted(?: value| e-mail|-e-mail)?\]|\[address\]/g;
 
 /** Whether a word, by its own look, is a key or a token and not a word. */
 function opaque(word: string): boolean {
@@ -177,7 +194,32 @@ function opaque(word: string): boolean {
 /** Signs and words that stand between a credential's name and its value. */
 const JOINS = new Set([":", "=", "=>", "->", "-", ":=", "==", "=:", "is", "was", "are", "is:"]);
 /** The word that says what kind of credential follows. */
-const isKind = (word: string) => word === "Token" || ["bearer", "basic", "digest", "negotiate"].includes(word.toLowerCase());
+const isKind = (word: string) => ["Bearer", "bearer", "BEARER", "Basic", "Digest", "Negotiate", "Token"].includes(word);
+
+/**
+ * A word as it reads once every %-code in it is decoded, however many times
+ * over it was encoded. Undefined when that cannot be done, or when what comes
+ * out is not one plain word: then the word is not kept at all.
+ */
+function decoded(scrub: (text: string) => string, word: string): string | undefined {
+  let plain = word;
+  for (let round = 0; round < 3; round++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(plain);
+    } catch {
+      // A code in it that is not one. If others in it are, what it hides cannot be read.
+      break;
+    }
+    if (next === plain) break;
+    plain = next;
+  }
+  if (/%[0-9a-fA-F]{2}/.test(plain)) return undefined;
+  if (shown(plain) !== plain || /[\s"'`{}[\](),;&|<>\uE000\uE001]/.test(plain)) return undefined;
+  // A secret the caller knows, written in codes.
+  if (scrub(plain) !== plain) return undefined;
+  return plain;
+}
 
 /**
  * A text made fit to leave the machine. `scrub` replaces the secret values the
@@ -194,14 +236,29 @@ const isKind = (word: string) => word === "Token" || ["bearer", "basic", "digest
  * loses its end; a value never keeps a part.
  */
 export function cleanTextWith(scrub: (text: string) => string, text: string): string {
+  try {
+    return shown(cleanedText(scrub, text));
+  } catch {
+    // Nothing a page can say may stop the run: what cannot be read is not kept.
+    return "[redacted]";
+  }
+}
+
+function cleanedText(scrub: (text: string) => string, text: string): string {
   // Known secrets are replaced in somewhat more than is kept, so that one lying across the cut is still found whole.
   const far = text.length > TEXT_READ * 16;
-  let known = scrub((far ? text.slice(0, TEXT_READ * 16) : text).replace(INVISIBLE, "").replace(/[]/g, ""));
+  let known = scrub(shown(far ? text.slice(0, TEXT_READ * 16) : text).replace(/[]/g, ""));
   // A word the first cut went through is not whole, and may be the half of a secret.
-  if (far) known = known.slice(0, Math.max(0, known.search(/\s\S*$/)));
+  if (far) {
+    const whole = known.search(/\s\S*$/);
+    // One word and no more, and that not whole: it is said that something was there.
+    known = whole > 0 ? known.slice(0, whole) : "[redacted value]";
+  }
   // What is already clean is set aside, so that no rule below reads it and none is skipped because of it.
   const held: string[] = [];
   const marked = known.replace(CLEAN_ALREADY, (mark) => {
+    // A placeholder is the engine's only if what it names reads as a name: a key written inside one is a key.
+    if (mark.startsWith("{{") && opaque(mark.slice(9, -2))) return mark;
     held.push(mark);
     return `${HELD_OPEN}${held.length - 1}${HELD_CLOSE}`;
   });
@@ -254,14 +311,17 @@ export function cleanTextWith(scrub: (text: string) => string, text: string): st
     words += 1;
     // A word the cut went through is not whole, and may be the half of a secret.
     if (cut && last) break;
-    if (word.includes("%")) {
-      try {
-        // As it would read once decoded: "token%3Dabc" is a name and a value.
-        const decoded = decodeURIComponent(word);
-        if (!/[\s"'`{}[\](),;&|<>]/.test(decoded)) word = decoded;
-      } catch {
-        // Read as it is written.
+    // An address and a path are decoded where they are cleaned, a part at a time.
+    if (word.includes("%") && !word.includes("://") && !word.startsWith("/")) {
+      // What is already clean in it stands; the parts between are decoded each by itself.
+      const parts = word.split(HELD_PARTS).map((part, index) => (index % 2 === 1 ? part : decoded(scrub, part)));
+      const plain = parts.includes(undefined) ? undefined : parts.join("");
+      if (plain === undefined) {
+        out += `[redacted value]${trail}`;
+        named = false;
+        continue;
       }
+      word = plain;
     }
     if (named) {
       named = false;
@@ -277,13 +337,15 @@ export function cleanTextWith(scrub: (text: string) => string, text: string): st
       out += word;
       continue;
     }
-    const cleaned = cleanWord(scrub, word);
+    const cleaned = cleanWord(scrub, word, (index) => held[index] ?? "[redacted]");
     out += cleaned.text + (cleaned.then === "stop" ? "" : trail);
     if (cleaned.then === "stop") stop = true;
     named = cleaned.then === "named";
   }
   const flat = out.replace(/ {2,}/g, " ").trim().replace(HELD, (_mark, index) => held[Number(index)] ?? "[redacted]");
-  return flat.length > TEXT_KEPT ? `${flat.slice(0, TEXT_KEPT - 1)}…` : flat;
+  if (flat.length <= TEXT_KEPT) return flat;
+  // Never cut through a mark: half of one would be read as text the next time.
+  return `${flat.slice(0, TEXT_KEPT - 1).replace(/\[[^\]]{0,20}$/, "").replace(/\{\{[^}]{0,60}\}?$/, "")}…`;
 }
 
 /**
@@ -291,13 +353,34 @@ export function cleanTextWith(scrub: (text: string) => string, text: string): st
  * credential and its value begins here or next, and "named" when it is a
  * credential's name with nothing after it yet.
  */
-function cleanWord(scrub: (text: string) => string, word: string): { text: string; then?: "stop" | "named" } {
+function cleanWord(scrub: (text: string) => string, word: string, heldAt: (index: number) => string): { text: string; then?: "stop" | "named" } {
   if (isKind(word)) return { text: `${word} [redacted]`, then: "stop" };
+  // name=value, or name:value. The first separator decides.
+  let separator = -1;
+  for (let i = 0; i < word.length; i++) {
+    if (word[i] === "=" || word[i] === ":") {
+      separator = i;
+      break;
+    }
+  }
+  // A credential's name before anything else: whatever its value looks like, an address too, nothing of it is kept.
+  if (separator > 0 && (separator > 160 || namesCredential(word.slice(0, separator)))) {
+    const name = word.slice(0, separator);
+    // In a path, what stands before the name is cleaned as a path.
+    if (word.startsWith("/")) {
+      const above = name.slice(0, name.lastIndexOf("/")).replace(HELD, "[redacted]");
+      return { text: `${cleanPathWith(scrub, above).replace(/\/$/, "")}/[redacted]`, then: "stop" };
+    }
+    // A name is kept only if it reads as one.
+    return { text: `${/^[A-Za-z0-9_.-]{1,80}$/.test(name) ? name : "[redacted value]"}${word[separator]}[redacted]`, then: "stop" };
+  }
   // An address, wherever in the word it starts: its cleaned path, and nothing else of it or of the word.
   const scheme = word.indexOf("://");
   if (scheme > 0) {
     let from = scheme;
     while (from > 0 && isLetter(word.charCodeAt(from - 1)) && word.charCodeAt(from - 1) < 128 && scheme - from < 8) from -= 1;
+    // A credential's name stuck in front of it, in whatever writing.
+    if (from > 0 && namesCredential(word.slice(0, from))) return { text: "[redacted]", then: "stop" };
     try {
       const url = new URL(word.slice(from).replace(HELD, "x"));
       // A line and a column after a file's name, as an error's trace writes them, are kept.
@@ -307,25 +390,40 @@ function cleanWord(scrub: (text: string) => string, word: string): { text: strin
       return { text: "[address]" };
     }
   }
-  // A path with a query, and no host: the path, cleaned, and nothing of the query.
   const query = word.indexOf("?");
-  if (word.startsWith("/") && query > 0) return { text: cleanPathWith(scrub, word.slice(0, query)) };
-  // Something on each side of an @: an e-mail address, or a name and a host.
-  const at = word.indexOf("@");
-  if (at > 0 && at < word.length - 1) return { text: "[redacted e-mail]" };
-  // name=value, or name:value. The first separator decides.
-  let separator = -1;
-  for (let i = 0; i < word.length; i++) {
-    if (word[i] === "=" || word[i] === ":") {
-      separator = i;
-      break;
+  // A path, with no host: cleaned as a path, and nothing of its query.
+  if (word.startsWith("/")) {
+    let path = query > 0 ? word.slice(0, query) : word;
+    // A stop or a colon after it is the sentence's.
+    let after = "";
+    while (query <= 0 && path.length > 1 && ".:".includes(path[path.length - 1]!)) {
+      after = path[path.length - 1] + after;
+      path = path.slice(0, -1);
     }
+    const place = /(:\d{1,7}){1,2}$/.exec(path)?.[0] ?? "";
+    // What is already clean in it is given to the path's own rules in the one form they keep.
+    const plain = (place === "" ? path : path.slice(0, -place.length)).replace(HELD, (_mark, index) => (REDACTED.has(heldAt(Number(index))) || PLACEHOLDER.test(heldAt(Number(index))) ? heldAt(Number(index)) : "[redacted]"));
+    const cleaned = cleanPathWith(scrub, plain);
+    const last = cleaned.lastIndexOf("/");
+    // A credential's name, once the path is read as it is meant, with a colon after it.
+    if (`${place}${after}`.startsWith(":") && namesCredential(cleaned.slice(last + 1))) return { text: `${cleaned.slice(0, last)}/[redacted]`, then: "stop" };
+    return { text: `${cleaned}${place}${after}` };
   }
+  // A query after something that is not a path: what stands before it is judged by itself, and nothing of the query is kept.
+  if (query >= 0 && query < word.length - 1 && !/^[.:!?]*$/.test(word.slice(query + 1))) {
+    const before: { text: string; then?: "stop" | "named" } = query === 0 ? { text: "" } : cleanWord(scrub, word.slice(0, query), heldAt);
+    if (before.then === "stop") return before;
+    // A query that is already clean stands as it is.
+    const after = /^[.:!?]*$/.test(word.slice(query + 1).replace(HELD, "")) ? word.slice(query + 1) : "[redacted]";
+    return { text: `${before.text}?${after}`, ...(before.then === "named" ? { then: "stop" as const } : {}) };
+  }
+  // Something on each side of an @: an e-mail address, or a name and a host.
+  const at = word.indexOf("@", 1);
+  if (at > 0 && at < word.length - 1) return { text: "[redacted e-mail]" };
   if (separator > 0) {
     const name = word.slice(0, separator);
     const value = word.slice(separator + 1);
     // The value begins here, or is the next word. Either way nothing after the sign is kept.
-    if (namesCredential(name)) return { text: `${name.length > 80 ? "[redacted value]" : name}${word[separator]}[redacted]`, then: "stop" };
     if (opaque(value)) return { text: `${opaque(name) ? "[redacted value]" : name}${word[separator]}[redacted value]` };
     return { text: opaque(name) ? `[redacted value]${word.slice(separator)}` : word };
   }

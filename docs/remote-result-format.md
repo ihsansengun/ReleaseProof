@@ -176,8 +176,13 @@ It leaves the machine, so it is kept small and kept clean:
   covered with a flat colour. The covering is drawn onto the picture in a
   page of the engine's own, apart from the application's. **Nothing is laid
   over the application's page and nothing in it is changed**, so taking
-  pictures cannot alter what a later step reads. A test runs a page that
-  counts every change to its own document, and it counts none.
+  pictures does not alter what a later step reads. A test runs a page that
+  counts every change to its own document, and it counts none. The fields
+  are found by asking the page where they are, which runs in the page: a
+  page written to watch for that question can tell it was asked, and one
+  written to answer it falsely can leave its own field uncovered. That is a
+  page working against the run, which these runs do not defend against (see
+  below). If the question cannot be answered at all, no picture is kept.
 - **Every field found is covered, or no picture is kept.** There is no count
   beyond which fields are left showing. A page with more than 2,000 such
   fields or more than 40 frames, or on which any one stage of finding or
@@ -189,8 +194,17 @@ It leaves the machine, so it is kept small and kept clean:
 - What a limit left out is counted in `evidenceLimits.leftOut`.
 - The result cleans every text and path once more as it is built, by the same
   rules, and checks each entry's form (kinds, lengths, whole numbers, known
-  steps). An entry that does not fit is left out and counted. Cleaning what
-  is clean changes nothing.
+  steps). That covers what the browser said, the failed requests, what each
+  step pointed at, and the two values in a comparison's note. A scenario is
+  named only by a plain name. An entry that does not fit is left out and
+  counted. Cleaning what is clean changes nothing: a test makes 60,000 texts
+  and paths from the pieces that have broken cleaning before and holds each
+  to that, to no error, and to nothing hidden in what comes out.
+- Nothing a page says can stop the run. A line that is not text at all (half
+  of a character, a code that decodes to nothing readable) is cleaned or
+  left out and counted. Characters that are not shown, or that turn the
+  reading of a line around, are removed, also when written as `%`-codes any
+  number of times over; a word whose codes cannot be read is replaced.
 
 **What this does not catch.** The rules know shapes, not meanings. These can
 still appear:
@@ -199,8 +213,9 @@ still appear:
   number written in groups, a telephone number, a postal address, a person's
   name; a short value encoded another way; the password of an account the
   target's manifest declares;
-- in text, also: a secret in a sentence with no name the rules know ("the pw
-  was …"); a credential's name with its value straight after it and no sign
+- in text, also: a secret in a sentence with no name the rules know ("the
+  code was …", or a name of the application's own such as `PHPSESSID`); a
+  credential's name with its value straight after it and no sign
   or verb between ("password hunter3"); a name in one item of a list and its
   value in the next; a short secret of mixed characters cut into pieces by
   `&`, `|` or a comma, each piece too short to look like one; what a page
@@ -213,8 +228,12 @@ still appear:
   covered, but one that moves several times in that instant can show).
 
 And it errs toward removing: a message such as "password: must be at least 8
-characters", "token is missing" or "tokens: 3 remaining" loses everything
-after the name, and so does whatever followed a credential in the same line;
+characters", "token is missing", "session is not defined" or "tokens: 3
+remaining" loses everything after the name, and so does whatever followed a
+credential in the same line; a sentence that starts with `Basic`, `Digest`,
+`Token` or `Bearer` loses the rest ("Basic plan does not include …"); a word
+with a `?` in it loses what follows the `?`; a word of `%`-codes that hide a
+space or a sign is replaced;
 in a path, an id written in
 groups, a name of seven words or more, and a segment with brackets, a colon
 or a comma are replaced. That is the safe side to be wrong on.

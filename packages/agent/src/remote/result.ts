@@ -243,7 +243,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
   const leftOut = { screenshots: 0, console: 0, network: 0 };
   const firstStarted = Math.min(...executed.map((result) => Date.parse(result.startedAt)).filter((time) => Number.isFinite(time)), Number.MAX_SAFE_INTEGER);
   // Console and network count as collected only if every scenario that ran collected them.
-  const listened = executed.length > 0 && executed.every((result) => result.capture !== undefined);
+  const listened = executed.length > 0 && executed.every((result) => result.capture !== null && typeof result.capture === "object" && Array.isArray(result.capture.console) && Array.isArray(result.capture.network));
   const stepsOf = new Map<string, string[]>();
   const comparisonsOf = new Map<string, { expected: string; observed: string }[]>();
   for (const result of executed) {
@@ -254,7 +254,9 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     const started = Number.isFinite(begun) ? Math.max(0, begun - firstStarted) : Number.NaN;
     // What was collected is taken in again here by its own rules, not on trust: this file is what leaves the
     // machine, whoever wrote the record it is built from. An entry that does not fit is left out and counted.
-    const stepOf = (value: unknown) => `${result.scenarioId}-${Math.min(Math.max(1, Number.isInteger(value) ? (value as number) : 1), Math.max(1, result.steps.length))}`;
+    // A scenario is named in this file only by a plain name.
+    const scenarioId = /^[A-Za-z0-9_-]{1,64}$/.test(result.scenarioId) ? result.scenarioId : "scenario";
+    const stepOf = (value: unknown) => `${scenarioId}-${Math.min(Math.max(1, Number.isInteger(value) ? (value as number) : 1), Math.max(1, result.steps.length))}`;
     const count = (value: unknown) => (Number.isInteger(value) && (value as number) >= 0 ? Math.min(value as number, 1_000_000) : 0);
     // Redacted once more, and without characters that are not shown, whatever the record says was done already.
     const again = (text: string) => cleanTextWith((given) => given, text);
@@ -298,7 +300,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     leftOut.console += count(result.capture?.leftOut?.console) + Math.max(0, said.length - ENTRIES);
     leftOut.network += count(result.capture?.leftOut?.network) + Math.max(0, asked.length - ENTRIES);
     result.steps.forEach((step, index) => {
-      const id = `${result.scenarioId}-${index + 1}`;
+      const id = `${scenarioId}-${index + 1}`;
       const assertionId = step.tool === "check" ? (step.input as { assertionId?: string } | null)?.assertionId : undefined;
       const made = assertionId && step.ok ? compared.get(assertionId) : undefined;
       const requirementId = assertionId ? assertions.get(assertionId)?.requirementId : undefined;
@@ -320,16 +322,17 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       }
       steps.push({
         id,
-        scenarioId: result.scenarioId,
+        scenarioId,
         action: ACTIONS.has(step.tool) ? step.tool : "unknown step",
-        target: describeTarget(step.input),
+        // Words of the recording, and of the page where a locator quotes it: cleaned as any other text here.
+        target: again(describeTarget(step.input)),
         // A comparison step that kept no comparison did not do what it was for.
         outcome: !step.ok || (step.tool === "check" && !made) ? "error" : made && !made.pass ? "mismatch" : "ok",
         requirementIds,
         ...(captured && within(started + captured.atMs) ? { atMs: Math.round(started + captured.atMs) } : {}),
         ...(captured && within(captured.durationMs) ? { durationMs: Math.round(captured.durationMs) } : {}),
         // Written here from the comparison. What a step printed can hold what a page or a request said, and stays in the run's record.
-        note: made ? `Expected ${clip(String(made.expected), 120)}, observed ${clip(String(made.actual), 120)}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
+        note: made ? `Expected ${again(clip(String(made.expected), 120))}, observed ${again(clip(String(made.actual), 120))}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
         ...(screenshot ? { screenshot } : {}),
       });
       if (requirementId) {

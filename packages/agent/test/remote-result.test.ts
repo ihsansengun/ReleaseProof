@@ -382,6 +382,34 @@ test("what was collected is taken in by the result's own rules, whoever wrote th
   assert.equal(result.verdict, "unverified");
 });
 
+test("what a step pointed at is cleaned like any other text: a token in a path, a credential in a locator's words", () => {
+  const pointed = scenario("S1", "unverified", null, {
+    steps: [
+      { tool: "navigate", input: { path: "/reset/tok4f9a8b7c6d5e4f3a2b1c" }, ok: true, summary: "" },
+      { tool: "navigate", input: { path: "/users/ada@example.test/password=in-path-1" }, ok: true, summary: "" },
+      { tool: "click", input: { element: { by: "text", value: "password=in-words-2 ada@example.test Bearer in-words-3" } }, ok: true, summary: "" },
+      { tool: "navigate", input: { path: "/account/settings" }, ok: true, summary: "" },
+    ],
+  });
+  const result = remoteResult(record([pointed]));
+  const text = JSON.stringify(result);
+  for (const secret of ["tok4f9a8b7c6d5e4f3a2b1c", "ada@example.test", "in-path-1", "in-words-2", "in-words-3"]) assert.ok(!text.includes(secret), `${secret} in ${JSON.stringify(result.steps.map((step) => step.target))}`);
+  // An ordinary path is still what it was.
+  assert.equal(result.steps[3]!.target, "/account/settings");
+});
+
+test("a scenario is named only by a plain name, and a record that is not one does not count as having listened", () => {
+  const named = scenario("../../<b>S1</b>", "passed", 160);
+  named.capture = null as never;
+  const result = remoteResult(record([named]));
+  assert.ok(result.steps.every((step) => step.scenarioId === "scenario" && /^scenario-\d+$/.test(step.id)), JSON.stringify(result.steps.map((step) => step.id)));
+  assert.equal(result.telemetry.console, "not collected");
+  assert.equal(result.telemetry.network, "not collected");
+  const empty = scenario("S1", "passed", 160);
+  empty.capture = {} as never;
+  assert.equal(remoteResult(record([empty])).telemetry.console, "not collected");
+});
+
 test("an entry that cannot be read is left out and counted, and the rest of the result stands", () => {
   const odd = scenario("S1", "passed", 160);
   odd.capture!.network.push({ step: 1, method: "GET", path: "/a/\ud800", status: 404, kind: "fetch" }, { step: 1, method: "GET", path: "/ok", status: 404, kind: "fetch" });

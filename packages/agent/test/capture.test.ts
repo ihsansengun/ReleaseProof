@@ -63,6 +63,7 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
         fetch("/api/v2/international-shipping-rates").catch(() => {});
       </script>`);
     }
+    if (url.pathname === "/broken") return html(`<h1>Broken</h1><script>console.error("/x\\ud800=1?a"); console.error("fine after"); setTimeout(() => { throw new Error("/y\\udc00=2?b"); }, 0);</script>`);
     if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
     if (url.pathname === "/leaky") {
       return html(`<h1>Leaky</h1><script>
@@ -196,7 +197,21 @@ test("a console line of any length costs no more than a short one", async () => 
   const began = Date.now();
   const { result } = await run([step("navigate", { path: "/long" }), FINISH], true);
   assert.ok(Date.now() - began < 8_000, `took ${Date.now() - began} ms`);
-  assert.ok(result.capture!.console[0]!.text.length <= CAPTURE_LIMITS.text);
+  // One word of 400,000 characters: not kept, and not left looking as if nothing was said.
+  assert.equal(result.capture!.console[0]!.text, "[redacted value]");
+});
+
+test("a page cannot stop the run with what it says: text that is not text at all is taken in or left out, and the run goes on", async () => {
+  const { result } = await run([step("navigate", { path: "/broken" }), step("navigate", { path: "/quiet" }), FINISH], true);
+  assert.equal(result.verdict, "passed");
+  const said = result.capture!.console.map((entry) => entry.text);
+  assert.ok(said.includes("fine after"), JSON.stringify(said));
+  // Each of the three lines is either kept, clean, or counted as left out.
+  assert.equal(said.length + result.capture!.leftOut.console, 3);
+  for (const text of said) assert.ok(!HIDDEN.test(text), text);
+  // The cleaners themselves give an answer for such input, and do not throw.
+  assert.equal(cleanText(QUIET, "/x\ud800=1?a"), "/x=1");
+  assert.equal(cleanPath(QUIET, "/x\ud800=1"), "/x=1");
 });
 
 test("credentials under other names, split by characters that are not shown, or inside an address or a path, do not get through", async () => {
@@ -358,6 +373,32 @@ test("a whole scenario's worth of the worst lines is cleaned in under two second
   assert.ok(took < 2_000, `${took.toFixed(0)} ms for 400 entries`);
 });
 
+/** Characters that are not shown or that turn a line around, the marks the cleaner uses inside, and halves of a character. */
+const HIDDEN = new RegExp("[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2069\\ufeff\\ufff9-\\ufffb\\ue000\\ue001]|[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]");
+
+test("for any text or path made of the pieces that have broken cleaning before: no error, nothing hidden in what comes out, and cleaning again changes nothing", () => {
+  const session = { vault: { scrub: (text: string) => text.replaceAll("Zq7!vault-pw", "{{secret:u.password}}") } } as never;
+  const pieces = ["password", "token", "=", ":", " ", "?", "&", "/", "%41", "%25", "%2541", "%00", "%1B", "%E2%80%AE", "://", "http", "@", "[redacted]", "[redacted value]", "[redacted e-mail]", "[redacted-e-mail]", "[address]", "{{secret:u.x}}", "{{secret:", "}}", "\ud800", "\udc00", "\u200b", "\u202e", "\u0085", "\u2067", "é", "a", "b1", "Bearer", "is", '"', "'", "(", ")", "[", "]", "{", "}", ",", ";", "|", "<", ">", ".", "-", "_", "x".repeat(20), "12345678901234", "…", "\ue000", "\ue001", "0", "key", "%zz", "%", "#", ":12:3", ".js", "Zq7!vault-pw", "Zq7%21vault-pw"];
+  // The same cases every time: a generator with a fixed start.
+  let state = 42;
+  const next = () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 2 ** 32;
+  };
+  for (let round = 0; round < 60_000; round++) {
+    let text = "";
+    const length = 1 + Math.floor(next() * 12);
+    for (let i = 0; i < length; i++) text += pieces[Math.floor(next() * pieces.length)];
+    const cleaned = cleanText(session, text);
+    assert.ok(!HIDDEN.test(cleaned), `hidden in ${JSON.stringify(cleaned)} from ${JSON.stringify(text)}`);
+    assert.ok(!cleaned.includes("Zq7!vault-pw"), `the secret in ${JSON.stringify(cleaned)} from ${JSON.stringify(text)}`);
+    assert.equal(cleanText(session, cleaned), cleaned, `again, from ${JSON.stringify(text)}`);
+    const way = cleanPath(session, `/${text}`);
+    assert.ok(!HIDDEN.test(way) && !way.includes("Zq7!vault-pw"), `in the path ${JSON.stringify(way)} from ${JSON.stringify(text)}`);
+    assert.equal(cleanPath(session, way), way, `the path again, from ${JSON.stringify(text)}`);
+  }
+});
+
 test("what cleaning must remove, and what it must leave", () => {
   const session = { vault: { scrub: (text: string) => text.replaceAll("Zq7!vault-pw", "{{secret:u.password}}") } } as never;
   const gone: [string, string][] = [
@@ -417,17 +458,28 @@ test("what cleaning must remove, and what it must leave", () => {
     ["a kind of credential not named before", "Proxy-Authorization: Negotiate negotiated-33"],
     ["a digest credential", 'Authorization: Digest username="digest-34", response="abc"'],
     ["a long name that says what it holds at its end", `${"x".repeat(200)}_password=long-tail-35`],
+    // Found by the sixth review.
+    ["a query after a word that is not a path", "error loading login?next=home&password=rel-query-36 now"],
+    ["a query with nothing before it", "?a=1&token=bare-query-37"],
+    ["a value that looks like an address", "password=x://y/addr-value-38 more-words-38"],
+    ["the executor's secret written in codes", "tried Zq7%21vault-pw twice"],
+    ["the executor's secret written in codes twice over", "tried Zq7%2521vault-pw twice"],
+    ["a header named for authorization, with something before the word", "X-Authorization: x-authz-39"],
+    ["another such header", "Proxy-Authorization: proxy-authz-40"],
+    ["a long name that says what it holds in its middle", `${"a".repeat(100)}password${"b".repeat(100)}=mid-name-41`],
+    ["a credential's name in codes before an address", "token%3Dx://y/coded-addr-42 z"],
+    ["a key inside what looks like the engine's placeholder", "{{secret:eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmb3JnZWQtNDMifQ.Sflx}}"],
   ];
-  const secrets = ["json-spaced-1", "json-nested-2", "json-tight-3", "json-inner-4", "single-quoted-5", "app.example", "colon-pass-6", "glued-7", "beside-8", "stuck-9abc", "several", "words-10", "listed-11", "after-token-12", "header-13", "cookie-14", "spaced-15", "spoken-16", "arrow-17", "pipe-18", "encoded-19", "localhost-20", "encoded-21", "glue@", "h.example", "inline-22", "dor;3x-23", "3x-23", "tail-24", "inner-25", "horse", "battery-26", "staple-27", "thin-arrow-28", "walrus-29", "paren-30", "late-31", "sixteenth-32", "negotiated-33", "digest-34", "long-tail-35", "host.example", "ada@example.test", "abcdefghijklmnop", "eyJhbGciOiJIUzI1NiJ9", "hunter2-plain", "acc-tok-12345", "cs-camel-12345", "first-key-123", "only-key-456", "quoted-789", "long-name-321", "REST-OF-SECRET", "arrow-value-654", "0123456789abcdef0123456789abcdef0123", "4111111111111111", "Zq7!vault-pw", "account=42", "sig=abcdef", "shop.example", "glued.example", "wstoken", "127.0.0.1", "zw-hunter2"];
+  const secrets = ["json-spaced-1", "json-nested-2", "json-tight-3", "json-inner-4", "single-quoted-5", "app.example", "colon-pass-6", "glued-7", "beside-8", "stuck-9abc", "several", "words-10", "listed-11", "after-token-12", "header-13", "cookie-14", "spaced-15", "spoken-16", "arrow-17", "pipe-18", "encoded-19", "localhost-20", "encoded-21", "glue@", "h.example", "inline-22", "dor;3x-23", "3x-23", "tail-24", "inner-25", "horse", "battery-26", "staple-27", "thin-arrow-28", "walrus-29", "paren-30", "late-31", "sixteenth-32", "negotiated-33", "digest-34", "long-tail-35", "rel-query-36", "next=home", "bare-query-37", "addr-value-38", "more-words-38", "Zq7!vault-pw", "Zq7%21", "x-authz-39", "proxy-authz-40", "mid-name-41", "coded-addr-42", "eyJzdWIiOiJmb3JnZWQtNDMifQ", "host.example", "ada@example.test", "abcdefghijklmnop", "eyJhbGciOiJIUzI1NiJ9", "hunter2-plain", "acc-tok-12345", "cs-camel-12345", "first-key-123", "only-key-456", "quoted-789", "long-name-321", "REST-OF-SECRET", "arrow-value-654", "0123456789abcdef0123456789abcdef0123", "4111111111111111", "Zq7!vault-pw", "account=42", "sig=abcdef", "shop.example", "glued.example", "wstoken", "127.0.0.1", "zw-hunter2"];
   for (const [what, text] of gone) {
     const cleaned = cleanText(session, text);
     for (const secret of secrets) assert.ok(!cleaned.includes(secret), `${what}: ${cleaned}`);
-    assert.ok(!/[\u0000-\u001f]/.test(cleaned), `${what}: a character that is not shown`);
+    assert.ok(!HIDDEN.test(cleaned), `${what}: a character that is not shown`);
     // Cleaning what is already clean changes nothing.
     assert.equal(cleanText(session, cleaned), cleaned, `again: ${what}`);
   }
   // Left as they are: what a person needs to make sense of an error.
-  for (const kept of ["Unexpected token < in JSON at position 0", "TypeError: Cannot read properties of undefined (reading 'total')", "Failed to load resource: the server responded with a status of 404 (Not Found)", "retry=3 timeout=5000", "monkey=banana primaryKey=42", "could not sign in with {{secret:user.password}}", "token=[redacted]", "see [redacted value] and [redacted e-mail] ok"]) {
+  for (const kept of ["Unexpected token < in JSON at position 0", "TypeError: Cannot read properties of undefined (reading 'total')", "Failed to load resource: the server responded with a status of 404 (Not Found)", "retry=3 timeout=5000", "monkey=banana primaryKey=42", "could not sign in with {{secret:user.password}}", "token=[redacted]", "see [redacted value] and [redacted e-mail] ok", "401 Unauthorized: access denied", "The basic shipping rate is: 4.99", "what? 100% done", "at render (/_next/static/chunks/app-[redacted].js:12:345)"]) {
     assert.equal(cleanText(session, kept), kept);
   }
   assert.equal(cleanText(session, "failed at http://127.0.0.1:1/api/v2/international-shipping-rates?x=1"), "failed at /api/v2/international-shipping-rates");

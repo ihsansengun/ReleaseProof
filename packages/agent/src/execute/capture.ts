@@ -126,24 +126,32 @@ export function startCapture(session: Session, startedAt: number): Capture {
     if (!room(capture.network, at)) capture.leftOut.network += 1;
     else capture.network.push({ step: at, ...entry });
   };
+  // Nothing a page says or asks for may stop the run. What cannot be taken in is left out and counted.
+  const safely = <T,>(kind: "console" | "network", listen: (event: T) => void) => (event: T) => {
+    try {
+      listen(event);
+    } catch {
+      capture.leftOut[kind] += 1;
+    }
+  };
   const methodOf = (method: string) => (METHODS.has(method.toUpperCase()) ? method.toUpperCase() : "OTHER");
 
-  const onConsole = (message: ConsoleMessage) => {
+  const onConsole = safely<ConsoleMessage>("console", (message) => {
     if (message.type() === "error") said("error", message.text());
-  };
-  const onPageError = (error: Error) => said("uncaught", error.message.split("\n")[0] ?? "");
-  const onRequestFailed = (request: Request) => {
+  });
+  const onPageError = safely<Error>("console", (error) => said("uncaught", String(error?.message ?? "").slice(0, 100_000).split("\n")[0] ?? ""));
+  const onRequestFailed = safely<Request>("network", (request) => {
     const where = pathOf(session, request.url(), origin);
     // A request to anywhere else was stopped by the run itself. That is the run's doing, not a failure of the application.
     if (where === undefined) return;
     failed({ method: methodOf(request.method()), path: where, status: 0, kind: request.resourceType(), failure: clean(session, request.failure()?.errorText ?? "no answer") });
-  };
-  const onResponse = (response: Response) => {
+  });
+  const onResponse = safely<Response>("network", (response) => {
     if (response.status() < 400) return;
     const where = pathOf(session, response.url(), origin);
     if (where === undefined) return;
     failed({ method: methodOf(response.request().method()), path: where, status: response.status(), kind: response.request().resourceType() });
-  };
+  });
 
   page.on("console", onConsole);
   page.on("pageerror", onPageError);
@@ -258,10 +266,10 @@ async function findSecretAreas(session: Session, collector: Collector): Promise<
   const page = session.page;
   if (page.frames().length > MOST_FRAMES + 1) throw new Error("too many frames to look into");
   const areas: Area[] = await page.locator(SECRET_FIELDS).evaluateAll(rectsOf);
-  for (const field of collector.secretFields) areas.push(...(await field.evaluateAll(rectsOf).catch(() => [] as Area[])));
+  for (const field of collector.secretFields) areas.push(...(await field.evaluateAll(rectsOf)));
   for (const frame of page.frames()) {
     if (frame === page.mainFrame()) continue;
-    const inside = await frame.locator(SECRET_FIELDS).count().catch(() => 0);
+    const inside = await frame.locator(SECRET_FIELDS).count();
     if (inside === 0) continue;
     // A field in a frame is somewhere inside the frame's own box. The whole box is covered.
     const box = await (await frame.frameElement()).boundingBox();
