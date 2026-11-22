@@ -284,6 +284,20 @@ test("a request whose criteria text was swapped under an unchanged hash is refus
   assert.throws(() => authoriseRemoteRun(admitted, [approvalFor(raw, now)], trusted, now), /does not match its hash/);
 });
 
+test("a step names an endpoint only by an id from the operator's list of routes; a path that is not on it is not recorded, and no path is written", async () => {
+  const listed = await run("160", recording(), {}, { manifest: { baseUrl: "http://ignored.localhost:9", evidenceRoutes: [{ id: "account-page", path: "/account" }, { id: "Bad Id", path: "/account" }, { id: "pattern", path: "/acc*" }] } as never });
+  assert.deepEqual(listed.result.evidenceRoutes, [{ id: "account-page", path: "/account" }]);
+  const withList = JSON.parse(readFileSync(path.join(listed.dir, "result.json"), "utf8"));
+  assert.ok(withList.steps.some((step: { action: string; target: string }) => step.action === "navigate" && step.target === "account-page"), JSON.stringify(withList.steps.map((step: { target: string }) => step.target)));
+  const unlisted = await run("160");
+  const without = JSON.parse(readFileSync(path.join(unlisted.dir, "result.json"), "utf8"));
+  assert.ok(without.steps.filter((step: { action: string }) => step.action === "navigate").every((step: { target: string }) => step.target === "Endpoint not recorded"));
+  for (const written of [withList, without]) {
+    const outside = JSON.stringify([written.steps.map((step: { target: string; note: string }) => [step.target, step.note]), written.diagnostics]);
+    assert.ok(!/[/?#%]/.test(outside), outside);
+  }
+});
+
 test("the run goes to the approved target, whatever address a manifest carries", async () => {
   const hits: string[] = [];
   const { baseUrl, server } = await app("160", hits);

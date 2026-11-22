@@ -10,6 +10,7 @@ import type { Manifest, Scenario, ScenarioResult, Step, Usage } from "../schema.
 import { SecretVault } from "../secrets.ts";
 import { briefing, SYSTEM } from "./briefing.ts";
 import { endCapture, startCapture } from "./capture.ts";
+import type { EvidenceRoute } from "./kept.ts";
 import { replaySteps } from "./replay.ts";
 import { ALL_TOOLS, noteResponse, requestAllowed, suppliedOf, type Session } from "./tools.ts";
 import { computeVerdict } from "./verdict.ts";
@@ -47,6 +48,8 @@ export type SessionOptions = {
   untrustedPlan?: boolean;
   /** Collect a picture and a time for each step, console errors and failed requests. Off unless asked for. */
   capture?: boolean;
+  /** With `capture`: the trusted list of paths an endpoint may be named by. With none, no endpoint is named. */
+  evidenceRoutes?: readonly EvidenceRoute[];
   /** The size of the page. Left to the browser when absent. */
   viewport?: { width: number; height: number };
   /** Says whether the time allowed has run out. A replay asks before every step. */
@@ -157,7 +160,7 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
     });
   }
 
-  if (options.capture) startCapture(session, startedAt.getTime());
+  if (options.capture) startCapture(session, startedAt.getTime(), options.evidenceRoutes ?? []);
 
   if (options.untrustedPlan) {
     // Another window can keep what was typed and hand it to a page opened later. There is one window.

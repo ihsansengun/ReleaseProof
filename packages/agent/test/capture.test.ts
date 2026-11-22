@@ -9,8 +9,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { chromium } from "playwright";
-import { CAPTURE_LIMITS, cleanPath } from "../src/execute/capture.ts";
-import { namesCredential, plainAmount } from "../src/execute/clean.ts";
+import { CAPTURE_LIMITS } from "../src/execute/capture.ts";
+import { ENDPOINT_NOT_RECORDED, endpointOf, plainAmount, trustedRoutes, type EvidenceRoute } from "../src/execute/kept.ts";
 import { LEAKED_BEFORE, LEAKED_PATHS, SECRETS_BEFORE } from "./leaked-before.ts";
 import { runScenario } from "../src/execute/run.ts";
 import { Manifest, type Scenario, type ScenarioResult, type Step } from "../src/schema.ts";
@@ -102,11 +102,11 @@ const step = (tool: string, input: Record<string, unknown>): Step => ({ tool, in
 const FINISH = step("finish", { outcome: "completed", reason: "Done." });
 const SCENARIO: Scenario = { id: "S1", title: "Capture", basis: "requirement", requirementIds: [], intent: "Look at pages.", fixtures: {}, assertions: [] };
 
-async function run(steps: Step[], capture: boolean): Promise<{ result: ScenarioResult; dir: string }> {
+async function run(steps: Step[], capture: boolean, evidenceRoutes: EvidenceRoute[] = []): Promise<{ result: ScenarioResult; dir: string }> {
   const { baseUrl, server } = await app();
   const dir = mkdtempSync(path.join(tmpdir(), "rp-capture-"));
   try {
-    const result = await runScenario({ scenario: SCENARIO, manifest: Manifest.parse({ baseUrl }), outDir: dir, mode: { kind: "replay", steps }, viewport: { width: 1280, height: 720 }, ...(capture ? { capture: true } : {}) });
+    const result = await runScenario({ scenario: SCENARIO, manifest: Manifest.parse({ baseUrl }), outDir: dir, mode: { kind: "replay", steps }, viewport: { width: 1280, height: 720 }, ...(capture ? { capture: true, evidenceRoutes } : {}) });
     return { result, dir };
   } finally {
     server.close();
@@ -271,261 +271,151 @@ test("every field is covered or no picture is kept: fields beyond a count are ne
   assert.deepEqual(readdirSync(tooMany.dir).filter((name) => name.startsWith("step-1")), []);
 });
 
-// ---- no free text: what a page says is not kept in any form ------------------------------
+// ---- no free text and no address: what a page says and asks for is not kept in any form ------
 
-const ENTRY_KEYS = new Set(["step", "level", "source", "count"]);
-const SOURCE_KEYS = new Set(["path", "line", "column"]);
-/** Whether an entry holds only what an entry may hold: a step, a kind, a cleaned place and a count. */
-function structured(entry: Record<string, unknown>): boolean {
-  if (!Object.keys(entry).every((key) => ENTRY_KEYS.has(key))) return false;
-  if (!Number.isInteger(entry.step) || (entry.level !== "error" && entry.level !== "uncaught") || !Number.isInteger(entry.count)) return false;
-  if (entry.source === undefined) return true;
-  const source = entry.source as Record<string, unknown>;
-  return Object.keys(source).every((key) => SOURCE_KEYS.has(key)) && typeof source.path === "string" && /^\/[\x21-\x7e]*$/.test(source.path) && [source.line, source.column].every((value) => value === undefined || Number.isInteger(value));
+const CONSOLE_KEYS = ["count", "endpoint", "level", "step"];
+const NETWORK_KEYS = ["count", "endpoint", "failure", "kind", "status", "step"];
+const ROUTES: EvidenceRoute[] = [{ id: "points-api", path: "/api/points" }, { id: "noisy-page", path: "/noisy" }];
+/** Whether everything collected is in the forms it may have, naming no endpoint that is not on the list. */
+function structured(capture: NonNullable<ScenarioResult["capture"]>, routes: EvidenceRoute[]): void {
+  const names = [ENDPOINT_NOT_RECORDED, ...routes.map((route) => route.id)];
+  for (const entry of capture.console) {
+    assert.deepEqual(Object.keys(entry).sort(), CONSOLE_KEYS, JSON.stringify(entry));
+    assert.ok(Number.isInteger(entry.step) && ["error", "uncaught"].includes(entry.level) && Number.isInteger(entry.count) && entry.count >= 1 && names.includes(entry.endpoint), JSON.stringify(entry));
+  }
+  for (const entry of capture.network) {
+    assert.deepEqual(Object.keys(entry).sort(), NETWORK_KEYS, JSON.stringify(entry));
+    assert.ok(Number.isInteger(entry.step) && Number.isInteger(entry.count) && (entry.status === 0 || (entry.status >= 400 && entry.status <= 599)), JSON.stringify(entry));
+    assert.ok(["error answer", "no answer"].includes(entry.failure) && /^[a-z]{1,12}$/.test(entry.kind) && names.includes(entry.endpoint), JSON.stringify(entry));
+  }
 }
 
-test("of an error the page wrote or did not catch, only its kind, its step, where it came from and how often are kept: never what it said", async () => {
+test("of an error the page wrote or did not catch, only its kind, its step and how often are kept: never what it said or where it came from", async () => {
   const { result } = await run([step("navigate", { path: "/quiet" }), step("navigate", { path: "/noisy" }), FINISH], true);
-  const said = result.capture!.console;
-  assert.ok(said.length >= 2, JSON.stringify(said));
-  for (const entry of said) assert.ok(structured(entry as never), JSON.stringify(entry));
-  // Both kinds, tied to the step that opened the noisy page, and placed in that page's own file.
-  assert.deepEqual([...new Set(said.map((entry) => entry.level))].sort(), ["error", "uncaught"]);
-  assert.ok(said.every((entry) => entry.step === 2));
-  assert.ok(said.some((entry) => entry.source?.path === "/noisy" && Number.isInteger(entry.source.line)), JSON.stringify(said));
-  // An ordinary line and a warning are not errors. The browser's own notes of the requests that failed are.
-  assert.ok(said.reduce((sum, entry) => sum + entry.count, 0) >= 2);
-  assert.ok(said.filter((entry) => entry.source?.path === "/noisy").reduce((sum, entry) => sum + entry.count, 0) <= 3, JSON.stringify(said));
-  const text = JSON.stringify(result.capture);
-  for (const word of ["Could not load", "points for", "points is", "ordinary", "warning", "ada@example.test", "tok_live", "Bearer", "abcdefghijklmnop", "not defined"]) assert.ok(!text.includes(word), `${word} in ${text}`);
+  const capture = result.capture!;
+  structured(capture, []);
+  assert.deepEqual([...new Set(capture.console.map((entry) => entry.level))].sort(), ["error", "uncaught"]);
+  assert.ok(capture.console.every((entry) => entry.step === 2 && entry.endpoint === ENDPOINT_NOT_RECORDED));
+  // One error the page did not catch. An ordinary line and a warning are not errors.
+  assert.equal(capture.console.find((entry) => entry.level === "uncaught")?.count, 1);
+  const text = JSON.stringify([capture.console, capture.network]);
+  for (const word of ["Could not load", "points", "ordinary", "warning", "ada@example.test", "tok_live", "Bearer", "abcdefghijklmnop", "not defined", "noisy", "missing", "/api", "127.0.0.1", "http"]) assert.ok(!text.includes(word), `${word} in ${text}`);
 });
 
-test("requests that failed are kept with their step, method, cleaned path, status and kind, and nothing else", async () => {
+test("of a request that failed, the status, the kind of request, whether it was answered, the step and a count are kept: no address and no part of one", async () => {
   const { result } = await run([step("navigate", { path: "/noisy" }), FINISH], true);
-  const asked = result.capture!.network;
-  for (const entry of asked) assert.deepEqual(Object.keys(entry).sort(), ["kind", "method", "path", "status", "step"]);
-  const byPath = new Map(asked.map((entry) => [entry.path, entry]));
-  assert.equal(byPath.get("/api/points")?.status, 500);
-  assert.equal(byPath.get("/missing.png")?.status, 404);
-  assert.equal(byPath.get("/api/cut")?.status, 0);
-  // A request the run itself stopped, to another origin, is not a failure of the application.
-  assert.ok(!asked.some((entry) => entry.path.includes("elsewhere")));
-  const text = JSON.stringify(result.capture);
-  for (const secret of ["account=42", "supersecretvalue", "session=abcdef123456", "127.0.0.1", "?"]) assert.ok(!text.includes(secret), secret);
+  const capture = result.capture!;
+  structured(capture, []);
+  const seen = capture.network.map((entry) => `${entry.status} ${entry.kind} ${entry.failure} ${entry.endpoint}`).sort();
+  assert.deepEqual(seen, [`0 fetch no answer ${ENDPOINT_NOT_RECORDED}`, `404 image error answer ${ENDPOINT_NOT_RECORDED}`, `500 fetch error answer ${ENDPOINT_NOT_RECORDED}`]);
+  // A request the run itself stopped, to another origin, is not a failure of the application: three, not four.
+  assert.equal(capture.network.reduce((sum, entry) => sum + entry.count, 0), 3);
+  const text = JSON.stringify([capture.console, capture.network]);
+  for (const gone of ["account=42", "supersecretvalue", "session=abcdef123456", "127.0.0.1", "?", "/", "points", "missing", "cut", "elsewhere", "png"]) assert.ok(!text.includes(gone), `${gone} in ${text}`);
 });
 
-test("nothing that got through an earlier way of cleaning is kept: the page says and throws every such text, and none of it is in what the run collected", async () => {
-  const { result } = await run([step("navigate", { path: "/corpus" }), step("navigate", { path: "/quiet" }), FINISH], true);
+test("an endpoint is named only when the path asked for is exactly one on the trusted list, and then by its id alone", async () => {
+  const { result } = await run([step("navigate", { path: "/noisy" }), FINISH], true, ROUTES);
+  const capture = result.capture!;
+  structured(capture, ROUTES);
+  // The request to the listed path is named, with or without the query it carried. The others are not.
+  assert.deepEqual(capture.network.map((entry) => `${entry.status} ${entry.endpoint}`).sort(), [`0 ${ENDPOINT_NOT_RECORDED}`, `404 ${ENDPOINT_NOT_RECORDED}`, "500 points-api"]);
+  // An error the page wrote in its own file is placed there by the browser, and that file is on the list.
+  assert.ok(capture.console.some((entry) => entry.level === "error" && entry.endpoint === "noisy-page"), JSON.stringify(capture.console));
+  // An error that was not caught names no endpoint, whatever its trace says: the trace is the page's own text.
+  assert.ok(capture.console.filter((entry) => entry.level === "uncaught").every((entry) => entry.endpoint === ENDPOINT_NOT_RECORDED));
+  const text = JSON.stringify([capture.console, capture.network]);
+  for (const gone of ["/api/points", "/noisy", "account=42", "supersecretvalue", "http"]) assert.ok(!text.includes(gone), `${gone} in ${text}`);
+});
+
+test("a list of routes is taken only in the form a route has, and a path is matched character for character", () => {
+  const given = [
+    { id: "points-api", path: "/api/points" },
+    { id: "Points", path: "/x" },
+    { id: "has space", path: "/y" },
+    { id: "pattern", path: "/users/:id" },
+    { id: "wild", path: "/files/*" },
+    { id: "query", path: "/a?b=1" },
+    { id: "host", path: "//elsewhere.example/a" },
+    { id: "relative", path: "a/b" },
+    { id: "points-api", path: "/again" },
+    { id: "same-path", path: "/api/points" },
+    { id: "x".repeat(40), path: "/long-id" },
+    { id: "root", path: "/" },
+    null,
+    "points",
+    { id: 5, path: {} },
+  ];
+  assert.deepEqual(trustedRoutes(given), [{ id: "points-api", path: "/api/points" }, { id: "root", path: "/" }]);
+  for (const nothing of [undefined, null, "x", 5, {}]) assert.deepEqual(trustedRoutes(nothing), []);
+  assert.equal(trustedRoutes(Array.from({ length: 500 }, (_, i) => ({ id: `r${i}`, path: `/p${i}` }))).length, 50);
+
+  const routes = trustedRoutes(given);
+  const origin = "http://app.example";
+  assert.equal(endpointOf(routes, "http://app.example/api/points", origin), "points-api");
+  assert.equal(endpointOf(routes, "http://app.example/api/points?account=42#frag", origin), "points-api");
+  for (const other of [
+    "http://app.example/api/points/",
+    "http://app.example/api/points/42",
+    "http://app.example/API/points",
+    "http://app.example/api/points%2F",
+    "http://app.example/api//points",
+    "http://elsewhere.example/api/points",
+    "https://app.example/api/points",
+    "http://app.example:81/api/points",
+    "http://user:pw@elsewhere.example/api/points",
+    "/api/points",
+    "not an address",
+    "",
+    null,
+    undefined,
+    5,
+    {},
+    `http://app.example/${"a".repeat(5_000)}`,
+  ]) assert.equal(endpointOf(routes, other, origin), ENDPOINT_NOT_RECORDED, JSON.stringify(other)?.slice(0, 60));
+});
+
+test("nothing that got through an earlier way of cleaning is kept: the page says, throws and asks for every such text and path, and none of it is in what the run collected", async () => {
+  const { result } = await run([step("navigate", { path: "/corpus" }), step("navigate", { path: "/quiet" }), FINISH], true, ROUTES);
   assert.equal(result.verdict, "passed");
   const capture = result.capture!;
-  assert.ok(capture.console.length >= 2);
-  for (const entry of capture.console) assert.ok(structured(entry as never), JSON.stringify(entry));
-  // Said once each and thrown once each: all counted, whether kept as entries or left out by the limit. The
-  // browser's own notes of the requests that failed are counted too.
+  structured(capture, ROUTES);
+  // Said once each and thrown once each: all counted. The browser's own notes of the requests that failed are counted too.
   const counted = capture.console.reduce((sum, entry) => sum + entry.count, 0) + capture.leftOut.console;
   assert.ok(counted >= LEAKED_BEFORE.length * 2 && counted <= LEAKED_BEFORE.length * 2 + LEAKED_PATHS.length, String(counted));
-  const text = JSON.stringify(capture);
-  for (const secret of SECRETS_BEFORE) assert.ok(!text.includes(secret), `${JSON.stringify(secret)} in ${text}`);
+  assert.equal(capture.network.reduce((sum, entry) => sum + entry.count, 0), LEAKED_PATHS.length);
+  const text = JSON.stringify([capture.console, capture.network]);
+  for (const secret of [...SECRETS_BEFORE, ...LEAKED_PATHS.flatMap((way) => way.split("/").filter((part) => part.length > 3))]) assert.ok(!text.includes(secret), `${JSON.stringify(secret)} in ${text}`);
   assert.ok(!/[^\x20-\x7e]/.test(text), "nothing but plain printable characters");
+  assert.ok(!text.includes("/") && !text.includes("?") && !text.includes("%"), "no address and no part of one");
 });
 
-test("errors from one place are counted, not listed; there is a limit on entries for a step, and what it leaves out is counted", async () => {
+test("errors of one kind in a step are counted, not listed, however many a page writes", async () => {
   const { result } = await run([step("navigate", { path: "/chatty" }), FINISH], true);
   const capture = result.capture!;
-  assert.ok(capture.console.some((entry) => entry.count === 260), JSON.stringify(capture.console.slice(0, 3)));
-  assert.equal(capture.console.length, CAPTURE_LIMITS.entriesPerStep);
-  assert.equal(capture.leftOut.console, 61 - CAPTURE_LIMITS.entriesPerStep);
-  assert.ok(JSON.stringify(capture).length < 10_000);
+  structured(capture, []);
+  // 260 from one place and 60 from sixty: with no place kept they are one entry, and its count is the whole.
+  assert.deepEqual(capture.console, [{ step: 1, level: "error", endpoint: ENDPOINT_NOT_RECORDED, count: 320 }]);
+  assert.ok(JSON.stringify(capture).length < 1_000);
+  assert.ok(CAPTURE_LIMITS.entriesPerStep >= 1);
 });
 
-test("a page cannot stop the run with what it says, at any length or in any form: it is counted, and the run goes on", async () => {
+test("a page cannot stop the run with what it says or asks for, at any length or in any form: it is counted, and the run goes on", async () => {
   const began = Date.now();
   const long = await run([step("navigate", { path: "/long" }), FINISH], true);
   assert.ok(Date.now() - began < 8_000, `took ${Date.now() - began} ms`);
   assert.equal(long.result.capture!.console.reduce((sum, entry) => sum + entry.count, 0), 1);
   assert.ok(JSON.stringify(long.result.capture).length < 2_000);
-  const broken = await run([step("navigate", { path: "/broken" }), step("navigate", { path: "/quiet" }), FINISH], true);
-  assert.equal(broken.result.verdict, "passed");
-  assert.equal(broken.result.capture!.console.reduce((sum, entry) => sum + entry.count, 0) + broken.result.capture!.leftOut.console, 3);
-});
-
-// ---- paths: closed by default ---------------------------------------------------------------
-
-const VAULT = { vault: { scrub: (text: string) => text.replaceAll("Zq7!vault-pw", "{{secret:u.password}}").replaceAll("alpha/bravo-charlie", "{{secret:f.path}}").replaceAll("my secret pw", "{{secret:s.p}}") } } as never;
-
-test("a path is kept segment by segment only where it reads as an ordinary name; nothing after a credential's name is kept", () => {
-  const table: [string, string][] = [
-    // What identifies a request stays.
-    ["/", "/"],
-    ["/api/v2/international-shipping-rates", "/api/v2/international-shipping-rates"],
-    ["/orders/12345", "/orders/[redacted]"],
-    ["/api/orders/2026-11-22", "/api/orders/[redacted]"],
-    ["/docs/getting-started/installation-guide", "/docs/getting-started/installation-guide"],
-    ["/assets/logo@2x.png", "/assets/[redacted]"],
-    ["/assets/index-DiwrgTda.css", "/assets/index-DiwrgTda.css"],
-    ["/account/settings", "/account/settings"],
-    // No query, fragment or parameters.
-    ["/cb?token=abc#frag", "/cb"],
-    ["/a;jsessionid=abc/b", "/a"],
-    // What could be a secret goes.
-    ["/_next/static/chunks/app-1a2b3c4d5e6f7a8b.js", "/_next/static/chunks/app-[redacted].js"],
-    ["/users/ada@example.test/orders", "/users/[redacted]/orders"],
-    ["/users/42/hunter2", "/users/[redacted]/[redacted]"],
-    ["/api/v1/customers/C0012345", "/api/v1/customers/[redacted]"],
-    ["/files/report final.pdf", "/files/[redacted]"],
-    ["/caf\u00e9/menu", "/[redacted]/menu"],
-    ["/x\ud800=1", "/[redacted]"],
-    ["/%E0%A4%A", "/[redacted]"],
-    // After a segment that names a credential, or a link meant for one person, nothing is kept.
-    ["/reset/tok4f9a8b7c6d5e4f3a2b1c", "/reset/[redacted]"],
-    ["/reset/token/hunter2", "/reset/[redacted]/[redacted]"],
-    ["/verify/otp/493817", "/verify/[redacted]/[redacted]"],
-    ["/pin/4821", "/pin/[redacted]"],
-    ["/session/ab12cd3", "/session/[redacted]"],
-    ["/password/hunter2", "/password/[redacted]"],
-    ["/api/token/refresh", "/api/token/[redacted]"],
-    ["/token-hunter2", "/[redacted]"],
-    ["/otp-493817", "/[redacted]"],
-    // The same for a name in the plural, joined to another word, or in capitals inside a word.
-    ["/verify-email/493817", "/[redacted]/[redacted]"],
-    ["/verification/493817", "/verification/[redacted]"],
-    ["/confirm-email/abcdef", "/[redacted]/[redacted]"],
-    ["/activation/abcdef", "/activation/[redacted]"],
-    ["/otps/493817", "/otps/[redacted]"],
-    ["/2fa/493817", "/[redacted]/[redacted]"],
-    ["/pins/4821", "/pins/[redacted]"],
-    ["/api/keys/abcdef", "/api/keys/[redacted]"],
-    ["/invites/abcdef", "/invites/[redacted]"],
-    ["/magic-link/abcdef", "/[redacted]/[redacted]"],
-    ["/magiclink/abcdef", "/magiclink/[redacted]"],
-    ["/pwreset/abcdef", "/pwreset/[redacted]"],
-    ["/apiKeys/abcdef", "/apiKeys/[redacted]"],
-    // A word that only starts like such a name is taken for one, and what follows it is lost.
-    ["/authors/jane/books", "/authors/[redacted]/[redacted]"],
-    ["/keyboard/layouts", "/keyboard/[redacted]"],
-    ["/login/callback", "/login/callback"],
-    // A word that starts or ends like a short name is taken for one: what follows is lost, and nothing is kept that should not be.
-    ["/passengers/list", "/passengers/[redacted]"],
-    ["/monkey/list", "/monkey/[redacted]"],
-    // Short names joined to another word, in any capitals, and a name too long or too oddly written to read.
-    ["/otpcode/abcdef", "/otpcode/[redacted]"],
-    ["/passkey/abcdef", "/passkey/[redacted]"],
-    ["/accesskey/abcdef", "/accesskey/[redacted]"],
-    ["/securitycode/abcdef", "/securitycode/[redacted]"],
-    ["/backupcodes/abcdef", "/backupcodes/[redacted]"],
-    ["/OTPCode/abcdef", "/OTPCode/[redacted]"],
-    ["/PASSKEY/abcdef", "/PASSKEY/[redacted]"],
-    ["/x%2Ftoken/abcdef", "/[redacted]/[redacted]"],
-    [`/${"a".repeat(200)}token/abcdef`, "/[redacted]/[redacted]"],
-    // A name with a digit after it is a name first: what follows it goes.
-    ["/otp1/abcdef", "/[redacted]/[redacted]"],
-    ["/key2/abcdef", "/[redacted]/[redacted]"],
-    ["/jwt1/abcdef", "/[redacted]/[redacted]"],
-    ["/pwd12/abcdef", "/[redacted]/[redacted]"],
-    ["/KEY1/abcdef", "/[redacted]/[redacted]"],
-    // No digit comes through a picture's size or a file's ending.
-    ["/a@1x.mp4/b@2x.mp3/c@3x.woff2/d@4x.mp4", "/[redacted]/[redacted]/[redacted]/[redacted]"],
-    ["/fonts/inter.woff2", "/fonts/[redacted]"],
-    // One short name with a digit is kept once in a path. More of them are how a key is written in groups.
-    ["/api/v2/sha1/md5", "/api/v2/[redacted]/[redacted]"],
-    ["/lic/AB12-CD34-EF56-GH78", "/lic/[redacted]"],
-    ["/k/a1b2-c3d4-e5f6-a7b8-c9d0-e1f2", "/k/[redacted]"],
-    ["/x493/y817", "/[redacted]/[redacted]"],
-    ["/x/Z999~Y888_X777", "/x/[redacted]"],
-    ["/api/sign-in", "/api/sign-in"],
-    // No number is kept but the one short name above: an id, a code and a count cannot be told apart. Nor a card or a host.
-    ["/shop/cart/items/3", "/shop/cart/items/[redacted]"],
-    ["/a/4111-1111-1111-1111", "/a/[redacted]"],
-    ["/a/078-05-1120", "/a/[redacted]"],
-    ["/license/AB12C-DE34F-GH56I-JK78L-MN90P", "/license/[redacted]"],
-    ["/a/tok4f9_a8b7c6_d5e4f3", "/a/[redacted]"],
-    ["/proxy/internal-db.corp.example/admin", "/proxy/[redacted]/admin"],
-    ["/a/10.0.0.12/x", "/a/[redacted]/x"],
-    ["/static/jquery.min.js", "/static/[redacted].js"],
-    ["/api/v2/users", "/api/v2/users"],
-    // The engine's placeholder is not kept in a path either: a page can write one around anything.
-    ["/a/%7B%7Bsecret:Tr0ub4dor3xQ9%7D%7D", "/a/[redacted]"],
-    ["/x/{{secret:u.password}}/y", "/x/[redacted]/[redacted]"],
-    // A secret the executor was given, however written and wherever it lies: the whole path goes.
-    ["/login/Zq7!vault-pw", "/[redacted]"],
-    ["/x/Zq7%21vault-pw", "/[redacted]"],
-    ["/x/Zq7%2521vault-pw", "/[redacted]"],
-    ["/alpha//bravo-charlie", "/[redacted]"],
-    ["/alpha/%E2%80%8Bbravo-charlie", "/[redacted]"],
-    ["/alpha/%00/bravo-charlie", "/[redacted]"],
-    ["/alpha/../bravo-charlie", "/[redacted]"],
-    ["/files/alpha/bravo%2Dcharlie", "/[redacted]"],
-    ["/find/my%20secret pw", "/[redacted]"],
-    // A path longer than is read is not read in part: the cut could go through a secret.
-    [`${"/".repeat(988)}x/Zq7!vault-pw`, "/[redacted]"],
-    [`/${"a/".repeat(600)}`, "/[redacted]"],
-    // What looks like the engine's placeholder but holds a key is not kept.
-    ["/%7B%7Bsecret:sEcReTt0ken1234567890abcdefXYZ%7D%7D", "/[redacted]"],
-  ];
-  for (const [given, cleaned] of table) {
-    assert.equal(cleanPath(VAULT, given), cleaned, given);
-    // Cleaning what is clean changes nothing.
-    assert.equal(cleanPath(VAULT, cleaned), cleaned, `again: ${given}`);
+  for (const page of ["/broken", "/forged"]) {
+    const run2 = await run([step("navigate", { path: page }), step("navigate", { path: "/quiet" }), FINISH], true, ROUTES);
+    assert.equal(run2.result.verdict, "passed", page);
+    structured(run2.result.capture!, ROUTES);
+    const text = JSON.stringify([run2.result.capture!.console, run2.result.capture!.network]);
+    for (const gone of ["4111111", "1111111", "pay", "said", "words", "hunter", "k=v", "frag", "/"]) assert.ok(!text.includes(gone), `${gone} in ${text}`);
   }
-});
-
-test("a value a manifest declares, such as the password of an account the application ships with, is known too, in any case", () => {
-  const session = { vault: { scrub: (text: string) => text, values: () => ["wintermelon", "ab"] } } as never;
-  for (const way of ["/leak/wintermelon", "/src/wintermelon.js", "/img/WinterMelon.png", "/a/winter%6Delon/b"]) assert.equal(cleanPath(session, way), "/[redacted]", way);
-  // A value that itself holds a sign that ends a path is found before anything is cut off.
-  const signed = { vault: { scrub: (text: string) => text.replaceAll("Summer;Rainfall", "{{secret:a.b}}"), values: () => ["Summer;Rainfall", "Spring;Blossom", "Winter#Snowfall", "Autumn?Leaves", "stra\u00dfenbahn"] } } as never;
-  for (const way of ["/leak/Summer;Rainfall", "/leak/Spring;Blossom", "/leak/SPRING;BLOSSOM", "/leak/Winter#Snowfall", "/leak/Autumn?Leaves", "/leak/Autumn%3FLeaves", "/x/STRASSENBAHN", "/x/stra\u00dfenbahn"]) assert.equal(cleanPath(signed, way), "/[redacted]", way);
-  // A value too short to be told from part of a word is not looked for.
-  assert.equal(cleanPath(session, "/about/table"), "/about/table");
-});
-
-test("for any path made of the pieces that have broken cleaning before: no error, plain printable characters only, no known secret, and cleaning again changes nothing", () => {
-  const pieces = ["password", "token", "otp", "reset", "=", ":", " ", "?", "&", "/", "//", "/./", "/../", "%41", "%25", "%2541", "%00", "%1B", "%E2%80%AE", "%E2%80%8B", "%2F", "%3F", "%20", "://", "http", "@", "@2x.png", "[redacted]", "{{secret:u.x}}", "{{secret:sEcReTt0ken1234567890abcdefXYZ}}", "%7B%7Bsecret:", "%7D%7D", "\ud800", "\udc00", "\u200b", "\u202e", "\u0085", "\u00a0", "é", "a", "b1", "hunter2", "Bearer", '"', "'", "(", ")", "[", "]", "{", "}", ",", ";", "|", "<", ">", ".", "-", "_", "~", "x".repeat(20), "12345678901234", "0", "1", "2", "12", "key", "otp", "jwt", "pwd", "cvv", "@2x", ".mp4", ".woff2", "%zz", "%", "#", ".js", "Zq7!vault-pw", "Zq7%21vault-pw", "alpha", "bravo-charlie", "bravo%2Dcharlie", "my secret pw", "my%20secret", "pw"];
-  // The same cases every time: a generator with a fixed start.
-  let state = 42;
-  const next = () => {
-    state = (state * 1664525 + 1013904223) >>> 0;
-    return state / 2 ** 32;
-  };
-  for (let round = 0; round < 120_000; round++) {
-    let text = "";
-    const length = 1 + Math.floor(next() * 12);
-    for (let i = 0; i < length; i++) text += pieces[Math.floor(next() * pieces.length)];
-    const way = cleanPath(VAULT, `/${text}`);
-    assert.match(way, /^\/[\x21-\x7e]*$/, `from ${JSON.stringify(text)}`);
-    for (const secret of ["Zq7!vault-pw", "alpha/bravo-charlie", "my secret pw"]) assert.ok(!way.includes(secret), `${secret} in ${way} from ${JSON.stringify(text)}`);
-    // No digits but those of one short name; and nothing but "[redacted]" after a segment that names a credential.
-    assert.ok(way.replace(/\D/g, "").length <= 2, `more than two digits in ${way} from ${JSON.stringify(text)}`);
-    const kept = way.split("/").slice(1);
-    const named = kept.findIndex((segment) => segment !== "[redacted]" && namesCredential(segment));
-    assert.ok(named === -1 || kept.slice(named + 1).every((segment) => segment === "[redacted]"), `something after a name in ${way} from ${JSON.stringify(text)}`);
-    assert.equal(cleanPath(VAULT, way), way, `again, from ${JSON.stringify(text)}`);
-    assert.equal(cleanPath(QUIET, way), way, `again by the result's own rule, from ${JSON.stringify(text)}`);
-  }
-});
-
-test("cleaning a path takes time that does not grow with what a page puts in it: under 150 ms each, whatever its length", () => {
-  cleanPath(QUIET, "/warm/up");
-  for (const unit of ["token", "apikey-_", "/a", "%41", "%25", "%E2%80%AE", "/./", "//", "a=", "\ud800", "{{secret:", "[redacted]", "@", "?", ";", "x"]) {
-    for (const size of [1_000, 100_000, 4_000_000]) {
-      const given = `/${unit.repeat(Math.ceil(size / unit.length))}`;
-      const took = timed(() => cleanPath(QUIET, given));
-      assert.ok(took < 150, `${JSON.stringify(unit)} x ${size}: ${took.toFixed(1)} ms`);
-      assert.ok(cleanPath(QUIET, given).length <= 201);
-    }
-  }
-});
-
-test("where an uncaught error came from is read from a line in the form of the browser's trace, not from the first line of the error's words", async () => {
-  const { result } = await run([step("navigate", { path: "/forged" }), FINISH], true);
-  const text = JSON.stringify(result.capture);
-  for (const gone of ["4111111", "1111111", "/pay", "said", "words", "k=v", "frag"]) assert.ok(!text.includes(gone), `${gone} in ${text}`);
-  // The place a forged trace names is still a path of the application, cleaned as any other.
-  for (const entry of result.capture!.console) assert.ok(structured(entry as never), JSON.stringify(entry));
 });
 
 test("a value is kept only if it is a plain number or amount; words are not", () => {
   for (const [given, kept] of [["160", "160"], [" 42 ", "42"], ["$42.00", "$42.00"], ["-3.5%", "-3.5%"], ["1,234.56", "1,234.56"], [160, "160"]] as const) assert.equal(plainAmount(given), kept);
   for (const given of ["160 points", "hunter2", "Signed in", "", "12:30", "4111111111111111", "password=1", "1e9", "0x1f", null, undefined, {}, Number.NaN, "1".repeat(30), "12 34 56 78 90 12 34", "192.168.1.1", "1.2.3.4", "555 123 4567", "+1 555 123 4567", "4 9 3 8 1 7", "12\n%", "12\t%", "12\u00a0%", "12 %", "\u0661\u0662"]) assert.equal(plainAmount(given), undefined, JSON.stringify(given));
 });
-

@@ -63,14 +63,6 @@ export class SecretVault {
     return value;
   }
 
-  /**
-   * Every value the vault holds, secret or declared. For a caller that keeps something only if none of them is
-   * in it, and so loses nothing readable by treating a declared value as it treats a secret.
-   */
-  values(): string[] {
-    return [...this.byName.values(), ...this.public.values()];
-  }
-
   /** Replaces real values with their placeholders in text about to leave the process. */
   scrub(text: string): string {
     let out = text;

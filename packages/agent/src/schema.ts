@@ -107,6 +107,12 @@ export type Scenario = z.infer<typeof Scenario>;
 
 export const Manifest = z.object({
   baseUrl: z.string().url(),
+  /**
+   * Paths of the application that evidence from a run may name, each under an id. Read only by a run that
+   * collects evidence to leave the machine, which names an endpoint only if its path is exactly one of these;
+   * the entries are checked there. Written by whoever operates the run.
+   */
+  evidenceRoutes: z.array(z.object({ id: z.string(), path: z.string() })).optional(),
   version: z.object({ path: z.string() }).optional(),
   fixtures: z
     .record(

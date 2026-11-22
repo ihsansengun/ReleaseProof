@@ -29,7 +29,7 @@
  */
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { cleanPathWith, plainAmount } from "../execute/clean.ts";
+import { ENDPOINT_NOT_RECORDED, endpointOf, isEndpoint, plainAmount, trustedRoutes, type EvidenceRoute } from "../execute/kept.ts";
 import { assess, type RequirementStatus } from "../report/readiness.ts";
 import type { ScenarioResult, Verdict } from "../schema.ts";
 import type { RemoteRun } from "./run.ts";
@@ -119,10 +119,10 @@ export type RemoteResult = {
    * failures are kept: an empty list beside "collected" means the run listened and heard none.
    */
   diagnostics: {
-    /** What an error said is not kept. `source` is the place named for the error, kept only when it is a path on the application under test; `count` is how often it happened in the step. */
-    console: { stepId: string; level: "error" | "uncaught"; source?: { path: string; line?: number; column?: number }; count: number }[];
-    /** `status` 0 means the request got no answer. `path` has no query, fragment or host. */
-    network: { stepId: string; method: string; path: string; status: number; kind: string }[];
+    /** What an error said and where it came from are not kept. `endpoint` is a name from the trusted list of routes, or "Endpoint not recorded"; `count` is how often it happened in the step. */
+    console: { stepId: string; level: "error" | "uncaught"; endpoint: string; count: number }[];
+    /** No address or part of one is kept. `status` 0 means the request got no answer; `failure` says which it was; `kind` is the browser's kind of request. */
+    network: { stepId: string; status: number; kind: string; failure: "error answer" | "no answer"; endpoint: string; count: number }[];
     analytics: unknown[];
   };
   /** How many pictures and entries the size limits left out. All zero when none was. */
@@ -166,36 +166,35 @@ export function evidenceIdOf(runId: string, stepId: string, kind: string): strin
 /** The steps an executor can take. Anything else a recording calls a step is not named here. */
 const ACTIONS = new Set(["navigate", "click", "fill", "select", "press", "upload", "api_request", "observe", "check", "finish"]);
 const LOCATED_BY = new Set(["role", "label", "text", "testid", "labelled", "cell"]);
-const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 /** A time a run can have: from nothing up to a day, in milliseconds. */
 const within = (ms: unknown): ms is number => typeof ms === "number" && Number.isFinite(ms) && ms >= 0 && ms <= 86_400_000;
 /** Console entries, and network entries, taken from one scenario. The same number the collector keeps. */
 const ENTRIES = 200;
 
-/** A path as this file gives one: from the root, plain and printable, with nothing a reader could take for an address or markup. */
-const isPath = (where: string) => /^\/(?!\/)[\x21-\x7e]*$/.test(where) && !/[\\<>"'`]|\/\//.test(where);
+/** The kinds of request a browser makes. Any other is "other". */
+const KINDS = new Set(["document", "stylesheet", "image", "media", "font", "script", "texttrack", "xhr", "fetch", "eventsource", "websocket", "manifest", "other"]);
 /** The kinds of element a locator can name by role. Any other is not named. */
 const ROLES = new Set(["button", "link", "textbox", "checkbox", "radio", "combobox", "listbox", "option", "heading", "tab", "menuitem", "row", "cell", "dialog", "switch", "img", "list", "listitem", "navigation", "form", "table", "searchbox", "spinbutton", "slider"]);
 
 /**
  * Where a step went or what it pointed at, in a form that holds none of the
- * recording's or the page's own words. A path is given cleaned, without its
- * query, fragment, parameters or any host; a locator by its kind alone, and
- * its role when that is one of the known ones. The words a locator looks for
- * are not given: they are text of the page. What was typed, sent or answered
- * is never part of it.
+ * recording's or the page's own words and no address. A step that asks for a
+ * path names an endpoint only when that path is exactly one on the trusted
+ * list of routes, and is otherwise said not to be recorded; a locator is
+ * given by its kind alone, and its role when that is one of the known ones.
+ * What was typed, sent or answered is never part of it.
  */
-function describeTarget(input: unknown): string {
-  const given = (input !== null && typeof input === "object" ? input : {}) as { path?: unknown; method?: unknown; element?: unknown; target?: unknown };
+function describeTarget(input: unknown, routes: readonly EvidenceRoute[]): string {
+  const given = (input !== null && typeof input === "object" ? input : {}) as { path?: unknown; element?: unknown; target?: unknown };
   if (typeof given.path === "string") {
-    let where: string | undefined;
+    const base = "http://target.invalid";
+    let asked: string | undefined;
     try {
-      where = cleanPathWith((text) => text, new URL(given.path.slice(0, 2_000), "http://target.invalid").pathname);
+      asked = new URL(given.path.slice(0, 2_000), `${base}/`).href;
     } catch {
-      where = undefined;
+      asked = undefined;
     }
-    const method = typeof given.method === "string" && METHODS.has(given.method) ? `${given.method} ` : "";
-    return where !== undefined && isPath(where) ? `${method}${where}` : `${method}a path that is not shown`;
+    return endpointOf(routes, asked, base);
   }
   const element = (given.element ?? given.target) as { source?: unknown; by?: unknown; role?: unknown; responseId?: unknown } | undefined;
   if (element === undefined || element === null || typeof element !== "object") return "";
@@ -214,15 +213,17 @@ const shownValue = (value: unknown): string => plainAmount(value) ?? NOT_SHOWN;
  * but the record, and states nothing the record does not hold.
  */
 export function remoteResult(run: RemoteRun): RemoteResult {
-  // Where the run went, as an origin and a cleaned path: an approved address may carry a query, and none is shown.
+  // Where the run went, as the approved address's origin and nothing more of it.
   let whereTo = "an address that is not shown";
   try {
     const url = new URL(run.target.baseUrl);
-    const way = cleanPathWith((given) => given, url.pathname);
-    if (/^https?:$/.test(url.protocol) && url.username === "" && url.password === "") whereTo = `${url.origin}${way === "/" ? "/" : `${way}/`}`;
+    if (/^https?:$/.test(url.protocol) && url.username === "" && url.password === "") whereTo = `${url.origin}/`;
   } catch {
     // Left as not shown.
   }
+  // The trusted list of routes, checked again here: only an id on it may stand where an endpoint is named.
+  const routes = trustedRoutes(run.evidenceRoutes);
+  const routeIds = routes.map((route) => route.id);
   // Taken from the record, where nothing can yet set it to true.
   const trusted: boolean = (run.verdictsTrusted as unknown) === true;
   const executed = run.results.filter((result) => result.steps.length > 0);
@@ -282,18 +283,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
           leftOut.console += 1;
           continue;
         }
-        // Where it came from is given only as a cleaned path with whole numbers for the line and the column.
-        const from = entry.source;
-        const where = from !== null && typeof from === "object" && typeof from.path === "string" && from.path.startsWith("/") ? cleanPathWith((given) => given, from.path) : undefined;
-        const place = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < 10_000_000 ? value : undefined);
-        const line = where === undefined ? undefined : place(from?.line);
-        const column = line === undefined ? undefined : place(from?.column);
-        consoleEntries.push({
-          stepId: stepOf(entry.step),
-          level: entry.level,
-          ...(where !== undefined && isPath(where) ? { source: { path: where, ...(line === undefined ? {} : { line }), ...(column === undefined ? {} : { column }) } } : {}),
-          count: Math.min(entry.count, 1_000_000),
-        });
+        consoleEntries.push({ stepId: stepOf(entry.step), level: entry.level, endpoint: isEndpoint(routeIds, entry.endpoint) ? entry.endpoint : ENDPOINT_NOT_RECORDED, count: Math.min(entry.count, 1_000_000) });
       } catch {
         // An entry that cannot be read is left out, and the rest of the result stands.
         leftOut.console += 1;
@@ -307,20 +297,19 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       }
     }
     function addRequest(entry: (typeof asked)[number]): void {
-      const status = Number.isInteger(entry?.status) && entry.status >= 0 && entry.status <= 599 ? entry.status : undefined;
-      // A path as the collector writes one: from the root, one slash at a time, printable, and nothing a reader could take for an address or markup.
-      // The path is cleaned again here, by the same rules, and must then be a path and nothing else.
-      const where = typeof entry?.path === "string" && entry.path.startsWith("/") && !/[?#]/.test(entry.path.slice(0, 1_000)) ? cleanPathWith((given) => given, entry.path) : undefined;
-      if (status === undefined || where === undefined || !isPath(where)) {
+      const status = Number.isInteger(entry?.status) && (entry.status === 0 || (entry.status >= 400 && entry.status <= 599)) ? entry.status : undefined;
+      if (status === undefined || !Number.isInteger(entry.count) || entry.count < 1) {
         leftOut.network += 1;
         return;
       }
       networkEntries.push({
         stepId: stepOf(entry.step),
-        method: typeof entry.method === "string" && METHODS.has(entry.method) ? entry.method : "OTHER",
-        path: where,
         status,
-        kind: typeof entry.kind === "string" && /^[a-z]{1,20}$/.test(entry.kind) ? entry.kind : "other",
+        kind: typeof entry.kind === "string" && KINDS.has(entry.kind) ? entry.kind : "other",
+        // Said from the status, not taken from the record.
+        failure: status === 0 ? "no answer" : "error answer",
+        endpoint: isEndpoint(routeIds, entry.endpoint) ? entry.endpoint : ENDPOINT_NOT_RECORDED,
+        count: Math.min(entry.count, 1_000_000),
       });
     }
     leftOut.screenshots += count(result.capture?.leftOut?.screenshots);
@@ -350,7 +339,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         id,
         scenarioId,
         action: ACTIONS.has(step.tool) ? step.tool : "unknown step",
-        target: describeTarget(step.input),
+        target: describeTarget(step.input, routes),
         // A comparison step that kept no comparison did not do what it was for.
         outcome: !step.ok || (step.tool === "check" && !made) ? "error" : made && !made.pass ? "mismatch" : "ok",
         requirementIds,

@@ -34,8 +34,9 @@ Adding a field needs no new version; changing what a field means does.
 | `steps[]` | `{ id, scenarioId, action, target, outcome, requirementIds, note, atMs?, durationMs?, screenshot? }`. `outcome` is `ok`, `mismatch` or `error`. `atMs` is counted from the start of the run's first scenario. |
 | `profiles[]` | The browser the run used and the page size the run set. Empty when nothing was executed. |
 | `telemetry` | For each kind of evidence, `collected` or `not collected`. |
-| `diagnostics.console[]` | `{ stepId, level, source?, count }`: errors the page wrote to its console (`error`) and exceptions nothing caught (`uncaught`). What an error said is not kept. `source` is `{ path, line?, column? }`, given only when the place named for the error is a file of the application under test. For `error` the browser names the place; for `uncaught` it is read from the error's own trace, which the page can write, so it is the page's claim; `count` is how often the same error from the same place happened in the step. Ordinary lines and warnings are not kept. |
-| `diagnostics.network[]` | `{ stepId, method, path, status, kind }`: requests to the application answered with 400 or above, and requests that got no answer (`status` 0). |
+| `diagnostics.console[]` | `{ stepId, level, endpoint, count }`: errors the page wrote to its console (`error`) and exceptions nothing caught (`uncaught`). What an error said and where it came from are not kept. `count` is how often such an error happened in the step. Ordinary lines and warnings are not kept. |
+| `diagnostics.network[]` | `{ stepId, status, kind, failure, endpoint, count }`: requests to the application answered with 400 or above (`failure` is `error answer`), and requests that got no answer (`status` 0, `failure` is `no answer`). `kind` is the browser's kind of request (`fetch`, `image`, `script` and so on). No address or part of one is kept. |
+| `endpoint` (in both, and in a step's `target`) | The id of a route on the operator's trusted list, when the path asked for is exactly that route's path; otherwise the words `Endpoint not recorded`. |
 | `diagnostics.analytics` | An empty list; not collected yet. |
 | `evidenceLimits.leftOut` | How many pictures, console entries and network entries the size limits left out. |
 | `evidence[]` | `{ id, label, mediaType, path, scenarioId }`: files the run wrote, by a path inside the output directory. `id` is in the form the result contract asks of an evidence id, and is the same for the same file of the same run. The file itself is not in `result.json`. |
@@ -54,17 +55,15 @@ if the engine said it:
   made, not copied from what a scenario or a step printed;
 - a step's `action` is one of the steps an executor can take, or "unknown
   step";
-- a step's `target` gives the path asked for, cleaned, without its query,
-  fragment, parameters or host; or an element by the kind of locator that
-  found it and, for a known role, the role. The words a locator looks for
-  are text of the page and are not given;
+- a step's `target` names an endpoint by an id from the operator's trusted
+  list, or says `Endpoint not recorded`; or gives an element by the kind of
+  locator that found it and, for a known role, the role. No path is given,
+  and the words a locator looks for are text of the page and are not given;
 - a step's `note` says "match" or "mismatch", with the two values only when
   each is a plain number or amount.
 
 What does remain of other hands, and is marked as such by where it stands:
 
-- a step's `target` holds a path the recording asked for, cleaned. It says
-  which step it was. It is not a statement by the engine;
 - `expected` and `observed` hold a compared value only when it is a plain
   number or amount. An observed value is what the application showed in the
   element read;
@@ -72,13 +71,9 @@ What does remain of other hands, and is marked as such by where it stands:
   because the very same characters stand in an approved snapshot, in the
   same case and with the same spaces, and it is no longer than 600
   characters;
-- where a console error came from (`source`) is what the browser reports,
-  and for an uncaught error what the first line of its trace says. A page
-  names its own files and can write its own trace, so the place is the
-  page's claim, kept only in the form of a cleaned path and two numbers.
-  With the count of an entry, that is what a page that set out to could
-  still write into a result: some 200 letters of plain words and three
-  whole numbers for each entry, 40 entries a step;
+- which entries there are, and their counts, follow from what the page did.
+  A page that set out to could write a few small numbers into a result that
+  way (a status from 400 to 599, a count), and nothing else;
 - ids of requirements, scenarios and comparisons are the recording's, checked
   to be plain names.
 
@@ -147,72 +142,49 @@ scenario that ran listened. An empty list beside `collected` means the run
 listened and heard no error. That is a fact about the console, not about the
 application being right.
 
-### No free text leaves the machine
+### No free text and no address leaves the machine
 
-A console message, an exception's words, the words of a locator and a value
-read from a page are written by the application under test, in no known
-form. An earlier version of this work cleaned such text by rules. Nine
-independent reviews each found text that the rules of the review before had
-let through: a credential after a sign the rules did not know, a secret put
-together again by the cleaning itself, a value glued to its name by a line
-break. Each fix also removed more of what an ordinary message says. Free
-text cannot be made safe by rules of that kind, so it is **not kept in any
-form, and there is no fallback that keeps it**. Richer diagnostics are a
-separate feature, to be designed for security first.
+A console message, an exception's words, the words of a locator, a value
+read from a page and the address of a request are written or chosen by the
+application under test, in no known form. Earlier versions of this work
+cleaned them by rules: first free text, and then, when free text was no
+longer kept, paths alone. Thirteen independent reviews each found something
+that the rules of the review before had let through: a credential after a
+sign the rules did not know, a secret put together again by the cleaning
+itself, a value after a credential's name written in a way the list of names
+did not hold, a known secret cut short at a `#`. Text and addresses of that
+kind cannot be made safe by rules about what a secret looks like. So they
+are **not kept in any form, and there is no fallback that keeps them**: no
+raw address, host, query, fragment, path segment or message.
 
-What is kept instead has a form that is checked, by the collector and again
-when the result is built. A value that does not fit is left out or said not
-to be shown; nothing guesses.
+What is kept has a form that is checked, by the collector and again when the
+result is built. A value that does not fit is left out or said not to be
+recorded; nothing guesses.
 
 | Kept | Form | Never kept |
 |---|---|---|
-| A console error or uncaught exception | Its kind, its step, a count, and the place named for it (by the browser, or for an uncaught error by its own trace, which a page can write) if that is a file of the application: a cleaned path, a line, a column | What it said; a trace; anything from another origin |
-| A failed request | Step, method from a known list, cleaned path, status, the browser's kind of request | Query, fragment, host, headers, bodies, the browser's reason |
-| A step | An action from a known list; a cleaned path, or the kind of locator and a known role | A locator's words; what was typed, sent or answered; what the step printed |
+| A console error or uncaught exception | Its kind, its step, a count, and an endpoint name (see below) | What it said; where it came from; its trace |
+| A failed request | Its step, the status (0, or 400 to 599), the browser's kind of request from a fixed list, whether it was answered, a count, and an endpoint name | The address or any part of it; the method; headers, bodies; the browser's reason |
+| A step | An action from a known list; an endpoint name, or the kind of locator and a known role | A path; a locator's words; what was typed, sent or answered; what the step printed |
 | A compared value | Itself, if it is a plain number or amount of at most 24 characters and 12 digits | Any value with words in it: `not shown` |
 | A picture after a step | PNG or JPEG named `step-N`, secret fields covered | See below |
 
-**A path is closed by default.** A query, a fragment and `;parameters` are
-cut off. A path longer than 1,000 characters is not read in part: it is
-replaced whole. Each segment is decoded and kept only if it is plain
-printable characters and reads as an ordinary name: words of letters joined
-by `-`, `_` or `~`, or a file name of such words with one of the endings a
-web application serves. Anything else becomes `[redacted]`.
+**An endpoint is named only from a trusted list.** The operator of a run may
+list routes of the application in the target manifest, as `evidenceRoutes`:
+each an `id` (a short name in small letters, digits and `-`) and a `path`
+(a static path of plain names: no query, no pattern, nothing to fill in). A
+request, a console error's file or a step's path is named by a route's `id`
+only when it is on the application's own origin and its path is, character
+for character, that route's `path`. In every other case, and when there is
+no list, the entry says `Endpoint not recorded`. Nothing of the address is
+used for anything else. An uncaught error never names an endpoint: where it
+came from would have to be read from its trace, which is the page's own
+text.
 
-- **Numbers are not kept**: an id, a code and a count cannot be told apart,
-  so `/orders/12345` is given as `/orders/[redacted]`. The one exception is
-  a single short name of one to three letters followed by one or two digits
-  (`v2`, `sha1`, `md5`) that is not a credential's name, kept once in a
-  path. A second one, or a longer one, is replaced: that is how a key is
-  written in groups. No other digit is kept: not a picture's size
-  (`logo@2x.png` is replaced) and not an ending with a digit in it
-  (`.mp4`, `.woff2`).
-- A name with a dot inside it, which is how a host is written, is replaced.
-- A segment that names a credential or a link meant for one person is kept
-  only if it is one plain word, and **every segment after it is replaced**.
-  A segment that cannot be read as one segment is treated the same way.
-  Long names count wherever they stand in a segment (`token`, `password`,
-  `session`, `reset`, `verification`, `magiclink`). Short names (`otp`,
-  `pin`, `key`, `pass`, `code`, `auth` and the like) count at the start or
-  the end of a part of a segment, so `otpcode`, `accesskey`, `apiKeys`,
-  `pins`, `otp1` and `2fa` count; so do `passengers`, `monkey`, `authors`
-  and `keyboard`, and what follows those is lost. The list is of names, and a name not on it is not known:
-  see the residual risk below.
-- A path that holds a value the executor was given is replaced whole: a
-  secret, or a value a manifest declares such as the password of an account
-  the application ships with. A value of four characters or more is found
-  in small letters and in capitals; a shorter one only as it is written.
-  It is looked for in the whole of what was asked for, before anything is
-  cut off (such a value may itself hold a `?`, a `#` or a `;`), as written
-  and decoded up to three times, with or without the empty and hidden
-  segments a reader would skip. So is a path with an address inside it.
-
-At most 20 segments, with one `[redacted]` for all the rest, and 200
-characters are kept. Cleaning a cleaned path
-changes nothing; a test makes 120,000 paths from the pieces that broke
-earlier versions and holds each to that, to plain printable output, to at
-most two digits, to nothing but `[redacted]` after a credential's name, and
-to holding no known secret.
+The list is not the page's and not the recording's. An entry that is not in
+the form above is left out, at most 50 are read, and the result is built
+with the same check, so only an id on the list can stand where an endpoint
+is named.
 
 Limits:
 
@@ -222,9 +194,11 @@ Limits:
 | All pictures of a scenario | 3 MB |
 | Console entries, and network entries, per scenario | 200, and 40 from any one step |
 
-What a limit left out is counted in `evidenceLimits.leftOut`, and so is a
-picture that could not be taken. Nothing a page says can stop the run: an
-entry that cannot be taken in is counted and left out.
+Errors of one kind and requests of one status, kind and endpoint in a step
+are one entry with a count. What a limit left out is counted in
+`evidenceLimits.leftOut`, and so is a picture that could not be taken.
+Nothing a page says or asks for can stop the run: an entry that cannot be
+taken in is counted and left out.
 
 ### Pictures
 
@@ -252,14 +226,9 @@ that it was asked, and a page that answers with a false but well-formed
 place leaves its own secret field uncovered in a picture that is kept.
 Covering protects against an ordinary application showing a password field.
 **It is not safe against a hostile page** and must not be described as such.
-**Residual risk: paths.** A value written as a plain word, after a name the
-list does not hold or after no name at all (`/users/correcthorse`), is
-kept. A path says what was asked for, and cannot be closed further without
-ceasing to say it.
-
-Also not covered in a picture: anything a page shows as text; a secret in a field of
-another kind (a password switched to plain text by a "show" button, a text
-area); a field inside a closed component.
+Also not covered in a picture: anything a page shows as text; a secret in a
+field of another kind (a password switched to plain text by a "show" button,
+a text area); a field inside a closed component.
 
 ### What stays on the machine
 

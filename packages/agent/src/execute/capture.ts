@@ -11,12 +11,12 @@
  * It leaves the machine, so it is kept small and kept clean:
  *
  *   - no text a page wrote is kept: not a console message, not an
- *     exception's words. Of an error only its kind, the step it happened in,
- *     where in the application's own files it came from (a cleaned path, a
- *     line and a column) and how often it happened are kept;
- *   - an address is given as its path, without query, fragment or host, and
- *     each segment of the path is kept only if it reads as an ordinary name
- *     (`clean.ts`);
+ *     exception's words. Of an error only its kind, the step it happened in
+ *     and how often it happened are kept;
+ *   - no address or part of one is kept. Of a request that failed: the
+ *     status, the browser's kind of request, whether it was answered, the
+ *     step and a count. An endpoint is named only when the path asked for is
+ *     exactly one a trusted list gives a name to (`kept.ts`);
  *   - a picture cannot be redacted after it is taken, so before each one
  *     every password, card and one-time-code field in the page itself, and
  *     every field the executor typed a secret into, is covered where the
@@ -30,7 +30,7 @@
  */
 import path from "node:path";
 import type { ConsoleMessage, Locator, Page, Request, Response, ElementHandle } from "playwright";
-import { cleanPathWith } from "./clean.ts";
+import { endpointOf, type EvidenceRoute } from "./kept.ts";
 import type { Session } from "./tools.ts";
 
 export const CAPTURE_LIMITS = {
@@ -44,7 +44,6 @@ export const CAPTURE_LIMITS = {
   entriesPerStep: 40,
 } as const;
 
-const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
 export type CapturedStep = {
   /** The step's place in the scenario, from 1. */
@@ -58,21 +57,21 @@ export type CapturedStep = {
   noScreenshot?: string;
 };
 
+/** The kinds of request a browser makes. Any other is "other". */
+const KINDS = new Set(["document", "stylesheet", "image", "media", "font", "script", "texttrack", "xhr", "fetch", "eventsource", "websocket", "manifest", "other"]);
+
 /**
- * An error the page wrote to its console, or one it did not catch. What it said is not kept. `source` is
- * the place named for it, when that is a file of the application under test (for an uncaught error the place is read from its own trace, which a page can write); `count` is how many times
- * the same error from the same place happened in the step.
+ * An error the page wrote to its console, or one it did not catch. What it said is not kept, and neither is where
+ * it came from. `endpoint` names the file the browser places it in only when that file's path is on the trusted
+ * list of routes; `count` is how many times such an error happened in the step.
  */
-export type CapturedConsole = { step: number; level: "error" | "uncaught"; source?: { path: string; line?: number; column?: number }; count: number };
-export type CapturedRequest = {
-  step: number;
-  method: string;
-  /** The path asked for, without query, fragment or host. */
-  path: string;
-  /** The status answered. 0 when the request got no answer. */
-  status: number;
-  kind: string;
-};
+export type CapturedConsole = { step: number; level: "error" | "uncaught"; endpoint: string; count: number };
+/**
+ * A request to the application that failed. No address or part of one is kept. `status` is what was answered, 0
+ * when nothing was; `failure` says which of the two it was; `kind` is the browser's kind of request; `endpoint`
+ * names what was asked for only when its path is on the trusted list of routes.
+ */
+export type CapturedRequest = { step: number; status: number; kind: string; failure: "error answer" | "no answer"; endpoint: string; count: number };
 
 export type Capture = {
   steps: CapturedStep[];
@@ -98,79 +97,28 @@ type Collector = {
 
 const collectors = new WeakMap<Session, Collector>();
 
-/** A path made fit to leave the machine, segment by segment. */
-export const cleanPath = (session: Pick<Session, "vault">, pathname: string): string => cleanPathWith(knownBy(session), pathname);
-
 /**
- * Marks every value the executor was given, where it stands in a text: its secrets, and also the values a
- * manifest declares (the password of an account the application ships with), in whatever case they are written.
- * A path with any of them in it is not kept, so nothing is garbled by marking an ordinary word.
+ * Starts collecting for a session. Returns the record that fills as the scenario runs. `routes` is the trusted
+ * list of paths that may be named; with none, no endpoint is named at all.
  */
-function knownBy(session: Pick<Session, "vault">): (text: string) => string {
-  const vault = session.vault as Session["vault"] & { values?: () => string[] };
-  const values = (typeof vault.values === "function" ? vault.values() : []).filter((value) => typeof value === "string" && value.length >= 4);
-  // In lower case and in capitals: some letters have a capital that is not one letter ("ß"), or a small form of their own.
-  const lowered = values.map((value) => value.toLowerCase());
-  const raised = values.map((value) => value.toUpperCase());
-  return (given) => {
-    const scrubbed = vault.scrub(given);
-    if (scrubbed !== given) return scrubbed;
-    const lower = given.toLowerCase();
-    const upper = given.toUpperCase();
-    return lowered.some((value) => lower.includes(value)) || raised.some((value) => upper.includes(value)) ? "{{secret:known}}" : given;
-  };
-}
-
-/** The cleaned path of an address. Undefined when the address is not on the application. */
-function pathOf(session: Session, address: string, origin: string): string | undefined {
-  try {
-    const url = new URL(address);
-    if (url.origin !== origin) return undefined;
-    // A value the executor was given may hold a sign that ends a path ("?", "#"), and the browser has then already
-    // cut the path there. It is looked for in the whole of what was asked for, as written and as it reads decoded.
-    const asked = `${url.pathname}${url.search}${url.hash}`.slice(0, 4_000);
-    let plain = asked;
-    try {
-      plain = decodeURIComponent(asked);
-    } catch {
-      // Looked for as written.
-    }
-    const known = knownBy(session);
-    if (known(asked) !== asked || known(plain) !== plain) return "/[redacted]";
-    return cleanPath(session, url.pathname);
-  } catch {
-    return undefined;
-  }
-}
-
-/** Starts collecting for a session. Returns the record that fills as the scenario runs. */
-export function startCapture(session: Session, startedAt: number): Capture {
+export function startCapture(session: Session, startedAt: number, routes: readonly EvidenceRoute[] = []): Capture {
   const capture: Capture = { steps: [], console: [], network: [], leftOut: { screenshots: 0, console: 0, network: 0 } };
   const origin = new URL(session.baseUrl).origin;
   const page: Page = session.page;
   // What happens while or after the last step is that step's: there is no step after it to belong to.
   const step = () => Math.max(1, Math.min(session.steps.length + 1, session.outcome ? session.steps.length : Number.MAX_SAFE_INTEGER));
   const room = (kept: { step: number }[], at: number) => kept.length < CAPTURE_LIMITS.entries && kept.filter((entry) => entry.step === at).length < CAPTURE_LIMITS.entriesPerStep;
-  /** A whole number a line or a column can be. */
-  const place = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < 10_000_000 ? value : undefined);
-  const said = (level: CapturedConsole["level"], from?: { url?: unknown; line?: unknown; column?: unknown }) => {
-    const at = step();
-    // Where it came from, only if that is a file of the application itself.
-    const where = typeof from?.url === "string" ? pathOf(session, from.url, origin) : undefined;
-    const line = where === undefined ? undefined : place(from?.line);
-    const column = line === undefined ? undefined : place(from?.column);
-    const same = capture.console.find((entry) => entry.step === at && entry.level === level && entry.source?.path === where && entry.source?.line === line && entry.source?.column === column);
-    if (same) {
-      same.count = Math.min(same.count + 1, 1_000_000);
-      return;
-    }
-    if (!room(capture.console, at)) capture.leftOut.console += 1;
-    else capture.console.push({ step: at, level, ...(where === undefined ? {} : { source: { path: where, ...(line === undefined ? {} : { line }), ...(column === undefined ? {} : { column }) } }), count: 1 });
+  const count = <T extends { step: number; count: number }>(kept: T[], kind: "console" | "network", entry: T, same: (other: T) => boolean) => {
+    const before = kept.find((other) => other.step === entry.step && same(other));
+    if (before) before.count = Math.min(before.count + 1, 1_000_000);
+    else if (!room(kept, entry.step)) capture.leftOut[kind] += 1;
+    else kept.push(entry);
   };
-  const failed = (entry: Omit<CapturedRequest, "step">) => {
-    const at = step();
-    if (!room(capture.network, at)) capture.leftOut.network += 1;
-    else capture.network.push({ step: at, ...entry });
+  const said = (level: CapturedConsole["level"], endpoint: string) =>
+    count(capture.console, "console", { step: step(), level, endpoint, count: 1 }, (other) => other.level === level && other.endpoint === endpoint);
+  const failed = (status: number, kind: string, endpoint: string) => {
+    const entry: CapturedRequest = { step: step(), status, kind: KINDS.has(kind) ? kind : "other", failure: status === 0 ? "no answer" : "error answer", endpoint, count: 1 };
+    count(capture.network, "network", entry, (other) => other.status === entry.status && other.kind === entry.kind && other.endpoint === endpoint);
   };
   // Nothing a page says or asks for may stop the run. What cannot be taken in is left out and counted.
   const safely = <T,>(kind: "console" | "network", listen: (event: T) => void) => (event: T) => {
@@ -180,36 +128,29 @@ export function startCapture(session: Session, startedAt: number): Capture {
       capture.leftOut[kind] += 1;
     }
   };
-  const methodOf = (method: string) => (METHODS.has(method.toUpperCase()) ? method.toUpperCase() : "OTHER");
+  /** Whether an address is on the application itself. A request to anywhere else was stopped by the run: that is the run's doing. */
+  const own = (address: string) => {
+    try {
+      return new URL(address).origin === origin;
+    } catch {
+      return false;
+    }
+  };
 
   const onConsole = safely<ConsoleMessage>("console", (message) => {
     if (message.type() !== "error") return;
-    // What the message says is never read. Where the browser says it was written is.
-    const from = message.location();
-    said("error", { url: from?.url, line: from?.lineNumber === undefined ? undefined : from.lineNumber + 1, column: from?.columnNumber === undefined ? undefined : from.columnNumber + 1 });
+    // What the message says is never read. The file the browser places it in is named only if it is on the list.
+    said("error", endpointOf(routes, message.location()?.url, origin));
   });
-  const onPageError = safely<Error>("console", (error) => {
-    // The first place in the error's own trace that is an address with a line and a column. The trace is the
-    // page's text: nothing of it is kept but that address, checked as any other, and the two numbers.
-    const trace = typeof error?.stack === "string" ? error.stack.slice(0, 4_000) : "";
-    // Only in a line of the form the browser writes for a place in the trace ("    at …"), not in the first
-    // line of the error's words. The place is the page's claim all the same: a page names its own files, can
-    // write its own trace, and can put a line of that form in an error's words.
-    const frame = trace.split("\n", 60).find((line) => /^\s{1,8}at /.test(line)) ?? "";
-    const found = /(https?:\/\/[^\s()'"<>]{1,500}):(\d{1,7}):(\d{1,7})\)?\s*$/.exec(frame.slice(0, 1_000));
-    said("uncaught", found ? { url: found[1], line: Number(found[2]), column: Number(found[3]) } : undefined);
-  });
+  // Nothing of an error that was not caught is read: its words and its trace are the page's own text.
+  const onPageError = safely<Error>("console", () => said("uncaught", endpointOf(routes, undefined, origin)));
   const onRequestFailed = safely<Request>("network", (request) => {
-    const where = pathOf(session, request.url(), origin);
-    // A request to anywhere else was stopped by the run itself. That is the run's doing, not a failure of the application.
-    if (where === undefined) return;
-    failed({ method: methodOf(request.method()), path: where, status: 0, kind: request.resourceType() });
+    if (own(request.url())) failed(0, request.resourceType(), endpointOf(routes, request.url(), origin));
   });
   const onResponse = safely<Response>("network", (response) => {
-    if (response.status() < 400) return;
-    const where = pathOf(session, response.url(), origin);
-    if (where === undefined) return;
-    failed({ method: methodOf(response.request().method()), path: where, status: response.status(), kind: response.request().resourceType() });
+    const status = response.status();
+    if (status < 400 || status > 599 || !own(response.url())) return;
+    failed(status, response.request().resourceType(), endpointOf(routes, response.url(), origin));
   });
 
   page.on("console", onConsole);

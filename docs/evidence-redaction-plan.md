@@ -25,30 +25,45 @@ let through. Among them:
 Each fix also removed more of ordinary messages: by the ninth round one
 console line in four lost its diagnosis.
 
-The lesson: text of no known form, written by the application under test,
-cannot be made safe by rules about what a secret looks like. Where a value
-begins and ends cannot be told, and every rule that guesses is one way of
-writing behind.
+Free text was then dropped, and only the path of an address was kept,
+cleaned segment by segment with a list of credential names. Four more
+reviews found path cases the same way:
+
+| Round | What got through |
+|---|---|
+| 10 | `/verify-email/493817`: a name the list held only in the singular |
+| 11 | A known secret cut short by the 1,000-character read limit; `/otpcode/…` |
+| 12 | `/otp1/…`; a known secret holding `;` cut at the sign |
+| 13 | A known secret holding `#`, cut by the browser before the engine saw it |
+
+The lesson: text and addresses of no known form, written or chosen by the
+application under test, cannot be made safe by rules about what a secret
+looks like. Where a value begins and ends cannot be told, a list of names is
+never whole, and every rule that guesses is one way of writing behind. This
+engine is not a URL redaction library and is not going to become one.
 
 ## What is done instead
 
-Free text is not kept. There is no fallback that keeps it.
+Free text is not kept, and no address or part of one. There is no fallback
+that keeps either.
 
 Kept are values with a form that can be checked, each checked where it is
 collected and again where the result is built:
 
-- of a console error or an uncaught exception: its kind, its step, how often
-  it happened, and the place named for it if that is a file of the
-  application (a cleaned path, a line, a column);
-- of a failed request: step, method, cleaned path, status, kind;
-- of a step: a known action, and a cleaned path or the kind of locator;
+- of a console error or an uncaught exception: its kind, its step and how
+  often it happened;
+- of a failed request: step, status, the browser's kind of request, whether
+  it was answered, and a count;
+- of a step: a known action, and the kind of locator;
 - of a compared value: the value, only if it is a plain number or amount;
-- pictures after each step, with secret fields covered.
+- pictures after each step, with secret fields covered;
+- **an endpoint's name**, for a request, a console error's file or a step's
+  path, only when the path is exactly one that the operator's trusted list
+  (`evidenceRoutes` in the target manifest) gives an id to. Otherwise
+  `Endpoint not recorded`.
 
-A path is closed by default (`packages/agent/src/execute/clean.ts`): a
-segment is kept only if it reads as an ordinary name, and nothing after a
-segment that names a credential is kept. `docs/remote-result-format.md` has
-the rules and the limits.
+`packages/agent/src/execute/kept.ts` holds the two forms (an endpoint name,
+a plain amount); `docs/remote-result-format.md` has the rules and limits.
 
 A remote run records no browser trace and takes no uncovered picture at a
 comparison. `filesThatMayLeave` names the only files that may leave a run's
@@ -58,23 +73,17 @@ The pull-request path is unchanged.
 
 ## What this costs
 
-A report of a remote run can say that an error happened, in which step, how
-often, and at which line of which file. It cannot say what the error said.
-It can show a compared value that is a number, and says `not shown` for one
-that is words.
+A report of a remote run can say that an error or a failed request happened,
+in which step, how often, with what status and of what kind. It names the
+endpoint only if the operator listed it. It cannot say what an error said or
+which address failed otherwise. It can show a compared value that is a
+number, and says `not shown` for one that is words.
 
 ## Residual risks
 
 - **Pictures.** Covering asks the page where its secret fields are. A page
   that answers falsely leaves a field uncovered. Not safe against a hostile
   page. Anything a page shows as text is in the picture.
-- **Paths.** No number is kept in a path but one short name such as `v2`. A secret written as a plain word,
-  after a name the rules do not hold or after no name
-  (`/users/correcthorse`), is kept. A path names what was asked for, and
-  cannot be closed further without losing that.
-- **Where an error came from** is the page's claim: a page names its own
-  files and can write its own trace. It is kept only as a cleaned path and
-  two whole numbers.
 - **A compared value that is a number** is kept, whatever the number means:
   a balance and a one-time code look the same.
 - **The run's working record** on the machine is uncleaned. Hosted execution
@@ -86,6 +95,8 @@ What an error said is the most useful thing left out. Bringing any of it
 back is a feature of its own, to be designed for security first and
 reviewed independently before it is built. Starting points, none begun:
 
+0. Route patterns in the trusted list (`/users/:id`), which static paths do
+   not cover, with a rule for what a pattern may match.
 1. An allow-list of message shapes the browser itself writes ("Failed to
    load resource: the server responded with a status of N"), matched whole.
 2. The error's class name alone (`TypeError`), from a fixed list.
