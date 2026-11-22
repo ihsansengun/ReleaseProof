@@ -247,10 +247,12 @@ async function main(): Promise<number> {
         ledger,
       });
       const run = await runRemote({ run: startable, recording, manifest: targetManifest, outDir: values.out! });
-      console.log(`Run ${run.runId} against ${run.target.baseUrl}: ${run.results.length} ${run.results.length === 1 ? "scenario" : "scenarios"} recorded, from a recording, with no model.`);
-      for (const result of run.results) console.log(`  ${result.scenarioId}  ${result.verdict}  ${result.reason}`);
-      if (run.endedEarly) console.log(`Ended early: ${run.endedEarly.reason}`);
+      // What is printed may end up in a log that leaves the machine, so it says only what the result itself says:
+      // no reason a scenario gave, which can repeat a recording's or a page's words.
       const stated = remoteResult(run);
+      console.log(`${stated.title}: ${run.results.length} ${run.results.length === 1 ? "scenario" : "scenarios"} recorded, from a recording, with no model.`);
+      run.results.forEach((result, index) => console.log(`  scenario ${index + 1}  ${result.verdict}`));
+      if (stated.executionStatus === "ended early") console.log("Ended early.");
       console.log(`Verdict: ${stated.verdict}${stated.verdict !== stated.verdictBasis.observed ? ` (the comparisons alone: ${stated.verdictBasis.observed}; not trusted as a verdict yet)` : ""}. ${stated.verdictBasis.reason}`);
       console.log(`Written to ${path.join(values.out!, "result.json")}, with the working behind it in remote-run.json.`);
       return 0;

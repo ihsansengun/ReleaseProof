@@ -34,10 +34,10 @@ import { isStartable, type AuthoritativeSnapshot, type StartableRun } from "./au
 import { RemoteRequestRefused, type AdmittedRun } from "./request.ts";
 import { remoteResult, REMOTE_VIEWPORT } from "./result.ts";
 
-/** The version of the recording format this engine reads. */
 /** The longest quote of approved text a requirement may carry. */
 const MAX_QUOTE = 600;
 
+/** The version of the recording format this engine reads. */
 export const REMOTE_RECORDING_VERSION = 1;
 /** The most steps a recording may hold for one scenario: the same count a live model is allowed. */
 export const MAX_RECORDED_STEPS = 60;

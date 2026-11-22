@@ -38,7 +38,7 @@ Kept are values with a form that can be checked, each checked where it is
 collected and again where the result is built:
 
 - of a console error or an uncaught exception: its kind, its step, how often
-  it happened, and where the browser places it if that is a file of the
+  it happened, and the place named for it if that is a file of the
   application (a cleaned path, a line, a column);
 - of a failed request: step, method, cleaned path, status, kind;
 - of a step: a known action, and a cleaned path or the kind of locator;
@@ -68,7 +68,7 @@ that is words.
 - **Pictures.** Covering asks the page where its secret fields are. A page
   that answers falsely leaves a field uncovered. Not safe against a hostile
   page. Anything a page shows as text is in the picture.
-- **Paths.** No number is kept in a path. A secret written as a plain word,
+- **Paths.** No number is kept in a path but one short name such as `v2`. A secret written as a plain word,
   after a name the rules do not hold or after no name
   (`/users/correcthorse`), is kept. A path names what was asked for, and
   cannot be closed further without losing that.

@@ -404,9 +404,28 @@ test("a path is kept segment by segment only where it reads as an ordinary name;
     // A word that only starts like such a name is not one.
     ["/authors/jane/books", "/authors/jane/books"],
     ["/keyboard/layouts", "/keyboard/layouts"],
-    ["/passengers/list", "/passengers/list"],
+    ["/login/callback", "/login/callback"],
+    // A word that starts or ends like a short name is taken for one: what follows is lost, and nothing is kept that should not be.
+    ["/passengers/list", "/passengers/[redacted]"],
+    ["/monkey/list", "/monkey/[redacted]"],
+    // Short names joined to another word, in any capitals, and a name too long or too oddly written to read.
+    ["/otpcode/abcdef", "/otpcode/[redacted]"],
+    ["/passkey/abcdef", "/passkey/[redacted]"],
+    ["/accesskey/abcdef", "/accesskey/[redacted]"],
+    ["/securitycode/abcdef", "/securitycode/[redacted]"],
+    ["/backupcodes/abcdef", "/backupcodes/[redacted]"],
+    ["/OTPCode/abcdef", "/OTPCode/[redacted]"],
+    ["/PASSKEY/abcdef", "/PASSKEY/[redacted]"],
+    ["/x%2Ftoken/abcdef", "/[redacted]/[redacted]"],
+    [`/${"a".repeat(200)}token/abcdef`, "/[redacted]/[redacted]"],
+    // One short name with a digit is kept once in a path. More of them are how a key is written in groups.
+    ["/api/v2/sha1/md5", "/api/v2/[redacted]/[redacted]"],
+    ["/lic/AB12-CD34-EF56-GH78", "/lic/[redacted]"],
+    ["/k/a1b2-c3d4-e5f6-a7b8-c9d0-e1f2", "/k/[redacted]"],
+    ["/x493/y817", "/[redacted]/[redacted]"],
+    ["/x/Z999~Y888_X777", "/x/[redacted]"],
     ["/api/sign-in", "/api/sign-in"],
-    // No number is kept: an id, a code and a count cannot be told apart. Nor a card, a key in groups, or a host.
+    // No number is kept but the one short name above: an id, a code and a count cannot be told apart. Nor a card or a host.
     ["/shop/cart/items/3", "/shop/cart/items/[redacted]"],
     ["/a/4111-1111-1111-1111", "/a/[redacted]"],
     ["/a/078-05-1120", "/a/[redacted]"],
@@ -429,6 +448,9 @@ test("a path is kept segment by segment only where it reads as an ordinary name;
     ["/alpha/../bravo-charlie", "/[redacted]"],
     ["/files/alpha/bravo%2Dcharlie", "/[redacted]"],
     ["/find/my%20secret pw", "/[redacted]"],
+    // A path longer than is read is not read in part: the cut could go through a secret.
+    [`${"/".repeat(988)}x/Zq7!vault-pw`, "/[redacted]"],
+    [`/${"a/".repeat(600)}`, "/[redacted]"],
     // What looks like the engine's placeholder but holds a key is not kept.
     ["/%7B%7Bsecret:sEcReTt0ken1234567890abcdefXYZ%7D%7D", "/[redacted]"],
   ];
@@ -437,6 +459,13 @@ test("a path is kept segment by segment only where it reads as an ordinary name;
     // Cleaning what is clean changes nothing.
     assert.equal(cleanPath(VAULT, cleaned), cleaned, `again: ${given}`);
   }
+});
+
+test("a value a manifest declares, such as the password of an account the application ships with, is known too, in any case", () => {
+  const session = { vault: { scrub: (text: string) => text, values: () => ["wintermelon", "ab"] } } as never;
+  for (const way of ["/leak/wintermelon", "/src/wintermelon.js", "/img/WinterMelon.png", "/a/winter%6Delon/b"]) assert.equal(cleanPath(session, way), "/[redacted]", way);
+  // A value too short to be told from part of a word is not looked for.
+  assert.equal(cleanPath(session, "/about/table"), "/about/table");
 });
 
 test("for any path made of the pieces that have broken cleaning before: no error, plain printable characters only, no known secret, and cleaning again changes nothing", () => {
@@ -454,6 +483,7 @@ test("for any path made of the pieces that have broken cleaning before: no error
     const way = cleanPath(VAULT, `/${text}`);
     assert.match(way, /^\/[\x21-\x7e]*$/, `from ${JSON.stringify(text)}`);
     for (const secret of ["Zq7!vault-pw", "alpha/bravo-charlie", "my secret pw"]) assert.ok(!way.includes(secret), `${secret} in ${way} from ${JSON.stringify(text)}`);
+    assert.ok(!/\d{3}/.test(way), `three digits together in ${way} from ${JSON.stringify(text)}`);
     assert.equal(cleanPath(VAULT, way), way, `again, from ${JSON.stringify(text)}`);
     assert.equal(cleanPath(QUIET, way), way, `again by the result's own rule, from ${JSON.stringify(text)}`);
   }
@@ -471,7 +501,7 @@ test("cleaning a path takes time that does not grow with what a page puts in it:
   }
 });
 
-test("where an uncaught error came from is read only from a line of the trace the browser writes, never from the error's own words", async () => {
+test("where an uncaught error came from is read from a line in the form of the browser's trace, not from the first line of the error's words", async () => {
   const { result } = await run([step("navigate", { path: "/forged" }), FINISH], true);
   const text = JSON.stringify(result.capture);
   for (const gone of ["4111111", "1111111", "/pay", "said", "words", "k=v", "frag"]) assert.ok(!text.includes(gone), `${gone} in ${text}`);

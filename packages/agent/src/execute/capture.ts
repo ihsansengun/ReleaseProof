@@ -86,7 +86,6 @@ type Collector = {
   capture: Capture;
   startedAt: number;
   screenshotBytes: number;
-  /** Fields the executor typed a secret into, to be covered in every picture. */
   /** The very elements a secret was typed into, held by themselves: a way of finding them may stop finding them. */
   secretFields: ElementHandle[];
   origin: string;
@@ -100,7 +99,23 @@ type Collector = {
 const collectors = new WeakMap<Session, Collector>();
 
 /** A path made fit to leave the machine, segment by segment. */
-export const cleanPath = (session: Pick<Session, "vault">, pathname: string): string => cleanPathWith((given) => session.vault.scrub(given), pathname);
+export const cleanPath = (session: Pick<Session, "vault">, pathname: string): string => cleanPathWith(knownBy(session), pathname);
+
+/**
+ * Marks every value the executor was given, where it stands in a text: its secrets, and also the values a
+ * manifest declares (the password of an account the application ships with), in whatever case they are written.
+ * A path with any of them in it is not kept, so nothing is garbled by marking an ordinary word.
+ */
+function knownBy(session: Pick<Session, "vault">): (text: string) => string {
+  const vault = session.vault as Session["vault"] & { values?: () => string[] };
+  const values = (typeof vault.values === "function" ? vault.values() : []).filter((value) => typeof value === "string" && value.length >= 4).map((value) => value.toLowerCase());
+  return (given) => {
+    const scrubbed = vault.scrub(given);
+    if (scrubbed !== given) return scrubbed;
+    const lower = given.toLowerCase();
+    return values.some((value) => lower.includes(value)) ? "{{secret:known}}" : given;
+  };
+}
 
 /** The cleaned path of an address. Undefined when the address is not on the application. */
 function pathOf(session: Session, address: string, origin: string): string | undefined {
@@ -161,9 +176,9 @@ export function startCapture(session: Session, startedAt: number): Capture {
     // The first place in the error's own trace that is an address with a line and a column. The trace is the
     // page's text: nothing of it is kept but that address, checked as any other, and the two numbers.
     const trace = typeof error?.stack === "string" ? error.stack.slice(0, 4_000) : "";
-    // Only in a line of the form the browser writes for a place in the trace ("    at …"), not in the error's
-    // own words, which stand before the first such line. The place is still the page's claim: a page names its
-    // own files and can write its own trace.
+    // Only in a line of the form the browser writes for a place in the trace ("    at …"), not in the first
+    // line of the error's words. The place is the page's claim all the same: a page names its own files, can
+    // write its own trace, and can put a line of that form in an error's words.
     const frame = trace.split("\n", 60).find((line) => /^\s{1,8}at /.test(line)) ?? "";
     const found = /(https?:\/\/[^\s()'"<>]{1,500}):(\d{1,7}):(\d{1,7})\)?\s*$/.exec(frame.slice(0, 1_000));
     said("uncaught", found ? { url: found[1], line: Number(found[2]), column: Number(found[3]) } : undefined);

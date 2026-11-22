@@ -34,7 +34,7 @@ Adding a field needs no new version; changing what a field means does.
 | `steps[]` | `{ id, scenarioId, action, target, outcome, requirementIds, note, atMs?, durationMs?, screenshot? }`. `outcome` is `ok`, `mismatch` or `error`. `atMs` is counted from the start of the run's first scenario. |
 | `profiles[]` | The browser the run used and the page size the run set. Empty when nothing was executed. |
 | `telemetry` | For each kind of evidence, `collected` or `not collected`. |
-| `diagnostics.console[]` | `{ stepId, level, source?, count }`: errors the page wrote to its console (`error`) and exceptions nothing caught (`uncaught`). What an error said is not kept. `source` is `{ path, line?, column? }`, given only when the browser places the error in a file of the application under test; `count` is how often the same error from the same place happened in the step. Ordinary lines and warnings are not kept. |
+| `diagnostics.console[]` | `{ stepId, level, source?, count }`: errors the page wrote to its console (`error`) and exceptions nothing caught (`uncaught`). What an error said is not kept. `source` is `{ path, line?, column? }`, given only when the place named for the error is a file of the application under test. For `error` the browser names the place; for `uncaught` it is read from the error's own trace, which the page can write, so it is the page's claim; `count` is how often the same error from the same place happened in the step. Ordinary lines and warnings are not kept. |
 | `diagnostics.network[]` | `{ stepId, method, path, status, kind }`: requests to the application answered with 400 or above, and requests that got no answer (`status` 0). |
 | `diagnostics.analytics` | An empty list; not collected yet. |
 | `evidenceLimits.leftOut` | How many pictures, console entries and network entries the size limits left out. |
@@ -75,7 +75,10 @@ What does remain of other hands, and is marked as such by where it stands:
 - where a console error came from (`source`) is what the browser reports,
   and for an uncaught error what the first line of its trace says. A page
   names its own files and can write its own trace, so the place is the
-  page's claim, kept only in the form of a cleaned path and two numbers;
+  page's claim, kept only in the form of a cleaned path and two numbers.
+  With the count of an entry, that is what a page that set out to could
+  still write into a result: some 200 letters of plain words and three
+  whole numbers for each entry, 40 entries a step;
 - ids of requirements, scenarios and comparisons are the recording's, checked
   to be plain names.
 
@@ -163,34 +166,46 @@ to be shown; nothing guesses.
 
 | Kept | Form | Never kept |
 |---|---|---|
-| A console error or uncaught exception | Its kind, its step, a count, and where the browser places it if that is a file of the application: a cleaned path, a line, a column | What it said; a trace; anything from another origin |
+| A console error or uncaught exception | Its kind, its step, a count, and the place named for it (by the browser, or for an uncaught error by its own trace, which a page can write) if that is a file of the application: a cleaned path, a line, a column | What it said; a trace; anything from another origin |
 | A failed request | Step, method from a known list, cleaned path, status, the browser's kind of request | Query, fragment, host, headers, bodies, the browser's reason |
 | A step | An action from a known list; a cleaned path, or the kind of locator and a known role | A locator's words; what was typed, sent or answered; what the step printed |
 | A compared value | Itself, if it is a plain number or amount of at most 24 characters and 12 digits | Any value with words in it: `not shown` |
 | A picture after a step | PNG or JPEG named `step-N`, secret fields covered | See below |
 
 **A path is closed by default.** A query, a fragment and `;parameters` are
-cut off. Each segment is decoded and kept only if it is plain printable
-characters and reads as an ordinary name: words of letters joined by `-`,
-`_` or `~`, or a file name of such words with one of the endings a web
-application serves. Anything else becomes `[redacted]`. **No number is
-kept**: an id, a code and a count cannot be told apart, so `/orders/12345`
-is given as `/orders/[redacted]`. Only a short name that starts with a
-letter and has a digit in it (`v2`, `sha1`) stays. A name with a dot inside
-it, which is how a host is written, is replaced. A segment that names a
-credential or a link meant for one person is kept only if it is one plain
-word, and **every segment after it is replaced**. Such a name is found a
-part at a time, whether it stands alone, in the plural, joined to another
-word or inside one (`token`, `password`, `session`, `otp`, `pins`,
-`reset-link`, `verification`, `magiclink`, `apiKeys`, `2fa` and the like).
-The list is of names, and a name not on it is not known: see the residual
-risk below. A path that holds a secret
-the executor was given, read as a whole and decoded up to three times, with
-or without the empty and hidden segments a reader would skip, is replaced
-whole; so is a path with an address inside it. At most 20 segments and 200
-characters are kept. Cleaning a cleaned path changes nothing; a test makes
-120,000 paths from the pieces that broke earlier versions and holds each to
-that, to plain printable output, and to holding no known secret.
+cut off. A path longer than 1,000 characters is not read in part: it is
+replaced whole. Each segment is decoded and kept only if it is plain
+printable characters and reads as an ordinary name: words of letters joined
+by `-`, `_` or `~`, or a file name of such words with one of the endings a
+web application serves. Anything else becomes `[redacted]`.
+
+- **Numbers are not kept**: an id, a code and a count cannot be told apart,
+  so `/orders/12345` is given as `/orders/[redacted]`. The one exception is
+  a single short name of one to three letters followed by one or two digits
+  (`v2`, `sha1`, `md5`), kept once in a path. A second one, or a longer
+  one, is replaced: that is how a key is written in groups.
+- A name with a dot inside it, which is how a host is written, is replaced.
+- A segment that names a credential or a link meant for one person is kept
+  only if it is one plain word, and **every segment after it is replaced**.
+  A segment that cannot be read as one segment is treated the same way.
+  Long names count wherever they stand in a segment (`token`, `password`,
+  `session`, `reset`, `verification`, `magiclink`). Short names (`otp`,
+  `pin`, `key`, `pass`, `code`, `auth` and the like) count at the start or
+  the end of a part of a segment, so `otpcode`, `accesskey`, `apiKeys`,
+  `pins` and `2fa` count; so do `passengers` and `monkey`, and what follows
+  those is lost. The list is of names, and a name not on it is not known:
+  see the residual risk below.
+- A path that holds a value the executor was given is replaced whole: a
+  secret, or a value a manifest declares such as the password of an account
+  the application ships with (four characters or more), in any case, read
+  as a whole and decoded up to three times, with or without the empty and
+  hidden segments a reader would skip. So is a path with an address inside
+  it.
+
+At most 20 segments and 200 characters are kept. Cleaning a cleaned path
+changes nothing; a test makes 120,000 paths from the pieces that broke
+earlier versions and holds each to that, to plain printable output, to no
+three digits together, and to holding no known secret.
 
 Limits:
 

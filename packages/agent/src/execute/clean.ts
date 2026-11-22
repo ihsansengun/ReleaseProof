@@ -10,7 +10,8 @@
  * What is kept is of two kinds, each with a form that can be checked:
  *
  *   - a path, cleaned segment by segment and closed by default: a segment is
- *     kept only if it reads as an ordinary name (no number is kept), and
+ *     kept only if it reads as an ordinary name of letters (one short name
+ *     with a digit, such as "v2", is kept once in a path; no other number),
  *     nothing after a segment that names a credential is kept;
  *   - a value that is a plain number or amount.
  *
@@ -48,16 +49,23 @@ function made(text: string): { letters: number; digits: number; others: number }
  * in a name they stand, so a plural, a longer form or a joined word counts ("verification", "pwreset").
  */
 const NAME_HOLDS = ["token", "secret", "passw", "passphrase", "passcode", "pwd", "credential", "signature", "csrf", "xsrf", "cookie", "session", "bearer", "jwt", "oauth", "apikey", "reset", "verif", "confirm", "activat", "invit", "magic", "unsubscrib", "recover", "licen", "voucher", "coupon", "redeem", "nonce", "authent", "authoriz"];
-/** The short ones count only as a whole part of a name, alone or in the plural: "pin" and "pins", not "pink". */
-const NAME_PARTS = new Set(["auth", "otp", "pin", "key", "sig", "pass", "pw", "code", "sid", "mfa", "tfa", "fa", "sso", "grant", "salt", "serial"]);
+/**
+ * The short ones count at the start or the end of a part of a name ("otpcode", "accesskey", "pins"), since that
+ * is how they are joined to another word. A word that only happens to start or end so ("pink", "monkey") is
+ * taken for a name too: what follows it is lost, and nothing is kept that should not be.
+ */
+const NAME_ENDS = ["auth", "otp", "pin", "key", "pass", "code", "mfa", "tfa", "sso", "grant", "salt", "serial", "cvv", "cvc", "ssn"];
+/** Words that start so and are known not to be such names. */
+const NOT_NAMES = new Set(["author", "authors", "authored", "keyboard", "keyboards", "keyword", "keywords"]);
+/** Two letters are too few to look for inside a word: these count only as a whole part. */
+const NAME_PARTS = new Set(["pw", "fa", "sig", "sid"]);
 
 /**
  * Whether a name is, or holds, the name of a credential. The name is read a part at a time: its letters, split
  * where anything that is not a letter stands and where a capital begins a word, in lower case.
  */
 export function namesCredential(name: string): boolean {
-  const read = name.length > 200 ? name.slice(0, 200) : name;
-  const parts = read
+  const parts = name
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .toLowerCase()
     .split(/[^a-z]+/)
@@ -65,8 +73,8 @@ export function namesCredential(name: string): boolean {
   if (parts.length === 0) return false;
   const whole = parts.join("");
   if (NAME_HOLDS.some((word) => whole.includes(word))) return true;
-  const single = (part: string) => (part.endsWith("es") && NAME_PARTS.has(part.slice(0, -2)) ? part.slice(0, -2) : part.endsWith("s") && NAME_PARTS.has(part.slice(0, -1)) ? part.slice(0, -1) : part);
-  return [...parts, whole].some((part) => NAME_PARTS.has(single(part)));
+  const plural = (part: string) => (part.endsWith("es") ? [part, part.slice(0, -1), part.slice(0, -2)] : part.endsWith("s") ? [part, part.slice(0, -1)] : [part]);
+  return [...parts, whole].some((part) => !NOT_NAMES.has(part) && plural(part).some((form) => NAME_PARTS.has(form) || NAME_ENDS.some((word) => form.startsWith(word) || form.endsWith(word))));
 }
 
 /** A part of a path segment that reads as an ordinary name or a short number. */
@@ -75,9 +83,8 @@ function ordinaryPart(part: string): boolean {
   const { letters, digits, others } = made(part);
   if (others > 0) return false;
   if (digits === 0) return letters <= 24;
-  // A number is an id, a code or a count, and which cannot be told: it is not kept. A short name with a digit in
-  // it that starts with a letter ("v2", "sha1", "h264") is a name.
-  return letters > 0 && part.length <= 4 && isLetter(part.charCodeAt(0));
+  // A number is an id, a code or a count, and which cannot be told: it is not kept.
+  return false;
 }
 
 /** The endings of the files a web application serves. Any other ending is not one: ".example" is the end of a host's name. */
@@ -158,10 +165,11 @@ export function cleanPathWith(scrub: (text: string) => string, pathname: string)
 
 function cleanedPath(scrub: (text: string) => string, pathname: string): string {
   if (typeof pathname !== "string") return `/${REDACTED}`;
-  const cut = pathname.length > PATH_READ ? pathname.slice(0, PATH_READ) : pathname;
   // Nothing after the first sign that ends a path: a query, a fragment, or parameters.
-  const end = cut.search(/[?#;]/);
-  const read = end === -1 ? cut : cut.slice(0, end);
+  const end = pathname.slice(0, PATH_READ + 1).search(/[?#;]/);
+  const read = end === -1 ? pathname : pathname.slice(0, end);
+  // A path longer than is read is not read in part: a cut can go through a secret and leave most of it.
+  if (read.length > PATH_READ) return `/${REDACTED}`;
   // A secret the caller knows, anywhere in the whole: as it reads decoded, with what is not shown taken out, and
   // with the empty and dotted segments a reader would skip taken out.
   const whole = decoded(read);
@@ -173,6 +181,7 @@ function cleanedPath(scrub: (text: string) => string, pathname: string): string 
   if (whole.includes("://")) return `/${REDACTED}`;
   const out: string[] = [];
   let afterCredential = false;
+  let versioned = false;
   for (const raw of read.split("/")) {
     if (raw === "" || raw === "." || raw === "..") continue;
     if (out.length >= SEGMENTS) {
@@ -185,7 +194,16 @@ function cleanedPath(scrub: (text: string) => string, pathname: string): string 
     }
     const segment = decoded(raw);
     if (segment === undefined || segment.includes("/")) {
+      // What cannot be read as one segment may still name a credential, or hide one: nothing after it is kept.
+      afterCredential = true;
       out.push(REDACTED);
+      continue;
+    }
+    // One short name of letters with one or two digits after them ("v2", "sha1", "md5"), once in a path: more of
+    // them, or longer ones, are how a key is written in groups.
+    if (!versioned && /^[A-Za-z]{1,3}\d{1,2}$/.test(segment)) {
+      versioned = true;
+      out.push(segment);
       continue;
     }
     if (namesCredential(segment)) {

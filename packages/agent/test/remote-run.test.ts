@@ -374,7 +374,9 @@ test("the command runs an approved request once, with no model key present, and 
 
     const first = await exec(args(path.join(dir, "out-1")));
     assert.equal(first.code, 0, first.text);
-    assert.match(first.text, /S1 {2}failed/);
+    assert.match(first.text, /scenario 1 {2}failed/);
+  // What is printed may reach a log: it holds no reason a scenario gave and none of a recording's words.
+  assert.doesNotMatch(first.text, /Replay|diverged|loyalty-balance|testid/);
     assert.match(first.text, /with no model/);
     const written = JSON.parse(readFileSync(path.join(dir, "out-1", "remote-run.json"), "utf8")) as RemoteRun;
     assert.deepEqual([written.results[0]!.assertionResults[0]!.expected, written.results[0]!.assertionResults[0]!.actual], [160, 60]);
