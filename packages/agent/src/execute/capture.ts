@@ -15,8 +15,9 @@
  *     credentials, tokens, long opaque values), and is cut to a length;
  *   - an address is given as its path, without query, fragment or host;
  *   - a picture cannot be redacted after it is taken, so before each one
- *     every password field, and every field the executor typed a secret into,
- *     is covered;
+ *     every password, card and one-time-code field in the page itself, and
+ *     every field the executor typed a secret into, is covered. Nothing is
+ *     done to the page to take it: an animation is left to run as it would;
  *   - there is a limit on each picture, on all pictures of a scenario
  *     together, and on how many console and network entries are kept. What a
  *     limit left out is counted and said, never dropped silently.
@@ -35,7 +36,13 @@ export const CAPTURE_LIMITS = {
   entries: 200,
   /** Characters of any one text. */
   text: 300,
+  /** Entries of each kind kept from any one step, so that a noisy step does not use up the whole allowance. */
+  entriesPerStep: 40,
+  /** Characters of a text that are looked at at all. The rest is dropped before anything else is done with it. */
+  textRead: 4_000,
 } as const;
+
+const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
 export type CapturedStep = {
   /** The step's place in the scenario, from 1. */
@@ -82,18 +89,56 @@ type Collector = {
 
 const collectors = new WeakMap<Session, Collector>();
 
+/**
+ * Makes a text fit to leave the machine. Cut first: a page can write a line of
+ * any length, and nothing below may take time that grows with it. Then
+ * characters that are not shown (they can split a word a pattern looks for),
+ * the session's own secrets, addresses down to their path, credentials named
+ * in ways the shared redaction does not know, the shared redaction, and the
+ * final length.
+ */
 const clean = (session: Session, text: string): string => {
-  const flat = redact(session.vault.scrub(text)).replace(/\s+/g, " ").trim();
+  const read = text.length > CAPTURE_LIMITS.textRead ? text.slice(0, CAPTURE_LIMITS.textRead) : text;
+  const shown = read.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\u00AD]/g, "").replace(/\s+/g, " ");
+  const flat = redact(
+    session.vault
+      .scrub(shown)
+      // An address inside a text: its path, and nothing else of it.
+      .replace(/\bhttps?:\/\/[^\s"'<>)\]]+/gi, (address) => {
+        try {
+          return new URL(address).pathname.split(";")[0] ?? "/";
+        } catch {
+          return "[address]";
+        }
+      })
+      // Names such as access_token, clientSecret or pwd, which the shared patterns pass over.
+      .replace(/([A-Za-z0-9_-]*(?:token|secret|passw(?:or)?d|passcode|pwd|apikey|api_key|credential)[A-Za-z0-9_-]*["']?\s*[:=]\s*["']?)([^\s"',;&}\]]+)/gi, "$1[redacted]"),
+  ).trim();
   return flat.length > CAPTURE_LIMITS.text ? `${flat.slice(0, CAPTURE_LIMITS.text - 1)}…` : flat;
 };
 
-/** The path of an address, and nothing else of it. Empty when it is not on the application. */
-function pathOf(address: string, origin: string): string | undefined {
+/**
+ * The path of an address, and nothing else of it, cleaned as any text is: a
+ * path can hold an e-mail address, a token or the executor's own secret.
+ * Undefined when the address is not on the application.
+ */
+function pathOf(session: Session, address: string, origin: string): string | undefined {
   try {
     const url = new URL(address);
     if (url.origin !== origin) return undefined;
-    const plain = url.pathname.split(";")[0] ?? "/";
-    return plain.length > 200 ? `${plain.slice(0, 199)}…` : plain;
+    let plain = url.pathname.split(";")[0] ?? "/";
+    try {
+      plain = decodeURIComponent(plain);
+    } catch {
+      // Left as it is written.
+    }
+    // A long run of letters and digits in a path is a token or a key more often than a name.
+    const opaque = plain
+      .split("/")
+      .map((segment) => (/^[A-Za-z0-9_.~-]{16,}$/.test(segment) && /\d/.test(segment) && /[A-Za-z]/.test(segment) ? "[redacted]" : segment))
+      .join("/");
+    const cleaned = clean(session, opaque).replace(/\s+/g, "");
+    return cleaned.startsWith("/") ? cleaned.slice(0, 200) : `/${cleaned.slice(0, 199)}`;
   } catch {
     return undefined;
   }
@@ -104,32 +149,36 @@ export function startCapture(session: Session, startedAt: number): Capture {
   const capture: Capture = { steps: [], console: [], network: [], leftOut: { screenshots: 0, console: 0, network: 0 } };
   const origin = new URL(session.baseUrl).origin;
   const page: Page = session.page;
-  const step = () => session.steps.length + 1;
-
+  // What happens while or after the last step is that step's: there is no step after it to belong to.
+  const step = () => Math.max(1, Math.min(session.steps.length + 1, session.outcome ? session.steps.length : Number.MAX_SAFE_INTEGER));
+  const room = (kept: { step: number }[], at: number) => kept.length < CAPTURE_LIMITS.entries && kept.filter((entry) => entry.step === at).length < CAPTURE_LIMITS.entriesPerStep;
   const said = (level: CapturedConsole["level"], text: string) => {
-    if (capture.console.length >= CAPTURE_LIMITS.entries) capture.leftOut.console += 1;
-    else capture.console.push({ step: step(), level, text: clean(session, text) });
+    const at = step();
+    if (!room(capture.console, at)) capture.leftOut.console += 1;
+    else capture.console.push({ step: at, level, text: clean(session, text) });
   };
   const failed = (entry: Omit<CapturedRequest, "step">) => {
-    if (capture.network.length >= CAPTURE_LIMITS.entries) capture.leftOut.network += 1;
-    else capture.network.push({ step: step(), ...entry });
+    const at = step();
+    if (!room(capture.network, at)) capture.leftOut.network += 1;
+    else capture.network.push({ step: at, ...entry });
   };
+  const methodOf = (method: string) => (METHODS.has(method.toUpperCase()) ? method.toUpperCase() : "OTHER");
 
   const onConsole = (message: ConsoleMessage) => {
     if (message.type() === "error") said("error", message.text());
   };
   const onPageError = (error: Error) => said("uncaught", error.message.split("\n")[0] ?? "");
   const onRequestFailed = (request: Request) => {
-    const where = pathOf(request.url(), origin);
+    const where = pathOf(session, request.url(), origin);
     // A request to anywhere else was stopped by the run itself. That is the run's doing, not a failure of the application.
     if (where === undefined) return;
-    failed({ method: request.method(), path: where, status: 0, kind: request.resourceType(), failure: clean(session, request.failure()?.errorText ?? "no answer") });
+    failed({ method: methodOf(request.method()), path: where, status: 0, kind: request.resourceType(), failure: clean(session, request.failure()?.errorText ?? "no answer") });
   };
   const onResponse = (response: Response) => {
     if (response.status() < 400) return;
-    const where = pathOf(response.url(), origin);
+    const where = pathOf(session, response.url(), origin);
     if (where === undefined) return;
-    failed({ method: response.request().method(), path: where, status: response.status(), kind: response.request().resourceType() });
+    failed({ method: methodOf(response.request().method()), path: where, status: response.status(), kind: response.request().resourceType() });
   };
 
   page.on("console", onConsole);
@@ -182,12 +231,13 @@ export async function captureStep(session: Session, began: number, mayPicture: {
     return;
   }
   try {
-    const mask = [session.page.locator('input[type="password"]'), ...collector.secretFields];
-    let picture = await session.page.screenshot({ type: "png", mask, maskColor: "#3a3a3a", animations: "disabled", caret: "hide", timeout: 5_000 });
+    // Fields that hold a secret by their kind, and fields the executor typed a secret into.
+    const mask = [session.page.locator('input[type="password"], input[autocomplete*="password" i], input[autocomplete^="cc-" i], input[autocomplete="one-time-code" i]'), ...collector.secretFields];
+    let picture = await session.page.screenshot({ type: "png", mask, maskColor: "#3a3a3a", caret: "hide", timeout: 5_000 });
     let name = `step-${index}.png`;
     if (picture.length > CAPTURE_LIMITS.screenshotBytes) {
       // A busy page as a PNG can be large. The same picture, compressed, usually is not.
-      picture = await session.page.screenshot({ type: "jpeg", quality: 60, mask, maskColor: "#3a3a3a", animations: "disabled", caret: "hide", timeout: 5_000 });
+      picture = await session.page.screenshot({ type: "jpeg", quality: 60, mask, maskColor: "#3a3a3a", caret: "hide", timeout: 5_000 });
       name = `step-${index}.jpg`;
     }
     if (picture.length > CAPTURE_LIMITS.screenshotBytes || collector.screenshotBytes + picture.length > CAPTURE_LIMITS.screenshotBytesPerScenario) {

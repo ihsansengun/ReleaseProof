@@ -32,6 +32,23 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
         setTimeout(() => { throw new Error("points is not defined"); }, 50);
       </script>`);
     }
+    if (url.pathname === "/moving") {
+      return html(`<style>@keyframes slide { from { margin-left: 0 } to { margin-left: 40px } } #a { animation: slide 4s linear } #t { transition: opacity 4s linear; opacity: 1 }</style>
+        <p id="a">Animated</p><p id="t">Fading</p><p data-testid="ended">1</p>
+        <script>const done = () => (document.querySelector('[data-testid=ended]').textContent = '2');
+          document.getElementById('a').addEventListener('animationend', done);
+          document.getElementById('t').addEventListener('transitionend', done);
+          requestAnimationFrame(() => (document.getElementById('t').style.opacity = '0.5'));</script>`);
+    }
+    if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
+    if (url.pathname === "/leaky") {
+      return html(`<h1>Leaky</h1><script>
+        console.error("access_token=acc-tok-12345 refresh_token=ref-tok-12345 client_secret=cs-12345 authToken=camel-12345 pwd=pwd-12345");
+        console.error("pass\\u200Bword=zw-hunter2 for ada\\u200B@example.test");
+        console.error("Request to http://127.0.0.1:1/api/points?account=42 failed at http://shop.example/app.js:10:15");
+        for (const p of ["/users/ada@example.test/orders", "/reset/tok4f9a8b7c6d5e4f3a2b1c", "/orders/12345"]) fetch(p).catch(() => {});
+      </script>`);
+    }
     if (url.pathname === "/chatty") return html(`<h1>Chatty</h1><script>for (let i = 0; i < 260; i++) console.error("line " + i + " " + "x".repeat(600));</script>`);
     if (url.pathname === "/sign-in") return html(`<label style="display:block;font-size:40px">Password <input type="password" style="display:block;width:1200px;height:500px;font-size:300px" value="hunter2"></label>`);
     if (url.pathname === "/api/points") {
@@ -130,8 +147,9 @@ test("a password field is covered in the picture", async () => {
 test("there is a limit on entries and on the length of each, and what is left out is counted", async () => {
   const { result } = await run([step("navigate", { path: "/chatty" }), FINISH], true);
   const capture = result.capture!;
-  assert.equal(capture.console.length, CAPTURE_LIMITS.entries);
-  assert.equal(capture.leftOut.console, 60);
+  // One step may not use up the whole allowance.
+  assert.equal(capture.console.length, CAPTURE_LIMITS.entriesPerStep);
+  assert.equal(capture.leftOut.console, 260 - CAPTURE_LIMITS.entriesPerStep);
   assert.ok(capture.console.every((entry) => entry.text.length <= CAPTURE_LIMITS.text));
 });
 
@@ -141,4 +159,31 @@ test("nothing is collected unless the run asks: no pictures, no record, the resu
   assert.ok(!("capture" in result));
   assert.deepEqual(readdirSync(dir).filter((name) => name.startsWith("step-")), []);
   assert.ok(existsSync(path.join(dir, "result.json")) && statSync(path.join(dir, "result.json")).size > 0);
+});
+
+test("taking the pictures changes nothing in the page: an animation runs as it would without them", async () => {
+  const read = [step("navigate", { path: "/moving" }), step("observe", { name: "ended", target: { source: "page", by: "testid", value: "ended" } }), FINISH];
+  const without = await run(read, false);
+  const withPictures = await run(read, true);
+  assert.deepEqual(without.result.observations, { ended: 1 });
+  assert.deepEqual(withPictures.result.observations, without.result.observations);
+});
+
+test("a console line of any length costs no more than a short one", async () => {
+  const began = Date.now();
+  const { result } = await run([step("navigate", { path: "/long" }), FINISH], true);
+  assert.ok(Date.now() - began < 8_000, `took ${Date.now() - began} ms`);
+  assert.ok(result.capture!.console[0]!.text.length <= CAPTURE_LIMITS.text);
+});
+
+test("credentials under other names, split by characters that are not shown, or inside an address or a path, do not get through", async () => {
+  const { result } = await run([step("navigate", { path: "/leaky" }), FINISH], true);
+  const text = JSON.stringify(result.capture);
+  for (const secret of ["acc-tok-12345", "ref-tok-12345", "cs-12345", "camel-12345", "pwd-12345", "zw-hunter2", "example.test", "127.0.0.1", "account=42", "shop.example", "tok4f9a8b7c6d5e4f3a2b1c"]) assert.ok(!text.includes(secret), `${secret} in ${text}`);
+  const paths = result.capture!.network.map((entry) => entry.path).sort();
+  // A short number in a path is an id and stays; an address and a token do not.
+  assert.ok(paths.includes("/orders/12345"), paths.join(" "));
+  assert.ok(paths.some((p) => p.startsWith("/reset/") && p.includes("[redacted")), paths.join(" "));
+  assert.ok(paths.some((p) => p.startsWith("/users/") && p.includes("[redacted")), paths.join(" "));
+  assert.ok(result.capture!.network.every((entry) => ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "OTHER"].includes(entry.method)));
 });

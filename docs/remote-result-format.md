@@ -118,8 +118,8 @@ evidence never becomes a pass.
 
 A remote run collects, for every scenario:
 
-- **a picture after each step**, of the window as a person would see it, and
-  the time the step began and took;
+- **a picture after each step**, where one could be kept, of the window as a
+  person would see it, and the time the step began and took;
 - **console errors** and uncaught exceptions;
 - **failed requests** to the application.
 
@@ -141,20 +141,41 @@ It leaves the machine, so it is kept small and kept clean:
 | --- | --- |
 | One picture | 400,000 bytes. A larger PNG is taken again as a JPEG; if still larger it is left out |
 | All pictures of one scenario | 3,000,000 bytes |
-| Console entries, and network entries, per scenario | 200 each |
-| Any one text | 300 characters |
+| Console entries, and network entries, per scenario | 200 each, and 40 from any one step |
+| Any one text | 300 characters, of the first 4,000 a page wrote; the rest is not looked at |
 
-- Text passes through the scrubbing of the secrets the executor was given,
-  and through the engine's redaction of e-mail addresses, credentials, tokens
-  and long opaque values.
-- An address is given as its path: no query, fragment, parameters or host.
-- A picture cannot be cleaned after it is taken. Before each one, every
-  password field and every field the executor typed a secret into is covered
-  with a flat colour. **Anything else the page shows is in the picture**: a
-  name, an order, an address shown as text. That is what a picture of a page
-  is, and it is why real customer data stays out of these runs for now.
+- Text is cut before anything else is done with it, so a line of any length
+  costs the run no time. Characters that are not shown are removed, then the
+  secrets the executor was given, then credentials under common names
+  (`access_token`, `clientSecret`, `pwd` and the like), then what the
+  engine's shared redaction knows: e-mail addresses, credentials, tokens and
+  long opaque values.
+- An address, in a network entry or inside a console text, is given as its
+  path: no query, fragment, parameters or host. The path is cleaned as text
+  is, and a long run of letters and digits in it is taken for a token.
+- A picture cannot be cleaned after it is taken. Before each one, password,
+  card and one-time-code fields in the page itself, and every field the
+  executor typed a secret into, are covered with a flat colour.
+- Nothing is done to the page to take a picture: an animation runs as it
+  would without one, so collecting changes nothing a comparison reads.
 - No picture is kept of a page that is not the application under test.
 - What a limit left out is counted in `evidenceLimits.leftOut`.
+- The result takes in what was collected by its own rules, not on trust: an
+  entry that does not fit them is left out and counted.
+
+**What this does not catch.** Redaction looks for shapes it knows. These can
+still appear:
+
+- in text: a secret with no name beside it ("the code is 493817"), a card or
+  telephone number, a postal address, a person's name, a value encoded
+  another way (base64, percent-encoding), the password of an account the
+  target's manifest declares;
+- in a picture: anything the page shows as text; a field of another kind
+  that holds a secret (a password shown in a plain text field, a text area);
+  a password field inside a frame or a closed component, which shows as dots.
+
+That is why real customer data and real credentials stay out of these runs
+for now.
 
 A request the run itself stopped (to any other origin) is not listed as a
 failure of the application. The picture the shared comparison code takes at a

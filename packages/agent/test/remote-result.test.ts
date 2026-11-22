@@ -348,3 +348,36 @@ test("evidence ids are different for different steps and for different runs", ()
   const ids = [evidenceIdOf(RUN_ID, "S1-1", "screenshot"), evidenceIdOf(RUN_ID, "S1-2", "screenshot"), evidenceIdOf(other, "S1-1", "screenshot"), evidenceIdOf(other, "S1-2", "screenshot")];
   assert.equal(new Set(ids).size, 4);
 });
+
+test("what was collected is taken in by the result's own rules, whoever wrote the record", () => {
+  const hostile = scenario("S1", "passed", 160);
+  hostile.capture = {
+    steps: [{ step: 1, atMs: Number.NaN, durationMs: -7, screenshot: "step-1.png" }, { step: 2, atMs: 350, durationMs: 120.6, screenshot: "step-2.png" }],
+    console: [
+      { step: 1, level: "<script>alert(1)</script>" as never, text: "x" },
+      { step: 99, level: "error", text: `password=hunter2 ${"y".repeat(100_000)}` },
+      ...Array.from({ length: 5_000 }, () => ({ step: 2, level: "error" as const, text: "line" })),
+    ],
+    network: [
+      { step: 1, method: "HUNTER2SECRET", path: "https://elsewhere.example/x?token=abc#frag", status: 500, kind: "fetch" },
+      { step: -5, method: "GET", path: "/ok", status: Number.NaN, kind: "fetch" },
+      { step: 2, method: "HUNTER2SECRET", path: "/api/x", status: 400, kind: "K".repeat(50_000), failure: "f".repeat(50_000) },
+    ],
+    leftOut: { screenshots: -3, console: 1.5, network: null as never },
+  };
+  const result = remoteResult(record([hostile]));
+  const text = JSON.stringify(result);
+  assert.ok(text.length < 120_000, `the result stays small: ${text.length}`);
+  assert.ok(!text.includes("<script>") && !text.includes("HUNTER2SECRET") && !text.includes("elsewhere.example") && !text.includes("null"));
+  assert.ok(result.diagnostics.console.length <= 200);
+  assert.ok(result.diagnostics.console.every((entry) => entry.text.length <= 300 && /^S1-[12]$/.test(entry.stepId)));
+  assert.deepEqual(result.diagnostics.network, [{ stepId: "S1-2", method: "OTHER", path: "/api/x", status: 400, kind: "other", failure: `${"f".repeat(299)}…` }]);
+  // Left out, and counted: the entry with a level of its own, the two requests that do not fit, and everything past the limit.
+  assert.equal(result.evidenceLimits.leftOut.network, 2);
+  assert.equal(result.evidenceLimits.leftOut.console, 1 + (5_002 - 200));
+  assert.equal(result.evidenceLimits.leftOut.screenshots, 0);
+  assert.equal(result.steps[0]!.atMs, undefined);
+  assert.equal(result.steps[0]!.durationMs, undefined);
+  assert.equal(result.steps[1]!.durationMs, 121);
+  assert.equal(result.verdict, "unverified");
+});

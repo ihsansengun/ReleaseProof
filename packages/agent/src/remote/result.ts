@@ -164,7 +164,9 @@ export function evidenceIdOf(runId: string, stepId: string, kind: string): strin
 /** The steps an executor can take. Anything else a recording calls a step is not named here. */
 const ACTIONS = new Set(["navigate", "click", "fill", "select", "press", "upload", "api_request", "observe", "check", "finish"]);
 const LOCATED_BY = new Set(["role", "label", "text", "testid", "labelled", "cell"]);
-const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]);
+const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+/** Console entries, and network entries, taken from one scenario. The same number the collector keeps. */
+const ENTRIES = 200;
 /** How much of a recording's own words (a locator, a path) is shown. Enough to tell steps apart. */
 const WORDS = 80;
 
@@ -245,14 +247,36 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     const assertions = new Map(run.plan.scenarios.find((planned) => planned.scenario.id === result.scenarioId)?.scenario.assertions.map((assertion) => [assertion.id, assertion]) ?? []);
     const compared = new Map(result.assertionResults.map((made) => [made.assertionId, made]));
     // Times are given from the start of the first scenario, so that steps of a later one come later.
-    const started = Math.max(0, Date.parse(result.startedAt) - firstStarted);
-    for (const said of result.capture?.console ?? []) consoleEntries.push({ stepId: `${result.scenarioId}-${said.step}`, level: said.level, text: said.text });
-    for (const asked of result.capture?.network ?? []) {
-      networkEntries.push({ stepId: `${result.scenarioId}-${asked.step}`, method: METHODS.has(asked.method) ? asked.method : "", path: asked.path, status: asked.status, kind: asked.kind, ...(asked.failure ? { failure: asked.failure } : {}) });
+    const begun = Date.parse(result.startedAt);
+    const started = Number.isFinite(begun) ? Math.max(0, begun - firstStarted) : Number.NaN;
+    // What was collected is taken in again here by its own rules, not on trust: this file is what leaves the
+    // machine, whoever wrote the record it is built from. An entry that does not fit is left out and counted.
+    const stepOf = (value: unknown) => `${result.scenarioId}-${Math.min(Math.max(1, Number.isInteger(value) ? (value as number) : 1), Math.max(1, result.steps.length))}`;
+    const count = (value: unknown) => (Number.isInteger(value) && (value as number) >= 0 ? Math.min(value as number, 1_000_000) : 0);
+    const said = Array.isArray(result.capture?.console) ? result.capture.console : [];
+    const asked = Array.isArray(result.capture?.network) ? result.capture.network : [];
+    for (const entry of said.slice(0, ENTRIES)) {
+      if ((entry?.level !== "error" && entry?.level !== "uncaught") || typeof entry.text !== "string") leftOut.console += 1;
+      else consoleEntries.push({ stepId: stepOf(entry.step), level: entry.level, text: clip(entry.text, 300) });
     }
-    leftOut.screenshots += result.capture?.leftOut.screenshots ?? 0;
-    leftOut.console += result.capture?.leftOut.console ?? 0;
-    leftOut.network += result.capture?.leftOut.network ?? 0;
+    for (const entry of asked.slice(0, ENTRIES)) {
+      const status = Number.isInteger(entry?.status) && entry.status >= 0 && entry.status <= 599 ? entry.status : undefined;
+      if (status === undefined || typeof entry.path !== "string" || !/^\/[^?#\s]*$/.test(entry.path)) {
+        leftOut.network += 1;
+        continue;
+      }
+      networkEntries.push({
+        stepId: stepOf(entry.step),
+        method: typeof entry.method === "string" && METHODS.has(entry.method) ? entry.method : "OTHER",
+        path: clip(entry.path, 200),
+        status,
+        kind: typeof entry.kind === "string" && /^[a-z]{1,20}$/.test(entry.kind) ? entry.kind : "other",
+        ...(typeof entry.failure === "string" && entry.failure !== "" ? { failure: clip(entry.failure, 300) } : {}),
+      });
+    }
+    leftOut.screenshots += count(result.capture?.leftOut?.screenshots);
+    leftOut.console += count(result.capture?.leftOut?.console) + Math.max(0, said.length - ENTRIES);
+    leftOut.network += count(result.capture?.leftOut?.network) + Math.max(0, asked.length - ENTRIES);
     result.steps.forEach((step, index) => {
       const id = `${result.scenarioId}-${index + 1}`;
       const assertionId = step.tool === "check" ? (step.input as { assertionId?: string } | null)?.assertionId : undefined;
@@ -261,9 +285,9 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       const requirementIds = requirementId ? [requirementId] : [];
       // The picture taken after this step, where the run collected one. A picture taken at a comparison by the
       // shared code stays in the run's directory: it is of the whole page and nothing in it is covered.
-      const captured = result.capture?.steps.find((entry) => entry.step === index + 1);
+      const captured = Array.isArray(result.capture?.steps) ? result.capture.steps.find((entry) => entry?.step === index + 1) : undefined;
       let screenshot: RemoteResult["steps"][number]["screenshot"];
-      if (captured?.screenshot && /^step-\d{1,3}\.(png|jpg)$/.test(captured.screenshot)) {
+      if (typeof captured?.screenshot === "string" && /^step-\d{1,3}\.(png|jpg)$/.test(captured.screenshot)) {
         const evidenceId = evidenceIdOf(run.runId, id, "screenshot");
         evidence.push({
           id: evidenceId,
@@ -282,7 +306,8 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         // A comparison step that kept no comparison did not do what it was for.
         outcome: !step.ok || (step.tool === "check" && !made) ? "error" : made && !made.pass ? "mismatch" : "ok",
         requirementIds,
-        ...(captured ? { atMs: started + captured.atMs, durationMs: captured.durationMs } : {}),
+        ...(captured && Number.isFinite(started + captured.atMs) && captured.atMs >= 0 ? { atMs: Math.round(started + captured.atMs) } : {}),
+        ...(captured && Number.isFinite(captured.durationMs) && captured.durationMs >= 0 ? { durationMs: Math.round(captured.durationMs) } : {}),
         // Written here from the comparison. What a step printed can hold what a page or a request said, and stays in the run's record.
         note: made ? `Expected ${clip(String(made.expected), 120)}, observed ${clip(String(made.actual), 120)}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
         ...(screenshot ? { screenshot } : {}),
