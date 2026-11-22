@@ -44,6 +44,8 @@ export type SessionOptions = {
   confine?: boolean;
   /** For a run whose plan is not the engine's own: see `Session.untrustedPlan`. */
   untrustedPlan?: boolean;
+  /** The size of the page. Left to the browser when absent. */
+  viewport?: { width: number; height: number };
   /** Says whether the time allowed has run out. A replay asks before every step. */
   expired?: () => boolean;
 };
@@ -79,7 +81,7 @@ export async function openSession(options: SessionOptions): Promise<OpenSession>
   // nothing the engine holds (model key, tokens) is in a process that parses
   // content from the application under test.
   const browser = await chromium.launch({ env: browserEnv(process.env) });
-  const context = await browser.newContext({ baseURL: manifest.baseUrl, ...(options.confine ? { serviceWorkers: "block" as const } : {}) });
+  const context = await browser.newContext({ baseURL: manifest.baseUrl, ...(options.confine ? { serviceWorkers: "block" as const } : {}), ...(options.viewport ? { viewport: { ...options.viewport } } : {}) });
   const origin = new URL(manifest.baseUrl).origin;
   if (options.confine) {
     // The request filter below does not see WebSockets. One to the application's own host goes through; any other is closed.

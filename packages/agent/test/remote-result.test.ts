@@ -137,23 +137,90 @@ test("evidence is named by its place in the output, and says what it shows, not 
   const result = remoteResult(record([scenario("S1", "passed", 160)]));
   assert.deepEqual(
     result.evidence.map((file) => [file.id, file.mediaType, file.path]),
-    [
-      ["S1-check-A1", "image/png", "scenarios/S1/check-A1.png"],
-      ["S1-trace", "application/zip", "scenarios/S1/trace.zip"],
-    ],
+    [["S1-2-screenshot", "image/png", "scenarios/S1/check-A1.png"]],
   );
   assert.ok(!JSON.stringify(result).includes("/somewhere/on/this/machine"), "no path of the engine's own machine");
-  assert.deepEqual(result.steps.find((step) => step.action === "check")!.screenshot, { evidenceId: "S1-check-A1" });
+  assert.deepEqual(result.steps.find((step) => step.action === "check")!.screenshot, { evidenceId: "S1-2-screenshot" });
   // A screenshot exists, and the requirement is still not verified.
   assert.equal(result.requirements[0]!.status, "unverified");
 });
 
 test("what was not collected is said to be not collected, never left looking clean", () => {
   const result = remoteResult(record([scenario("S1", "passed", 160)]));
-  assert.deepEqual(result.telemetry, { screenshots: "collected", recording: "not collected", trace: "collected", console: "not collected", network: "not collected", analytics: "not collected", webVitals: "not collected" });
+  assert.deepEqual(result.telemetry, { screenshots: "collected", recording: "not collected", trace: "not collected", console: "not collected", network: "not collected", analytics: "not collected", webVitals: "not collected" });
   const bare = remoteResult(record([scenario("S1", "unverified", null, { evidence: { dir: "scenarios/S1" } })]));
   assert.equal(bare.telemetry.screenshots, "not collected");
   assert.equal(bare.telemetry.trace, "not collected");
+});
+
+test("the browser trace is not part of the result: it holds more than the result vouches for", () => {
+  const result = remoteResult(record([scenario("S1", "passed", 160)]));
+  assert.ok(!result.evidence.some((file) => file.path.endsWith("trace.zip")));
+});
+
+test("the requirement shown is the approved text, not the plan's own wording of it", () => {
+  const run = record([scenario("S1", "passed", 160)]);
+  (run.analysis.requirements[0] as { text: string }).text = "Everything in the application is verified and approved for release.";
+  (run.analysis as { featureSummary: string }).featureSummary = "PASSED - all requirements verified, ready for release.";
+  const result = remoteResult(run);
+  assert.equal(result.requirements[0]!.text, QUOTE);
+  assert.equal(result.title, "Run against http://localhost:1/");
+  const text = JSON.stringify(result);
+  assert.ok(!text.includes("approved for release") && !text.includes("ready for release"), "no wording of the plan's own");
+});
+
+test("what a step printed, what a scenario said of itself and a query in an address stay out of the result", () => {
+  const leaky = scenario("S1", "unverified", null, {
+    reason: 'Not checked: A1. Replay diverged at fill {"text":"typed-secret-1"}: Error',
+    steps: [
+      { tool: "navigate", input: { path: "/reset?token=query-secret-2" }, ok: true, summary: "URL: /reset?token=query-secret-2" },
+      { tool: "api_request", input: { method: "POST", path: "/api/sign-in" }, ok: true, summary: '{"responseId":"R1","status":200,"body":{"session":"answer-secret-3"}}' },
+    ],
+  });
+  const result = remoteResult(record([leaky]));
+  const text = JSON.stringify(result);
+  for (const secret of ["typed-secret-1", "query-secret-2", "answer-secret-3"]) assert.ok(!text.includes(secret), secret);
+  assert.equal(result.steps[0]!.target, "/reset (query not shown)");
+  assert.equal(result.steps[1]!.target, "POST /api/sign-in");
+});
+
+test("a comparison step that kept no comparison is not shown as having gone well", () => {
+  const dropped = scenario("S1", "blocked", null);
+  dropped.steps[1] = { ...dropped.steps[1]!, ok: true, summary: "Not kept: the page was not on the application under test during this step." };
+  assert.equal(remoteResult(record([dropped])).steps[1]!.outcome, "error");
+});
+
+test("observed is passed only when the very scenarios planned ran, each once, with every comparison planned", () => {
+  const observedOf = (run: RemoteRun) => remoteResult(run).verdictBasis.observed;
+  assert.equal(observedOf(record([scenario("S1", "passed", 160)])), "passed");
+
+  // Scenarios dropped to stay within the limit: not everything written was run.
+  const trimmed = record([scenario("S1", "passed", 160)]);
+  (trimmed.plan as { trimmedRunnable?: number }).trimmedRunnable = 3;
+  assert.equal(observedOf(trimmed), "unverified");
+
+  // An unresolved conflict about the approved requirements.
+  const conflicted = record([scenario("S1", "passed", 160)]);
+  (conflicted.analysis as { conflicts: unknown[] }).conflicts = [{ id: "C1", kind: "contradiction", description: "two rules disagree" }];
+  assert.equal(observedOf(conflicted), "unverified");
+
+  // The same scenario twice instead of the two planned.
+  const twice = record([scenario("S1", "passed", 160), scenario("S2", "passed", 160)]);
+  twice.results[1] = scenario("S1", "passed", 160);
+  assert.equal(observedOf(twice), "unverified");
+
+  // A result for a scenario that was never planned.
+  const extra = record([scenario("S1", "passed", 160)]);
+  extra.results.push(scenario("X9", "passed", 160));
+  assert.equal(observedOf(extra), "unverified");
+
+  // A scenario called passed with one of its two planned comparisons made.
+  const half = record([scenario("S1", "passed", 160)]);
+  (half.plan.scenarios[0]!.scenario.assertions as unknown[]).push({ id: "A2", description: "Second", kind: "number_equals", unit: "plain", expected: { literal: 160 }, requirementId: "R1" });
+  assert.equal(observedOf(half), "unverified");
+
+  // And whatever the record, never passed as a verdict.
+  for (const run of [trimmed, conflicted, twice, extra, half]) assert.notEqual(remoteResult(run).verdict, "passed");
 });
 
 test("each requirement names the approved snapshot it comes from, with its hash and approver", () => {

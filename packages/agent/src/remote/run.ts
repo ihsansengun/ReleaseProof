@@ -32,7 +32,7 @@ import type { SourceRecord } from "../sources.ts";
 import { validatePlan } from "../validate.ts";
 import { isStartable, type AuthoritativeSnapshot, type StartableRun } from "./authority.ts";
 import { RemoteRequestRefused, type AdmittedRun } from "./request.ts";
-import { remoteResult } from "./result.ts";
+import { remoteResult, REMOTE_VIEWPORT } from "./result.ts";
 
 /** The version of the recording format this engine reads. */
 export const REMOTE_RECORDING_VERSION = 1;
@@ -255,6 +255,7 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
       confine: true,
       // And the plan is not this engine's own: values are read only from pages and answers as the application served them.
       untrustedPlan: true,
+      viewport: REMOTE_VIEWPORT,
       expired: () => (ranOut ||= now() >= deadline),
     });
     // From the clock, never from what a result says about itself.

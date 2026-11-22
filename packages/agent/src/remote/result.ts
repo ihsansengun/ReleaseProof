@@ -37,6 +37,9 @@ export const REMOTE_RESULT_FORMAT_VERSION = 1;
 /** The version of the additional fields below. Raised when one of them changes meaning. */
 export const REMOTE_RESULT_SCHEMA = 1;
 
+/** The size of the page in a remote run. Set by the run, so that the result can say it. */
+export const REMOTE_VIEWPORT = { width: 1280, height: 720 } as const;
+
 /** How far the run got. A run that completed can still have failed or unverified requirements. */
 export type ExecutionStatus = "completed" | "ended early" | "nothing executed";
 
@@ -119,11 +122,28 @@ const WORST_FIRST: Verdict[] = ["failed", "errored", "blocked", "unverified", "p
 const NOT_TRUSTED =
   "Which element a comparison reads is still chosen by the recording, and is not yet tied to the approved text. A match shows what the application displayed there, not that the requirement holds.";
 
+type Compared = { expected: string; observed: string }[];
+const matched = (made: Compared) => `${made.length} ${made.length === 1 ? "comparison" : "comparisons"} tied to this requirement matched.`;
+const REASON: Record<RequirementStatus, (made: Compared) => string> = {
+  verified: matched,
+  failed: () => "A comparison tied to this requirement did not match.",
+  errored: () => "The application answered with an error before this requirement could be compared.",
+  blocked: () => "A scenario that compares this requirement could not go on.",
+  unverified: (made) => (made.length > 0 ? "Not everything this requirement needs was compared." : "No comparison of this requirement was made."),
+  exercised: () => "A scenario that ran lists this requirement, but no comparison is tied to it.",
+  deferred: () => "Compared only by a scenario that was planned and not run because of the scenario limit.",
+  "not planned": () => "No scenario in the plan compares this requirement.",
+};
+
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 function describeTarget(input: unknown): string {
   const given = (input ?? {}) as { path?: string; method?: string; element?: { by?: string; role?: string; value?: string }; target?: { source?: string; by?: string; value?: string; responseId?: string; jsonPath?: string }; assertionId?: string; name?: string };
-  if (typeof given.path === "string") return clip(`${given.method ? `${given.method} ` : ""}${given.path}`, 200);
+  // The path only. A query can carry a token, and is no part of saying where a step went.
+  if (typeof given.path === "string") {
+    const [plain, query] = given.path.split(/[?#]/, 2);
+    return clip(`${given.method ? `${given.method} ` : ""}${plain}${query === undefined ? "" : " (query not shown)"}`, 200);
+  }
   const element = given.element ?? given.target;
   if (element && "responseId" in element && element.responseId) return clip(`response ${element.responseId}${element.jsonPath ? ` at ${element.jsonPath}` : ""}`, 200);
   if (element?.by) return clip(`${element.by}${"role" in element && element.role ? ` ${element.role}` : ""} "${element.value ?? ""}"`, 200);
@@ -142,12 +162,17 @@ export function remoteResult(run: RemoteRun): RemoteResult {
 
   // What the comparisons alone give, by the rule that the worst outcome decides.
   const planned = run.plan.scenarios.filter((planned) => planned.status === "runnable");
+  const ran = new Set(executed.map((result) => result.scenarioId));
+  const compared = (result: ScenarioResult | undefined, assertionId: string) => result?.assertionResults.some((made) => made.assertionId === assertionId) === true;
   const incomplete =
     run.endedEarly !== undefined ||
-    executed.length < planned.length ||
     planned.length === 0 ||
+    // Every planned scenario, by its own id, ran exactly once, and made every comparison it planned.
+    run.results.length !== planned.length ||
+    planned.some((scenario) => !ran.has(scenario.scenario.id) || scenario.scenario.assertions.some((assertion) => !compared(run.results.find((result) => result.scenarioId === scenario.scenario.id), assertion.id))) ||
     run.plan.scenarios.some((scenario) => scenario.status !== "runnable") ||
-    assessment.requirements.length === 0 ||
+    // Whatever else the assessment holds against the run: scenarios dropped under the limit, unresolved conflicts, no approved requirement.
+    assessment.readiness !== "ready" ||
     assessment.requirements.some((requirement) => requirement.status !== "verified");
   const worst = WORST_FIRST.find((verdict) => run.results.some((result) => result.verdict === verdict)) ?? "unverified";
   const observed: Verdict = worst === "passed" && incomplete ? "unverified" : worst;
@@ -172,7 +197,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       const requirementIds = requirementId ? [requirementId] : [];
       let screenshot: RemoteResult["steps"][number]["screenshot"];
       if (made?.screenshot) {
-        const evidenceId = `${result.scenarioId}-${path.basename(made.screenshot, path.extname(made.screenshot))}`;
+        const evidenceId = `${id}-screenshot`;
         evidence.push({ id: evidenceId, label: `What the browser showed when ${assertionId} was compared`, mediaType: "image/png", path: path.posix.join("scenarios", result.scenarioId, path.basename(made.screenshot)), scenarioId: result.scenarioId });
         screenshot = { evidenceId };
       }
@@ -181,9 +206,11 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         scenarioId: result.scenarioId,
         action: step.tool,
         target: describeTarget(step.input),
-        outcome: !step.ok ? "error" : made && !made.pass ? "mismatch" : "ok",
+        // A comparison step that kept no comparison did not do what it was for.
+        outcome: !step.ok || (step.tool === "check" && !made) ? "error" : made && !made.pass ? "mismatch" : "ok",
         requirementIds,
-        note: clip(step.summary, 400),
+        // Written here from the comparison. What a step printed can hold what a page or a request said, and stays in the run's record.
+        note: made ? `Expected ${clip(String(made.expected), 120)}, observed ${clip(String(made.actual), 120)}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
         ...(screenshot ? { screenshot } : {}),
       });
       if (requirementId) {
@@ -191,9 +218,6 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         if (made) comparisonsOf.set(requirementId, [...(comparisonsOf.get(requirementId) ?? []), { expected: String(made.expected), observed: String(made.actual) }]);
       }
     });
-    if (result.evidence.trace) {
-      evidence.push({ id: `${result.scenarioId}-trace`, label: "Browser trace of the scenario", mediaType: "application/zip", path: path.posix.join("scenarios", result.scenarioId, result.evidence.trace), scenarioId: result.scenarioId });
-    }
   }
 
   const requirements: RemoteResult["requirements"] = assessment.requirements.map((requirement) => {
@@ -205,8 +229,10 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       id: requirement.id,
       status: withheld ? "unverified" : requirement.status,
       observedStatus: requirement.status,
-      text: requirement.text,
-      reason: withheld ? `Observed, not verified. ${requirement.detail}. ${NOT_TRUSTED}` : requirement.detail,
+      // The approved text itself, as quoted from the snapshot. How a plan put it in its own words is not shown as the requirement.
+      text: requirement.quote,
+      // In the engine's own words, from the comparisons made. The fuller account, which can repeat what a scenario said, is in the run's record.
+      reason: withheld ? `Observed, not verified. ${matched(comparisons)} ${NOT_TRUSTED}` : REASON[requirement.status](comparisons),
       expected: comparisons.map((made) => made.expected).join("; "),
       observed: comparisons.map((made) => made.observed).join("; "),
       source: snapshot ? { document: snapshot.id, revision: snapshot.sha256, approvedBy: snapshot.approvedBy, approvedAt: snapshot.approvedAt } : null,
@@ -216,13 +242,19 @@ export function remoteResult(run: RemoteRun): RemoteResult {
 
   const count = (status: RequirementStatus) => requirements.filter((requirement) => requirement.status === status).length;
   const screenshots = evidence.some((file) => file.mediaType === "image/png");
-  const traces = evidence.some((file) => file.mediaType === "application/zip");
   const reason =
     observed === "passed"
       ? "Every planned scenario ran and every comparison matched."
       : run.endedEarly
         ? `${run.endedEarly.reason} Not everything planned was run.`
-        : (run.results.find((result) => result.verdict === worst && worst !== "passed")?.reason ?? "Not every approved requirement was compared.");
+        : // In the engine's own words. What a scenario said about itself can repeat a step's input, and stays in the run's record.
+          worst === "failed"
+          ? "At least one comparison did not match."
+          : worst === "errored"
+            ? "The application answered with an error that stopped a scenario."
+            : worst === "blocked"
+              ? "At least one scenario could not go on."
+              : "Not everything planned was run and compared, or not every approved requirement was compared and matched.";
 
   return {
     formatVersion: REMOTE_RESULT_FORMAT_VERSION,
@@ -235,7 +267,8 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     producer: { name: "releaseproof-engine", resultSchema: REMOTE_RESULT_SCHEMA, kind: "remote-run", executionMode: run.executionMode },
     workspaceId: run.workspaceId,
     projectId: run.projectId,
-    title: clip(run.analysis.featureSummary || `Run against ${run.target.baseUrl}`, 200),
+    // Not the plan's own summary of the feature: that is unapproved wording.
+    title: `Run against ${run.target.baseUrl}`,
     summary: clip(summaryOf(run.results, executed.length, planned.length), 600),
     target: run.target,
     snapshots: run.snapshots,
@@ -256,12 +289,13 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     },
     requirements,
     steps,
-    // One browser as it comes, at its default size. Nothing else was run, and nothing says it was.
-    profiles: executed.length > 0 ? [{ name: "Chromium, desktop", viewport: "1280 × 720", state: "tested", reason: "" }] : [],
+    // The one browser the run used, at the size the run set. Nothing else was run, and nothing says it was.
+    profiles: executed.length > 0 ? [{ name: "Chromium", viewport: `${REMOTE_VIEWPORT.width} × ${REMOTE_VIEWPORT.height}`, state: "tested", reason: "" }] : [],
     telemetry: {
       screenshots: screenshots ? "collected" : "not collected",
       recording: "not collected",
-      trace: traces ? "collected" : "not collected",
+      // A trace is written beside each scenario and holds more than the result vouches for; it is not part of the result.
+      trace: "not collected",
       console: "not collected",
       network: "not collected",
       analytics: "not collected",

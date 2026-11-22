@@ -37,12 +37,16 @@ Nothing here should be read as saying otherwise.
 5. **Wrong expected value.** The plan expects a number the cited requirement
    does not state.
 6. **Self-cancelling calculation.** `before - before + 160`.
+7. **A number field moved with arrow keys alone**, with nothing typed, is
+   read as if the application had set it.
+8. **Text edited in place, found by a test id.** A presence check that finds
+   such an element by its test id is compared, whatever was typed into it.
 
 What limits them today: the plan and steps come from the engine's own model
 under its instructions, not from an adversary; a requirement must be cited
 from an authoritative source; a target may not be located by the expected
-value; a heading or label is not accepted as a value; mismatches are
-re-checked. These lower the chance of an honest mistake. They do not stop a
+value; a heading or label is not accepted as a value; a scenario that failed
+is run again to see whether the failure repeats. These lower the chance of an honest mistake. They do not stop a
 plan that is wrong.
 
 ## Why the remote rule was not simply applied

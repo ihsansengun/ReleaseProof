@@ -30,13 +30,33 @@ Adding a field needs no new version; changing what a field means does.
 | `producer` | `{ name, resultSchema, kind: "remote-run", executionMode }`. |
 | `target`, `snapshots` | Where the run went, and the approved criteria snapshots it used, each with its hash and approver. |
 | `coverage` | Requirements by status, `observedOnly`, and scenarios planned, executed and not executed. |
-| `requirements[]` | `{ id, status, observedStatus, text, reason, expected, observed, source, stepIds }`. |
+| `requirements[]` | `{ id, status, observedStatus, text, reason, expected, observed, source, stepIds }`. `text` is the approved text as quoted from the snapshot, never the plan's own wording of it. |
 | `steps[]` | `{ id, scenarioId, action, target, outcome, requirementIds, note, screenshot? }`. `outcome` is `ok`, `mismatch` or `error`. |
-| `profiles[]` | The browser the run used. Empty when nothing was executed. |
+| `profiles[]` | The browser the run used and the page size the run set. Empty when nothing was executed. |
 | `telemetry` | For each kind of evidence, `collected` or `not collected`. |
 | `diagnostics` | `console`, `network`, `analytics`: empty lists until the engine collects them, with `telemetry` saying so. |
 | `evidence[]` | `{ id, label, mediaType, path, scenarioId }`: files the run wrote, by a path inside the output directory. |
 | `extensions` | For fields a later engine adds before they are part of this schema. |
+
+## Whose words are in it
+
+A plan and its steps are not the engine's own in a remote run, and what a
+page or a request answers is the target's. None of that is repeated here as
+if the engine said it:
+
+- the title is "Run against" and the target; the plan's summary of the
+  feature is not used;
+- a requirement's `text` is the approved quote; its `reason`, the verdict's
+  `reason` and a step's `note` are written by the engine from the comparisons
+  made, not copied from what a scenario or a step printed;
+- a step's `target` gives the path asked for without its query, and an
+  element by how it was located, never what was typed into it.
+
+The fuller account (what each step printed, why each scenario ended) is in
+`remote-run.json`, which is not meant to leave the machine as it is. The
+browser trace written beside each scenario is not part of the result either:
+it holds everything the browser saw, which is more than the result vouches
+for.
 
 ## Observed and verified
 
@@ -55,8 +75,10 @@ While `verdictsTrusted` is `false`:
 - No requirement has the status `verified`. Where its comparisons all
   matched, `status` is `unverified`, `observedStatus` is `verified`, and the
   reason begins "Observed, not verified."
-- A mismatch (`failed`), an application error (`errored`) and a blocked run
-  are reported as they are.
+- A mismatch (`failed`) and a blocked run are reported as they are. So would
+  an application error (`errored`) be; a remote run does not yet produce that
+  verdict, which the pull-request path arrives at by running a scenario
+  twice.
 
 A reader must not show a result with `verdictsTrusted: false` as "Passed" or
 "Ready for release", whatever else the file holds. Showing `verdict` as it is
@@ -66,8 +88,10 @@ already satisfies this.
 
 First match wins: `failed`, `errored`, `blocked`, `unverified`, `passed`.
 
-`passed` needs all of: every planned scenario ran; none is blocked in the
-plan; the run did not end early; there is at least one approved requirement;
+`passed` needs all of: the very scenarios planned ran, each once, and made
+every comparison planned; none is blocked in the plan and none was dropped
+to stay within the limit; the run did not end early; no conflict about the
+approved requirements is open; there is at least one approved requirement;
 every approved requirement was compared and matched; and `verdictsTrusted`.
 Anything short of that is `unverified`. Unknown, incomplete or unsupported
 evidence never becomes a pass.
@@ -75,9 +99,10 @@ evidence never becomes a pass.
 ## What is not in it yet
 
 Marked `not collected` in `telemetry`, and absent rather than empty-as-clean:
-screenshots at steps other than comparisons, a screen recording, console
-messages, failed network requests, analytics events and Core Web Vitals. The
-times of steps are not recorded. Browser and device profiles other than the
+a screen recording, console messages, failed network requests, analytics
+events and Core Web Vitals. `screenshots` is `collected` when at least one
+comparison has one; only comparison steps have a screenshot so far, and a
+step without one simply names none. The times of steps are not recorded. Browser and device profiles other than the
 one used are not listed. Each is an added field when it comes, not a new
 format.
 
