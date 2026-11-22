@@ -72,6 +72,19 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
         setTimeout(() => { throw new Error("card " + location.origin + "/pay:4111111:1111111 and more"); }, 0);
         setTimeout(() => { const e = new Error("x"); e.stack = "Error: " + location.origin + "/said/in/words.js:5:6\\n    at f (" + location.origin + "/the/admin/hunter/two.js?k=v#frag:12:34)"; throw e; }, 5);
       </script>`);
+    // An application that answers a form with what was sent, shown again in a plain text field.
+    if (url.pathname === "/echo-form") return html(`<form action="/echo"><label for="k" style="display:block;font-size:40px">API key</label><input id="k" name="key" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button>Submit</button></form>`);
+    if (url.pathname === "/echo") return html(`<label for="e" style="display:block;font-size:40px">Try again</label><input id="e" type="text" style="display:block;width:1200px;height:400px;font-size:200px" value="${(url.searchParams.get("key") ?? "").replace(/[^A-Za-z0-9{}:._-]/g, "")}">`);
+    // A page that, once a secret has been typed, makes one question about the held field fail and then behaves again.
+    if (url.pathname === "/trap") return html(`<label for="k" style="display:block;font-size:40px">API key</label><input id="k" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button>Save</button><script>
+        const hidden = document.createElement("input"); hidden.type = "password"; hidden.style.display = "none"; document.body.append(hidden);
+        const real = Element.prototype.getBoundingClientRect; let done = false;
+        Element.prototype.getBoundingClientRect = function () {
+          if (!done && this === hidden && document.getElementById("k").value !== "") { done = true;
+            Object.defineProperty(Object.prototype, "a", { get() { delete Object.prototype.a; throw new Error("no"); }, configurable: true }); }
+          return real.call(this);
+        };
+      </script>`);
     if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
     if (url.pathname === "/leaky") {
       return html(`<h1>Leaky</h1><script>
@@ -261,6 +274,32 @@ test("once the page a secret was typed into has been left, pictures are kept aga
   assert.equal(result.capture!.leftOut.screenshots, 0);
   // And a password field met later is covered as any other.
   assert.deepEqual(await pixel(path.join(dir, taken[3]!.screenshot!), 600, 400), [0x3a, 0x3a, 0x3a]);
+});
+
+test("a typed secret shown again in another field is covered there: an application that answers with what was sent", async () => {
+  const { result, dir } = await run(
+    [step("navigate", { path: "/echo-form" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "button", value: "Submit" } }), FINISH],
+    true,
+  );
+  const taken = result.capture!.steps;
+  // The page after the form was sent is a new document with a new field that holds what was typed.
+  for (const entry of taken.slice(1)) {
+    assert.match(entry.screenshot ?? "", /^step-\d\.png$/, `step ${entry.step}: ${entry.noScreenshot}`);
+    assert.deepEqual(await pixel(path.join(dir, entry.screenshot!), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
+  }
+});
+
+test("a page cannot have a held field let go by making one question about it fail: the field is covered or there is no picture", async () => {
+  const { result, dir } = await run(
+    [step("navigate", { path: "/trap" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "button", value: "Save" } }), step("click", { element: { by: "role", role: "button", value: "Save" } }), FINISH],
+    true,
+  );
+  for (const entry of result.capture!.steps.slice(1)) {
+    if (entry.screenshot === undefined) continue;
+    assert.deepEqual(await pixel(path.join(dir, entry.screenshot), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
+  }
+  // And it is covered again in a picture after the page has stopped interfering.
+  assert.ok(result.capture!.steps.slice(2).some((entry) => entry.screenshot !== undefined), JSON.stringify(result.capture!.steps));
 });
 
 test("a field whose place the page does not give as numbers gets no picture, and that is counted", async () => {

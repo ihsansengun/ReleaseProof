@@ -230,12 +230,18 @@ taken in is counted and left out.
   over the application's page and nothing in it is changed. A test runs a
   page that counts every change to its own document, and it counts none.
 - A field the executor typed a secret into is held by its element, not by
-  the way it was found, so it stays covered when its label changes. Once
-  the page has gone somewhere else, that element went with its document and
-  there is nothing of it to cover: pictures of later pages are kept. If the
-  browser later puts the typed value back into a field (going back in
-  history), a password field is covered as any other; a field of another
-  kind is not, which is one more reason these runs use synthetic values.
+  the way it was found, so it stays covered when its label changes. It is
+  taken to be gone only when the browser itself has reported that the page
+  loaded a new document since; that is the browser's word, not the page's.
+  In the same document, any failure to ask the element where it is means no
+  picture, whatever caused it.
+- Any field found holding a secret the executor typed is covered too,
+  whichever element it is: an application may answer a form with what was
+  sent, a browser may put a value back when it goes back, and a page may
+  draw its form anew. This looks at form fields and editable text for the
+  very value typed. A typed secret shown as plain text, or changed on the
+  way (cut, encoded, in capitals), is not found: anything a page shows as
+  text is in the picture.
 - **Every field the page reports a place for is covered, or no picture is
   kept.** A place that is not four finite numbers counts as no answer. More
   than 2,000 such fields, more than 40 frames, or any stage taking over four
