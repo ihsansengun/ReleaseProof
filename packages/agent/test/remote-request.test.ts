@@ -95,7 +95,7 @@ test("KAN-16 criterion 2: a matching hash does not make a snapshot authoritative
 });
 
 test("KAN-16 criterion 2: the hash is of the exact text, as UTF-8", () => {
-  const text = "Le total s'affiche en \u20ac \u2014 arrondi au centime.\n";
+  const text = "Le total s'affiche en € — arrondi au centime.\n";
   const admitted = admitRemoteRun(request({ criteria: [snapshot({ content: text, sha256: sha256Hex(text) })] }), NOW);
   assert.equal(admitted.snapshots[0].content, text);
   // A known value, so that the function is not only compared with itself.
@@ -128,7 +128,7 @@ for (const [what, change] of [
   ["a line removed", (text: string) => text.split("\n").slice(1).join("\n")],
   ["trailing whitespace added", (text: string) => `${text} `],
   ["line endings changed", (text: string) => text.replaceAll("\n", "\r\n")],
-  ["an invisible character inserted", (text: string) => text.replace("points", "po\u200bints")],
+  ["an invisible character inserted", (text: string) => text.replace("points", "po​ints")],
 ] as const) {
   test(`KAN-16 criterion 3: a snapshot with ${what} no longer matches its hash and is refused`, () => {
     const reasons = reasonsFor(request({ criteria: [snapshot({ content: change(CRITERIA) })] }));
@@ -233,7 +233,7 @@ test("a file that is not JSON is refused with a reason, not a crash", async () =
 });
 
 test("a target address that another URL parser could read differently is refused", () => {
-  for (const baseUrl of ["https://shop.releaseproof.test\\@evil.releaseproof.test/", "https://\uff53hop.releaseproof.test/"]) {
+  for (const baseUrl of ["https://shop.releaseproof.test\\@evil.releaseproof.test/", "https://ｓhop.releaseproof.test/"]) {
     assert.throws(
       () => admitRemoteRun(request({ target: { baseUrl, allowedHosts: ["shop.releaseproof.test"] } }), NOW),
       /plain ASCII with no backslash/,
