@@ -310,3 +310,15 @@ test("RPAI-39: well-formed approved text is admitted as before, in any script, w
     assert.equal(admitRemoteRun(request({ criteria: [snapshot({ approvedBy })] }), NOW).snapshots[0]!.approvedBy, approvedBy);
   }
 });
+
+test("RPAI-39: half a pair is found at the far end of the longest text, and after an earlier refusal that ended late", () => {
+  const longest = `${"a".repeat(199_999)}b`;
+  assert.equal(admitRemoteRun(request({ criteria: [snapshot({ content: longest, sha256: sha256Hex(longest) })] }), NOW).snapshots[0]!.content.length, 200_000);
+  const atTheEnd = `${"a".repeat(199_999)}${HIGH}`;
+  assert.match(refusedBecause(request({ criteria: [snapshot({ content: atTheEnd, sha256: sha256Hex(atTheEnd) })] })), /criteria\.0\.content: must be well-formed Unicode/);
+  // A request refused for a half late in its last text, then one with a half at the very start of its first: a
+  // check that remembered where it last looked would miss the second.
+  assert.match(refusedBecause(request({ criteria: [snapshot({ approvedBy: `owner-name-long${HIGH}` })] })), /approvedBy: must be well-formed Unicode/);
+  const early = `${HIGH}rule`;
+  assert.match(refusedBecause(request({ criteria: [snapshot({ content: early, sha256: sha256Hex(early) })] })), /content: must be well-formed Unicode/);
+});
