@@ -117,6 +117,21 @@ export class RemoteRequestRefused extends Error {
   }
 }
 
+/**
+ * The time a clock gives, in milliseconds, or nothing if it gives none that can be read. The clock is read once,
+ * here, and by the standard way of reading a date, not by whatever the value itself offers: a value that only
+ * looks like a date, or answers differently each time it is asked, is not a clock.
+ */
+export function readableTime(now: unknown): number | undefined {
+  let time: unknown;
+  try {
+    time = Date.prototype.getTime.call(now);
+  } catch {
+    return undefined;
+  }
+  return typeof time === "number" && Number.isFinite(time) ? time : undefined;
+}
+
 export function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
@@ -128,9 +143,8 @@ export function sha256Hex(text: string): string {
  */
 export function admitRemoteRun(raw: unknown, now: Date = new Date(), options: { allowLocalTarget?: boolean } = {}): AdmittedRun {
   // A time that cannot be read would make the comparison below false for every snapshot, whenever it is dated.
-  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
-    throw new RemoteRequestRefused(["the time now cannot be read, so the request cannot be admitted"]);
-  }
+  const nowMs = readableTime(now);
+  if (nowMs === undefined) throw new RemoteRequestRefused(["the time now cannot be read, so the request cannot be admitted"]);
   const parsed = (options.allowLocalTarget === true ? RemoteRunRequestOnThisMachine : RemoteRunRequest).safeParse(raw);
   if (!parsed.success) {
     throw new RemoteRequestRefused(
@@ -153,7 +167,7 @@ export function admitRemoteRun(raw: unknown, now: Date = new Date(), options: { 
         `criteria snapshot "${snapshot.id}" does not match its hash: the text has SHA-256 ${actual}, the request says ${snapshot.sha256}`,
       );
     }
-    if (Date.parse(snapshot.approvedAt) > now.getTime() + 5 * 60_000) {
+    if (Date.parse(snapshot.approvedAt) > nowMs + 5 * 60_000) {
       reasons.push(`criteria snapshot "${snapshot.id}" claims an approval in the future (${snapshot.approvedAt})`);
     }
   }

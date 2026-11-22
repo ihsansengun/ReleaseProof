@@ -25,18 +25,18 @@ import { statSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { RemoteRequestRefused, sha256Hex, type AdmittedRun, type IntactSnapshot, type RemoteRunRequest } from "./request.ts";
+import { readableTime, RemoteRequestRefused, sha256Hex, type AdmittedRun, type IntactSnapshot, type RemoteRunRequest } from "./request.ts";
 
 /** Says how the signed statement is laid out. Part of what is signed. */
 export const APPROVAL_VERSION = 1;
 const DOMAIN = "releaseproof-criteria-approval-v1";
 
-/** One line of the signed statement: no line breaks, so fields cannot run into each other. */
 /**
  * Half of a surrogate pair with no other half. It has no spelling of its own in bytes: written out as UTF-8 it
  * becomes U+FFFD, so two different texts would be signed as the same bytes.
  */
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+/** One line of the signed statement: no line breaks, so fields cannot run into each other. */
 const Line = z
   .string()
   .min(1)
@@ -76,9 +76,16 @@ export const Approval = z.strictObject({
   projectId: z.uuid(),
   runId: z.uuid(),
   /** The scheme and host the run is allowed to target, as an origin and in exactly that spelling. */
-  targetOrigin: z
-    .url({ protocol: /^https?$/ })
-    .refine((value) => new URL(value).origin === value, "must be an origin: scheme and host, nothing else"),
+  targetOrigin: z.string().refine((value) => {
+    // The text itself is compared, exactly as given. Reading it as an address first would let through a spelling
+    // with a space or a line break around it, which reads as the same address and is not the same text.
+    try {
+      const address = new URL(value);
+      return /^https?:$/.test(address.protocol) && address.origin === value;
+    } catch {
+      return false;
+    }
+  }, "must be an origin: scheme and host, nothing else"),
   /** `scopeSha256` of the request this approval is for: its address, allowed hosts, limits and set of criteria. */
   scopeSha256: z.string().regex(/^[0-9a-f]{64}$/),
   snapshotId: Line.max(64),
@@ -175,9 +182,8 @@ export function authoriseRemoteRun(
 ): AuthorisedRun {
   const reasons: string[] = [];
   // A time that cannot be read would make every comparison with it false, and nothing would ever have expired.
-  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
-    throw new RemoteRequestRefused(["the time now cannot be read, so no approval can be checked"]);
-  }
+  const nowMs = readableTime(now);
+  if (nowMs === undefined) throw new RemoteRequestRefused(["the time now cannot be read, so no approval can be checked"]);
   if (trusted.size === 0) {
     throw new RemoteRequestRefused(["no trusted approval key was given, so no approval can be checked"]);
   }
@@ -272,8 +278,8 @@ export function authoriseRemoteRun(
         found.push("one of its times cannot be read");
         return found;
       }
-      if (expiresAt <= now.getTime()) found.push("it has expired");
-      if (issuedAt > now.getTime() + 5 * 60_000) found.push("it is dated in the future");
+      if (expiresAt <= nowMs) found.push("it has expired");
+      if (issuedAt > nowMs + 5 * 60_000) found.push("it is dated in the future");
       if (expiresAt <= issuedAt) found.push("it expires before it was issued");
       if (approvedAt > issuedAt) found.push("it was issued before the approval it states");
       if (expiresAt - issuedAt > 24 * 3_600_000) found.push("it is valid for more than 24 hours");
