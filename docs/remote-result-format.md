@@ -154,10 +154,14 @@ It leaves the machine, so it is kept small and kept clean:
   after the point a credential's value begins**, that is after a name that
   is a credential's (`password`, `access_token`, `clientSecret`, `pwd`,
   `x-auth`, `Cookie`, `Authorization` and the like) and a sign or a verb
-  (`=`, `:`, `=>`, `->`, `:=`, `is`, an opening bracket), or after `Bearer`,
-  `Basic`, `Digest`, `Negotiate` or `Token`. Where a value begins can be
-  told; where it ends cannot, so no attempt is made and the rest of the text
-  goes. Also removed: a long word of
+  (`=`, `:`, `=>`, `->`, `:=`, an arrow, `is`, `equals`, an opening
+  bracket), or after `Bearer`, `Basic`, `Digest`, `Negotiate` or `Token`.
+  Once a credential has been named, the first sign or such verb met anywhere
+  later in the text counts, whatever stands between: a closing bracket, a
+  quote, other words. So a line that names a credential and has a sign
+  anywhere after it loses what follows the sign. A name counts wherever in a
+  word it stands (`Error:password=…`). Where a value begins can be told;
+  where it ends cannot, so no attempt is made and the rest of the text goes. Also removed: a long word of
   letters and digits mixed, a very long word, a long run of digits. What is
   already redacted, and the engine's own placeholder for a secret, are set
   aside first and stand as they are, and the rest of their word is judged as
@@ -183,27 +187,36 @@ It leaves the machine, so it is kept small and kept clean:
   written to answer it falsely can leave its own field uncovered. That is a
   page working against the run, which these runs do not defend against (see
   below). If the question cannot be answered at all, no picture is kept.
-- **Every field found is covered, or no picture is kept.** There is no count
-  beyond which fields are left showing. A page with more than 2,000 such
+- **Every field the page reports a place for is covered, or no picture is
+  kept.** A place that is not four finite numbers counts as no answer, and
+  no picture is kept. A place that is false but well-formed (no size, or
+  somewhere off the window) is believed: see the residual risk below. There
+  is no count beyond which fields are left showing. A page with more than 2,000 such
   fields or more than 40 frames, or on which any one stage of finding or
   covering them takes over four seconds, gets no picture. There are several
   such stages, so a step on a page that stalls each of them can be held for
   some twenty seconds before it is given up. The page the covering is drawn
   in is discarded after a failure and closed with the run.
 - No picture is kept of a page that is not the application under test.
-- What a limit left out is counted in `evidenceLimits.leftOut`.
+- What a limit left out is counted in `evidenceLimits.leftOut`, and so is a
+  picture that could not be taken.
 - The result cleans every text and path once more as it is built, by the same
   rules, and checks each entry's form (kinds, lengths, whole numbers, known
   steps). That covers what the browser said, the failed requests, what each
-  step pointed at, and the two values in a comparison's note. A scenario is
+  step pointed at, and the two values of a comparison wherever they are
+  given (the step's note, and `expected` and `observed` under the
+  requirement). A secret the executor was given is replaced in an observed
+  value before it reaches the result. A scenario is
   named only by a plain name. An entry that does not fit is left out and
   counted. Cleaning what is clean changes nothing: a test makes 60,000 texts
   and paths from the pieces that have broken cleaning before and holds each
   to that, to no error, and to nothing hidden in what comes out.
 - Nothing a page says can stop the run. A line that is not text at all (half
   of a character, a code that decodes to nothing readable) is cleaned or
-  left out and counted. Characters that are not shown, or that turn the
-  reading of a line around, are removed, also when written as `%`-codes any
+  left out and counted. The characters that are not shown, or that turn the
+  reading of a line around, which the rules list (control characters,
+  zero-width and direction marks, variation selectors, tag characters) are
+  removed, also when written as `%`-codes any
   number of times over; a word whose codes cannot be read is replaced.
 
 **What this does not catch.** The rules know shapes, not meanings. These can
@@ -225,7 +238,15 @@ still appear:
   a field inside a closed component, which the engine cannot see into; a
   field that jumps about in the instant between being looked for and the
   picture being taken (it is looked for before and after and both places are
-  covered, but one that moves several times in that instant can show).
+  covered, but one that moves several times in that instant can show);
+- in a picture, **the residual risk from page-controlled field geometry**:
+  where a field is, is asked of the page itself, in the page's own script
+  world. A page can therefore see that it was asked, and a page that answers
+  with a false place leaves its own secret field uncovered in a picture that
+  is kept. Covering protects against an ordinary application showing a
+  password field; **it is not safe against a hostile page** and must not be
+  described as such. Measuring from outside the page is a proposed next
+  step.
 
 And it errs toward removing: a message such as "password: must be at least 8
 characters", "token is missing", "session is not defined" or "tokens: 3
@@ -244,7 +265,12 @@ for now.
 A request the run itself stopped (to any other origin) is not listed as a
 failure of the application. The picture the shared comparison code takes at a
 comparison (`check-….png`, of the whole page, nothing covered) and the
-browser trace stay in the run's directory and are not part of the result.
+browser trace (`trace.zip`, which holds pictures and copies of the page)
+stay in the run's directory and are not part of the result. **Nothing in
+them is covered or cleaned.** "No picture is kept if covering fails" is true
+of the `step-….png` files the result names, and not of the run's directory
+as a whole: that directory must be treated as holding whatever the page
+showed, and is not to be uploaded or shared as it is.
 
 The pull-request path does not collect any of this: it is off unless a run
 asks.

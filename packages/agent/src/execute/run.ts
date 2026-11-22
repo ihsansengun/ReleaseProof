@@ -227,6 +227,11 @@ export async function closeSession(
 
   const outcome = session.outcome ?? { kind: "stopped" as const, reason: "No outcome recorded." };
   const computed = computeVerdict(session.scenario.assertions, session.assertionResults, outcome);
+  // In a run that collects what the browser showed, a value read from a page leaves with the result. A secret the
+  // executor was given is replaced in it, after the verdict is computed from the values as they were read.
+  const comparisons = capture
+    ? session.assertionResults.map((made) => ({ ...made, ...(typeof made.actual === "string" ? { actual: session.vault.scrub(made.actual) } : {}) }))
+    : session.assertionResults;
   // A confined session whose page was somewhere else at any moment does not
   // pass, also when every comparison had been made before it left. A recorded
   // mismatch stays a failure.
@@ -242,7 +247,7 @@ export async function closeSession(
     verdict,
     reason: session.vault.scrub(reason),
     environment: { baseUrl: session.baseUrl, deployedSha: open.sha, expectedSha: open.expectedSha, commitEstablished: open.commitEstablished },
-    assertionResults: session.assertionResults,
+    assertionResults: comparisons,
     ...(session.appErrors?.length ? { applicationErrors: session.appErrors } : {}),
     ...(outcome.kind === "blocked" && outcome.cause ? { blockedCause: outcome.cause } : {}),
     ...(session.errorSignals?.length ? { errorSignals: session.errorSignals } : {}),

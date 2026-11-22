@@ -398,6 +398,19 @@ test("what a step pointed at is cleaned like any other text: a token in a path, 
   assert.equal(result.steps[3]!.target, "/account/settings");
 });
 
+test("the values of a comparison are cleaned wherever the result gives them: in the step's note and under the requirement", () => {
+  const shown = scenario("S1", "failed", 0);
+  shown.assertionResults = shown.assertionResults.map((made) => ({ ...made, pass: false, actual: "Signed in. password=shown-secret-1 ada@example.test \u202eBearer shown-secret-2" }));
+  const result = remoteResult(record([shown]));
+  const text = JSON.stringify(result);
+  for (const secret of ["shown-secret-1", "shown-secret-2", "ada@example.test", "\u202e"]) assert.ok(!text.includes(secret), `${JSON.stringify(secret)} in ${JSON.stringify(result.requirements.map((requirement) => requirement.observed))}`);
+  assert.ok(result.requirements.some((requirement) => requirement.observed.startsWith("Signed in.")));
+  // A scenario's name that is not text does not stop the result from being built.
+  const odd = scenario("S1", "passed", 160);
+  (odd as { scenarioId: unknown }).scenarioId = 12345;
+  assert.doesNotThrow(() => remoteResult(record([odd])));
+});
+
 test("a scenario is named only by a plain name, and a record that is not one does not count as having listened", () => {
   const named = scenario("../../<b>S1</b>", "passed", 160);
   named.capture = null as never;

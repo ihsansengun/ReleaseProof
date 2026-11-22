@@ -255,7 +255,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     // What was collected is taken in again here by its own rules, not on trust: this file is what leaves the
     // machine, whoever wrote the record it is built from. An entry that does not fit is left out and counted.
     // A scenario is named in this file only by a plain name.
-    const scenarioId = /^[A-Za-z0-9_-]{1,64}$/.test(result.scenarioId) ? result.scenarioId : "scenario";
+    const scenarioId = typeof result.scenarioId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(result.scenarioId) ? result.scenarioId : "scenario";
     const stepOf = (value: unknown) => `${scenarioId}-${Math.min(Math.max(1, Number.isInteger(value) ? (value as number) : 1), Math.max(1, result.steps.length))}`;
     const count = (value: unknown) => (Number.isInteger(value) && (value as number) >= 0 ? Math.min(value as number, 1_000_000) : 0);
     // Redacted once more, and without characters that are not shown, whatever the record says was done already.
@@ -309,7 +309,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       // shared code stays in the run's directory: it is of the whole page and nothing in it is covered.
       const captured = Array.isArray(result.capture?.steps) ? result.capture.steps.find((entry) => entry?.step === index + 1) : undefined;
       let screenshot: RemoteResult["steps"][number]["screenshot"];
-      if (typeof captured?.screenshot === "string" && /^step-\d{1,3}\.(png|jpg)$/.test(captured.screenshot) && /^[A-Za-z0-9_-]{1,64}$/.test(result.scenarioId)) {
+      if (typeof captured?.screenshot === "string" && /^step-\d{1,3}\.(png|jpg)$/.test(captured.screenshot) && scenarioId === result.scenarioId) {
         const evidenceId = evidenceIdOf(run.runId, id, "screenshot");
         evidence.push({
           id: evidenceId,
@@ -332,13 +332,13 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         ...(captured && within(started + captured.atMs) ? { atMs: Math.round(started + captured.atMs) } : {}),
         ...(captured && within(captured.durationMs) ? { durationMs: Math.round(captured.durationMs) } : {}),
         // Written here from the comparison. What a step printed can hold what a page or a request said, and stays in the run's record.
-        note: made ? `Expected ${again(clip(String(made.expected), 120))}, observed ${again(clip(String(made.actual), 120))}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
+        note: made ? `Expected ${clip(again(String(made.expected)), 120)}, observed ${clip(again(String(made.actual)), 120)}: ${made.pass ? "match" : "mismatch"}.` : step.ok ? "" : "The step did not complete.",
         ...(screenshot ? { screenshot } : {}),
       });
       if (requirementId) {
         stepsOf.set(requirementId, [...(stepsOf.get(requirementId) ?? []), id]);
         // The values compared, cut to a length that shows a value and not a page of text.
-        if (made) comparisonsOf.set(requirementId, [...(comparisonsOf.get(requirementId) ?? []), { expected: clip(String(made.expected), 120), observed: clip(String(made.actual), 120) }]);
+        if (made) comparisonsOf.set(requirementId, [...(comparisonsOf.get(requirementId) ?? []), { expected: clip(again(String(made.expected)), 120), observed: clip(again(String(made.actual)), 120) }]);
       }
     });
   }

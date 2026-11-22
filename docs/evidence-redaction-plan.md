@@ -70,7 +70,12 @@ The pull-request path does not use this. It keeps the shared `redact`
   everything after the name; an id written in groups is replaced in a path.
 - It asks the page where its secret fields are. A page written to answer
   falsely can leave one uncovered; measuring from outside the page (the
-  browser's own protocol) would close that, and is not done yet.
+  browser's own protocol) would close that, and is not done yet. Covering is
+  not safe against a hostile page.
+- The shared comparison picture (`check-….png`) and the browser trace in the
+  run's directory are neither covered nor cleaned. They are not part of the
+  result, but they are on disk. For a hosted run they must be left out,
+  covered the same way, or not written.
 
 ## Proposed next steps
 

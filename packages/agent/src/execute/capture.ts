@@ -17,7 +17,10 @@
  *     each segment of the path is kept only if it reads as an ordinary name;
  *   - a picture cannot be redacted after it is taken, so before each one
  *     every password, card and one-time-code field in the page itself, and
- *     every field the executor typed a secret into, is covered. Nothing is
+ *     every field the executor typed a secret into, is covered where the
+ *     page says it is. The page is asked, so a page that answers falsely
+ *     can leave a field showing: this is not safe against a hostile page.
+ *     Nothing is
  *     done to the page to take it: an animation is left to run as it would;
  *   - there is a limit on each picture, on all pictures of a scenario
  *     together, and on how many console and network entries are kept. What a
@@ -233,6 +236,7 @@ export async function captureStep(session: Session, began: number, mayPicture: {
   } catch {
     // Also when a field could not be covered: no picture is better than one that shows it.
     entry.noScreenshot = "The picture could not be taken.";
+    collector.capture.leftOut.screenshots += 1;
   }
 }
 
@@ -275,8 +279,10 @@ async function findSecretAreas(session: Session, collector: Collector): Promise<
     const box = await (await frame.frameElement()).boundingBox();
     if (box) areas.push([box.x, box.y, box.width, box.height]);
   }
+  // A place that is not four numbers is no answer to where a field is: no picture is kept.
+  if (!areas.every((area) => Array.isArray(area) && area.length === 4 && area.every((side) => typeof side === "number" && Number.isFinite(side) && Math.abs(side) < 1_000_000))) throw new Error("a field's place could not be read");
   const shown = areas.filter(([, , width, height]) => width > 0 && height > 0);
-  // Never some of them: either every field is covered or no picture is kept.
+  // Never some of them: either every field the page gave a place for is covered or no picture is kept.
   if (shown.length > MOST_AREAS) throw new Error("too many fields to cover");
   return shown;
 }
