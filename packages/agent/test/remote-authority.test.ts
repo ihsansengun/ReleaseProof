@@ -558,11 +558,14 @@ test("RPAI-39: an approval's text has one spelling in bytes, so a field cannot b
     const alteredRequest = request({ criteria: [snapshot({ approvedBy: alteredBy })] });
     // The scope does not cover the approver's name, so the signature still fits: only the text's form stops it.
     assert.equal(scopeSha256(alteredRequest), scopeSha256(genuineRequest));
+    // A request that names the altered approver is not admitted at all.
+    assert.throws(() => admitRemoteRun(alteredRequest, NOW), RemoteRequestRefused);
     assert.notEqual(signedStatement({ ...genuine, approvedBy: alteredBy }), signedStatement(genuine), "as text the two differ");
     assert.equal(Buffer.from(signedStatement({ ...genuine, approvedBy: alteredBy }), "utf8").equals(Buffer.from(signedStatement(genuine), "utf8")), true, "the two would be signed as the same bytes");
     const altered = { ...genuine, approvedBy: alteredBy };
-    assert.match(refusal(alteredRequest, [altered]), /approval 1 is malformed: approvedBy must be well-formed Unicode/);
-    assert.match(refusal(alteredRequest, [JSON.parse(JSON.stringify(altered))]), /approval 1 is malformed: approvedBy must be well-formed Unicode/);
+    // And the approval is refused for its own form, whatever request it is presented with.
+    assert.match(refusal(genuineRequest, [altered]), /approval 1 is malformed: approvedBy must be well-formed Unicode/);
+    assert.match(refusal(genuineRequest, [JSON.parse(JSON.stringify(altered))]), /approval 1 is malformed: approvedBy must be well-formed Unicode/);
   }
   // In the snapshot's id as well.
   assert.match(refusal(request(), [{ ...approval(), snapshotId: "checkout-r3\ud800" }]), /approval 1 is malformed: snapshotId must be well-formed Unicode/);
@@ -615,8 +618,11 @@ test("RPAI-39: with a readable clock everything is as it was: the same approval 
 });
 
 test("RPAI-39: half a surrogate pair is found wherever it stands, and whole pairs are left alone", () => {
+  // The approval is what is looked at here. A request naming such an approver is refused before it gets this far,
+  // so the altered approvals are presented with an ordinary request.
   const withBy = (approvedBy: string) => {
-    const raw = request({ criteria: [snapshot({ approvedBy })] });
+    const admissible = !/[\ud800-\udfff]/.test(approvedBy.replace(/[\ud800-\udbff][\udc00-\udfff]/g, ""));
+    const raw = admissible ? request({ criteria: [snapshot({ approvedBy })] }) : request();
     return { raw, evidence: [approval({ approvedBy, scopeSha256: scopeSha256(raw) })] };
   };
   // Beside a whole pair, at the start, at the end, two halves the wrong way round, and one after another.
