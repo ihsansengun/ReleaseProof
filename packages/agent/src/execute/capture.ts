@@ -161,7 +161,11 @@ export function startCapture(session: Session, startedAt: number): Capture {
     // The first place in the error's own trace that is an address with a line and a column. The trace is the
     // page's text: nothing of it is kept but that address, checked as any other, and the two numbers.
     const trace = typeof error?.stack === "string" ? error.stack.slice(0, 4_000) : "";
-    const found = /(https?:\/\/[^\s()'"<>]{1,500}):(\d{1,7}):(\d{1,7})/.exec(trace);
+    // Only in a line of the form the browser writes for a place in the trace ("    at …"), not in the error's
+    // own words, which stand before the first such line. The place is still the page's claim: a page names its
+    // own files and can write its own trace.
+    const frame = trace.split("\n", 60).find((line) => /^\s{1,8}at /.test(line)) ?? "";
+    const found = /(https?:\/\/[^\s()'"<>]{1,500}):(\d{1,7}):(\d{1,7})\)?\s*$/.exec(frame.slice(0, 1_000));
     said("uncaught", found ? { url: found[1], line: Number(found[2]), column: Number(found[3]) } : undefined);
   });
   const onRequestFailed = safely<Request>("network", (request) => {

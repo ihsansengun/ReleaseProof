@@ -63,20 +63,25 @@ if the engine said it:
 
 What does remain of other hands, and is marked as such by where it stands:
 
-- a step's `target` holds up to 80 characters of the recording's own locator
-  words or path. They say which step it was. They are not a statement by the
-  engine;
-- `expected` and `observed`, and the note of a comparison step, hold the
-  values compared, up to 120 characters each. An observed value is what the
-  application showed in the element read;
+- a step's `target` holds a path the recording asked for, cleaned. It says
+  which step it was. It is not a statement by the engine;
+- `expected` and `observed` hold a compared value only when it is a plain
+  number or amount. An observed value is what the application showed in the
+  element read;
+- a requirement's `text` is a quote the recording chose, and is shown only
+  because the very same characters stand in an approved snapshot, in the
+  same case and with the same spaces, and it is no longer than 600
+  characters;
+- where a console error came from (`source`) is what the browser reports,
+  and for an uncaught error what the first line of its trace says. A page
+  names its own files and can write its own trace, so the place is the
+  page's claim, kept only in the form of a cleaned path and two numbers;
 - ids of requirements, scenarios and comparisons are the recording's, checked
   to be plain names.
 
 The fuller account (what each step printed, why each scenario ended) is in
-`remote-run.json`, which is not meant to leave the machine as it is. The
-browser trace written beside each scenario is not part of the result either:
-it holds everything the browser saw, which is more than the result vouches
-for.
+`remote-run.json` and each scenario's own record, which are not cleaned and
+stay on the machine. A remote run records no browser trace.
 
 ## Observed and verified
 
@@ -166,12 +171,20 @@ to be shown; nothing guesses.
 
 **A path is closed by default.** A query, a fragment and `;parameters` are
 cut off. Each segment is decoded and kept only if it is plain printable
-characters and reads as an ordinary name, a short number, or a file name
-whose parts do; anything else becomes `[redacted]`. A mix of letters and
-digits longer than six characters is replaced. A segment that names a
-credential or a link meant for one person (`token`, `password`, `session`,
-`otp`, `pin`, `reset`, `verify` and the like) is kept only as that plain
-word, and **every segment after it is replaced**. A path that holds a secret
+characters and reads as an ordinary name: words of letters joined by `-`,
+`_` or `~`, or a file name of such words with one of the endings a web
+application serves. Anything else becomes `[redacted]`. **No number is
+kept**: an id, a code and a count cannot be told apart, so `/orders/12345`
+is given as `/orders/[redacted]`. Only a short name that starts with a
+letter and has a digit in it (`v2`, `sha1`) stays. A name with a dot inside
+it, which is how a host is written, is replaced. A segment that names a
+credential or a link meant for one person is kept only if it is one plain
+word, and **every segment after it is replaced**. Such a name is found a
+part at a time, whether it stands alone, in the plural, joined to another
+word or inside one (`token`, `password`, `session`, `otp`, `pins`,
+`reset-link`, `verification`, `magiclink`, `apiKeys`, `2fa` and the like).
+The list is of names, and a name not on it is not known: see the residual
+risk below. A path that holds a secret
 the executor was given, read as a whole and decoded up to three times, with
 or without the empty and hidden segments a reader would skip, is replaced
 whole; so is a path with an address inside it. At most 20 segments and 200
@@ -217,7 +230,12 @@ that it was asked, and a page that answers with a false but well-formed
 place leaves its own secret field uncovered in a picture that is kept.
 Covering protects against an ordinary application showing a password field.
 **It is not safe against a hostile page** and must not be described as such.
-Also not covered: anything a page shows as text; a secret in a field of
+**Residual risk: paths.** A value written as a plain word, after a name the
+list does not hold or after no name at all (`/users/correcthorse`), is
+kept. A path says what was asked for, and cannot be closed further without
+ceasing to say it.
+
+Also not covered in a picture: anything a page shows as text; a secret in a field of
 another kind (a password switched to plain text by a "show" button, a text
 area); a field inside a closed component.
 

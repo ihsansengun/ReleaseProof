@@ -68,7 +68,11 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
     if (url.pathname === "/broken") return html(`<h1>Broken</h1><script>console.error("/x\\ud800=1?a"); console.error("fine after"); setTimeout(() => { throw new Error("/y\\udc00=2?b"); }, 0);</script>`);
     if (url.pathname === "/unmeasured") return html(`<script>Element.prototype.getBoundingClientRect = () => ({ x: "a", y: {}, width: 1e9, height: NaN });</script><label style="display:block;font-size:40px">Password <input type="password" style="display:block;width:1200px;height:500px;font-size:300px" value="hunter2"></label>`);
     if (url.pathname === "/relabel") return html(`<label for="k" id="l" style="display:block;font-size:40px">API key</label><input id="k" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button onclick="document.getElementById('l').textContent = 'Saved'">Save</button>`);
-        if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
+        if (url.pathname === "/forged") return html(`<h1>Forged</h1><script>
+        setTimeout(() => { throw new Error("card " + location.origin + "/pay:4111111:1111111 and more"); }, 0);
+        setTimeout(() => { const e = new Error("x"); e.stack = "Error: " + location.origin + "/said/in/words.js:5:6\\n    at f (" + location.origin + "/the/admin/hunter/two.js?k=v#frag:12:34)"; throw e; }, 5);
+      </script>`);
+    if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
     if (url.pathname === "/leaky") {
       return html(`<h1>Leaky</h1><script>
         console.error("access_token=acc-tok-12345 refresh_token=ref-tok-12345 client_secret=cs-12345 authToken=camel-12345 pwd=pwd-12345");
@@ -153,6 +157,11 @@ test("nothing is collected unless the run asks: no pictures, no record, the resu
   assert.ok(!("capture" in result));
   assert.deepEqual(readdirSync(dir).filter((name) => name.startsWith("step-")), []);
   assert.ok(existsSync(path.join(dir, "result.json")) && statSync(path.join(dir, "result.json")).size > 0);
+  // And such a run still records its trace, as it always did. Only a run that collects does not.
+  assert.ok(existsSync(path.join(dir, "trace.zip")));
+  const collecting = await run([step("navigate", { path: "/noisy" }), FINISH], true);
+  assert.ok(!existsSync(path.join(collecting.dir, "trace.zip")));
+  assert.deepEqual(readdirSync(collecting.dir).filter((name) => name.startsWith("check-")), []);
 });
 
 test("taking the pictures changes nothing in the page: an animation runs as it would without them", async () => {
@@ -349,8 +358,8 @@ test("a path is kept segment by segment only where it reads as an ordinary name;
     // What identifies a request stays.
     ["/", "/"],
     ["/api/v2/international-shipping-rates", "/api/v2/international-shipping-rates"],
-    ["/orders/12345", "/orders/12345"],
-    ["/api/orders/2026-11-22", "/api/orders/2026-11-22"],
+    ["/orders/12345", "/orders/[redacted]"],
+    ["/api/orders/2026-11-22", "/api/orders/[redacted]"],
     ["/docs/getting-started/installation-guide", "/docs/getting-started/installation-guide"],
     ["/assets/logo@2x.png", "/assets/logo@2x.png"],
     ["/assets/index-DiwrgTda.css", "/assets/index-DiwrgTda.css"],
@@ -362,7 +371,7 @@ test("a path is kept segment by segment only where it reads as an ordinary name;
     // What could be a secret goes.
     ["/_next/static/chunks/app-1a2b3c4d5e6f7a8b.js", "/_next/static/chunks/app-[redacted].js"],
     ["/users/ada@example.test/orders", "/users/[redacted]/orders"],
-    ["/users/42/hunter2", "/users/42/[redacted]"],
+    ["/users/42/hunter2", "/users/[redacted]/[redacted]"],
     ["/api/v1/customers/C0012345", "/api/v1/customers/[redacted]"],
     ["/files/report final.pdf", "/files/[redacted]"],
     ["/caf\u00e9/menu", "/[redacted]/menu"],
@@ -378,6 +387,38 @@ test("a path is kept segment by segment only where it reads as an ordinary name;
     ["/api/token/refresh", "/api/token/[redacted]"],
     ["/token-hunter2", "/[redacted]"],
     ["/otp-493817", "/[redacted]"],
+    // The same for a name in the plural, joined to another word, or in capitals inside a word.
+    ["/verify-email/493817", "/[redacted]/[redacted]"],
+    ["/verification/493817", "/verification/[redacted]"],
+    ["/confirm-email/abcdef", "/[redacted]/[redacted]"],
+    ["/activation/abcdef", "/activation/[redacted]"],
+    ["/otps/493817", "/otps/[redacted]"],
+    ["/2fa/493817", "/[redacted]/[redacted]"],
+    ["/pins/4821", "/pins/[redacted]"],
+    ["/api/keys/abcdef", "/api/keys/[redacted]"],
+    ["/invites/abcdef", "/invites/[redacted]"],
+    ["/magic-link/abcdef", "/[redacted]/[redacted]"],
+    ["/magiclink/abcdef", "/magiclink/[redacted]"],
+    ["/pwreset/abcdef", "/pwreset/[redacted]"],
+    ["/apiKeys/abcdef", "/apiKeys/[redacted]"],
+    // A word that only starts like such a name is not one.
+    ["/authors/jane/books", "/authors/jane/books"],
+    ["/keyboard/layouts", "/keyboard/layouts"],
+    ["/passengers/list", "/passengers/list"],
+    ["/api/sign-in", "/api/sign-in"],
+    // No number is kept: an id, a code and a count cannot be told apart. Nor a card, a key in groups, or a host.
+    ["/shop/cart/items/3", "/shop/cart/items/[redacted]"],
+    ["/a/4111-1111-1111-1111", "/a/[redacted]"],
+    ["/a/078-05-1120", "/a/[redacted]"],
+    ["/license/AB12C-DE34F-GH56I-JK78L-MN90P", "/license/[redacted]"],
+    ["/a/tok4f9_a8b7c6_d5e4f3", "/a/[redacted]"],
+    ["/proxy/internal-db.corp.example/admin", "/proxy/[redacted]/admin"],
+    ["/a/10.0.0.12/x", "/a/[redacted]/x"],
+    ["/static/jquery.min.js", "/static/[redacted].js"],
+    ["/api/v2/users", "/api/v2/users"],
+    // The engine's placeholder is not kept in a path either: a page can write one around anything.
+    ["/a/%7B%7Bsecret:Tr0ub4dor3xQ9%7D%7D", "/a/[redacted]"],
+    ["/x/{{secret:u.password}}/y", "/x/[redacted]/[redacted]"],
     // A secret the executor was given, however written and wherever it lies: the whole path goes.
     ["/login/Zq7!vault-pw", "/[redacted]"],
     ["/x/Zq7%21vault-pw", "/[redacted]"],
@@ -430,8 +471,16 @@ test("cleaning a path takes time that does not grow with what a page puts in it:
   }
 });
 
+test("where an uncaught error came from is read only from a line of the trace the browser writes, never from the error's own words", async () => {
+  const { result } = await run([step("navigate", { path: "/forged" }), FINISH], true);
+  const text = JSON.stringify(result.capture);
+  for (const gone of ["4111111", "1111111", "/pay", "said", "words", "k=v", "frag"]) assert.ok(!text.includes(gone), `${gone} in ${text}`);
+  // The place a forged trace names is still a path of the application, cleaned as any other.
+  for (const entry of result.capture!.console) assert.ok(structured(entry as never), JSON.stringify(entry));
+});
+
 test("a value is kept only if it is a plain number or amount; words are not", () => {
   for (const [given, kept] of [["160", "160"], [" 42 ", "42"], ["$42.00", "$42.00"], ["-3.5%", "-3.5%"], ["1,234.56", "1,234.56"], [160, "160"]] as const) assert.equal(plainAmount(given), kept);
-  for (const given of ["160 points", "hunter2", "Signed in", "", "12:30", "4111111111111111", "password=1", "1e9", "0x1f", null, undefined, {}, Number.NaN, "1".repeat(30), "12 34 56 78 90 12 34"]) assert.equal(plainAmount(given), undefined, JSON.stringify(given));
+  for (const given of ["160 points", "hunter2", "Signed in", "", "12:30", "4111111111111111", "password=1", "1e9", "0x1f", null, undefined, {}, Number.NaN, "1".repeat(30), "12 34 56 78 90 12 34", "192.168.1.1", "1.2.3.4", "555 123 4567", "+1 555 123 4567", "4 9 3 8 1 7", "12\n%", "12\t%", "12\u00a0%", "12 %", "\u0661\u0662"]) assert.equal(plainAmount(given), undefined, JSON.stringify(given));
 });
 

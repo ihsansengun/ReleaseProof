@@ -35,6 +35,9 @@ import { RemoteRequestRefused, type AdmittedRun } from "./request.ts";
 import { remoteResult, REMOTE_VIEWPORT } from "./result.ts";
 
 /** The version of the recording format this engine reads. */
+/** The longest quote of approved text a requirement may carry. */
+const MAX_QUOTE = 600;
+
 export const REMOTE_RECORDING_VERSION = 1;
 /** The most steps a recording may hold for one scenario: the same count a live model is allowed. */
 export const MAX_RECORDED_STEPS = 60;
@@ -214,7 +217,18 @@ export async function runRemote(options: RemoteRunOptions): Promise<RemoteRun> {
   // A requirement is documented only if its quote is found in a snapshot;
   // nothing the recording says about trust is read.
   const sources = snapshotSources(snapshots);
-  const attributed = attribute(recording.analysis, sources);
+  // In a remote run a quote is the approved text itself or it is nothing: the same characters, in the same case,
+  // with the same spaces, and no longer than a requirement is. A quote that only reads like the approved text
+  // once formatting is ignored is the recording's own string, and that string would be shown as the requirement.
+  const exact = (quote: unknown) => typeof quote === "string" && quote.trim().length > 0 && quote.length <= MAX_QUOTE && snapshots.some((snapshot) => snapshot.content.includes(quote));
+  const asRecorded = recording.analysis as { requirements?: unknown };
+  const strict = {
+    ...recording.analysis,
+    ...(Array.isArray(asRecorded.requirements)
+      ? { requirements: asRecorded.requirements.map((requirement: { quote?: unknown }) => (requirement !== null && typeof requirement === "object" && !exact(requirement.quote) ? { ...requirement, quote: "" } : requirement)) }
+      : {}),
+  } as typeof recording.analysis;
+  const attributed = attribute(strict, sources);
   const analysis: Analysis = {
     ...attributed.analysis,
     conflicts: attributed.conflicts.map((conflict, index) => ({ ...conflict, id: `C${index + 1}` })),

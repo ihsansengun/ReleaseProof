@@ -187,6 +187,11 @@ for (const [what, over] of [
   ["no source id at all", { sourceId: "" }],
   ["a quote the snapshot does not contain", { quote: "After a first paid order the loyalty balance is 999." }],
   ["a requirement it calls inferred", { kind: "inferred", sourceId: "", quote: "" }],
+  // The approved words in the recording's own writing: other capitals, other spacing, signs of its own put in.
+  // The quote is shown as the requirement, so it is the approved text itself or it is nothing.
+  ["the approved words in other capitals", { quote: QUOTE.toUpperCase() }],
+  ["the approved words with formatting of its own", { quote: `${QUOTE}\n\n${"*_`#> ".repeat(700)}` }],
+  ["the approved words with other spacing", { quote: QUOTE.replace(" ", "  ") }],
 ] as const) {
   test(`KAN-16 criterion 4: a recording that cites ${what} sets no expected value`, async () => {
     const { result } = await run("160", recording({ requirement: over }));

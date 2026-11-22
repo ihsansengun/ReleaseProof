@@ -203,6 +203,10 @@ test("what a step printed, what a scenario said of itself and a query in an addr
   for (const secret of ["typed-secret-1", "query-secret-2", "answer-secret-3"]) assert.ok(!text.includes(secret), secret);
   assert.equal(result.steps[0]!.target, "/reset");
   assert.equal(result.steps[1]!.target, "POST /api/sign-in");
+  // An approved address with a query in it is shown without one.
+  const asked = remoteResult(record([leaky], { target: { baseUrl: "http://localhost:1/app/?token=in-address-1#in-address-2" } } as never));
+  assert.equal(asked.title, "Run against http://localhost:1/app/");
+  assert.ok(!JSON.stringify(asked).includes("in-address"));
 });
 
 test("a step is named only if it is one an executor can take, and pointed at only in known forms", () => {
@@ -230,7 +234,8 @@ test("the values compared are given as values, not as a page of text", () => {
   const long = scenario("S1", "failed", 60);
   long.assertionResults[0] = { ...long.assertionResults[0]!, actual: `A whole section of the page ${"and more ".repeat(600)}` };
   const result = remoteResult(record([long]));
-  assert.ok(result.requirements[0]!.observed.length <= 120);
+  assert.equal(result.requirements[0]!.observed, "not shown");
+  assert.ok(!JSON.stringify(result).includes("and more"));
   assert.ok(JSON.stringify(result).length < 6000);
 });
 
@@ -442,10 +447,10 @@ test("nothing that got through an earlier way of cleaning reaches the result, wh
 test("a value of a comparison is given only when it is a plain number, in the step's note and under the requirement alike", () => {
   const shown = scenario("S1", "failed", 0);
   shown.assertionResults = shown.assertionResults.map((made) => ({ ...made, pass: false, actual: "Signed in. password=shown-secret-1 ada@example.test \u202eBearer shown-secret-2" }));
-  const result = remoteResult(record([shown]));
-  const text = JSON.stringify(result);
   // A value with a credential's name and words before the sign, as a page might show it.
   shown.assertionResults.push({ ...shown.assertionResults[0]!, actual: "password for admin: shown-secret-3" });
+  const result = remoteResult(record([shown]));
+  const text = JSON.stringify(result);
   for (const secret of ["shown-secret-1", "shown-secret-2", "shown-secret-3", "ada@example.test", "\u202e"]) assert.ok(!text.includes(secret), `${JSON.stringify(secret)} in ${JSON.stringify(result.requirements.map((requirement) => requirement.observed))}`);
   // A value that is words is said not to be shown. One that is a plain number is given.
   assert.ok(result.requirements.every((requirement) => requirement.observed.split("; ").every((value) => value === "not shown")), JSON.stringify(result.requirements.map((requirement) => requirement.observed)));

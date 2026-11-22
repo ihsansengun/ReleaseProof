@@ -68,9 +68,15 @@ that is words.
 - **Pictures.** Covering asks the page where its secret fields are. A page
   that answers falsely leaves a field uncovered. Not safe against a hostile
   page. Anything a page shows as text is in the picture.
-- **Paths.** A secret with no name before it, written as a plain word or a
-  short number in a path (`/users/42/correcthorse`), is kept. A path names
-  what was asked for, and cannot be closed further without losing that.
+- **Paths.** No number is kept in a path. A secret written as a plain word,
+  after a name the rules do not hold or after no name
+  (`/users/correcthorse`), is kept. A path names what was asked for, and
+  cannot be closed further without losing that.
+- **Where an error came from** is the page's claim: a page names its own
+  files and can write its own trace. It is kept only as a cleaned path and
+  two whole numbers.
+- **A compared value that is a number** is kept, whatever the number means:
+  a balance and a one-time code look the same.
 - **The run's working record** on the machine is uncleaned. Hosted execution
   is blocked until its retention and access are controlled (KAN-16).
 

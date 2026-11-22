@@ -214,6 +214,15 @@ const shownValue = (value: unknown): string => plainAmount(value) ?? NOT_SHOWN;
  * but the record, and states nothing the record does not hold.
  */
 export function remoteResult(run: RemoteRun): RemoteResult {
+  // Where the run went, as an origin and a cleaned path: an approved address may carry a query, and none is shown.
+  let whereTo = "an address that is not shown";
+  try {
+    const url = new URL(run.target.baseUrl);
+    const way = cleanPathWith((given) => given, url.pathname);
+    if (/^https?:$/.test(url.protocol) && url.username === "" && url.password === "") whereTo = `${url.origin}${way === "/" ? "/" : `${way}/`}`;
+  } catch {
+    // Left as not shown.
+  }
   // Taken from the record, where nothing can yet set it to true.
   const trusted: boolean = (run.verdictsTrusted as unknown) === true;
   const executed = run.results.filter((result) => result.steps.length > 0);
@@ -354,7 +363,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       });
       if (requirementId) {
         stepsOf.set(requirementId, [...(stepsOf.get(requirementId) ?? []), id]);
-        // The values compared, cut to a length that shows a value and not a page of text.
+        // The values compared, each only if it is a plain number or amount.
         if (made) comparisonsOf.set(requirementId, [...(comparisonsOf.get(requirementId) ?? []), { expected: shownValue(made.expected), observed: shownValue(made.actual) }]);
       }
     });
@@ -370,7 +379,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       status: withheld ? "unverified" : requirement.status,
       observedStatus: requirement.status,
       // The approved text itself, as quoted from the snapshot. How a plan put it in its own words is not shown as the requirement.
-      text: requirement.quote,
+      text: clip(typeof requirement.quote === "string" ? requirement.quote : "", 600),
       // In the engine's own words, from the comparisons made. The fuller account, which can repeat what a scenario said, is in the run's record.
       reason: withheld ? `Observed, not verified. ${matched(comparisons)} ${NOT_TRUSTED}` : REASON[requirement.status](comparisons),
       expected: comparisons.map((made) => made.expected).join("; "),
@@ -408,9 +417,9 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     workspaceId: run.workspaceId,
     projectId: run.projectId,
     // Not the plan's own summary of the feature: that is unapproved wording.
-    title: `Run against ${run.target.baseUrl}`,
+    title: `Run against ${whereTo}`,
     summary: clip(summaryOf(run.results, executed.length, planned.length), 600),
-    target: run.target,
+    target: { ...run.target, baseUrl: whereTo },
     snapshots: run.snapshots,
     coverage: {
       requirements: {
@@ -434,7 +443,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     telemetry: {
       screenshots: screenshots ? "collected" : "not collected",
       recording: "not collected",
-      // A trace is written beside each scenario and holds more than the result vouches for; it is not part of the result.
+      // A remote run records no browser trace: it would hold what every page showed, with nothing covered.
       trace: "not collected",
       // Collected means the run listened, whether or not anything was said. Only errors and failed requests are kept.
       console: listened ? "collected" : "not collected",
@@ -465,5 +474,6 @@ function summaryOf(results: ScenarioResult[], executed: number, planned: number)
  * uncovered picture at a comparison, so there is none of either to leave.
  */
 export function filesThatMayLeave(result: RemoteResult): string[] {
-  return ["result.json", ...result.evidence.map((entry) => entry.path).filter((file) => /^scenarios\/[A-Za-z0-9_-]{1,64}\/step-\d{1,3}\.(png|jpg)$/.test(file))];
+  const named = Array.isArray(result?.evidence) ? result.evidence : [];
+  return ["result.json", ...named.map((entry) => entry?.path).filter((file): file is string => typeof file === "string" && /^scenarios\/[A-Za-z0-9_][A-Za-z0-9_-]{0,63}\/step-\d{1,3}\.(png|jpg)$/.test(file))];
 }

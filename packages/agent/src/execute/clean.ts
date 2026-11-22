@@ -10,7 +10,7 @@
  * What is kept is of two kinds, each with a form that can be checked:
  *
  *   - a path, cleaned segment by segment and closed by default: a segment is
- *     kept only if it reads as an ordinary name or a short number, and
+ *     kept only if it reads as an ordinary name (no number is kept), and
  *     nothing after a segment that names a credential is kept;
  *   - a value that is a plain number or amount.
  *
@@ -24,8 +24,6 @@ const PATH_KEPT = 200;
 /** Segments of a path that are kept. */
 const SEGMENTS = 20;
 
-/** The engine's own placeholder for a secret the executor was given. */
-const PLACEHOLDER = /^\{\{secret:[A-Za-z0-9_.-]{1,48}\}\}$/;
 const REDACTED = "[redacted]";
 
 const isLetter = (code: number) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
@@ -45,24 +43,30 @@ function made(text: string): { letters: number; digits: number; others: number }
   return { letters, digits, others };
 }
 
-/** Whether a name is, or holds, the name of a credential. Only its letters are read, in lower case. */
-export function namesCredential(name: string): boolean {
-  let plain = "";
-  for (let i = 0; i < name.length && i < 200; i++) {
-    if (isLetter(name.charCodeAt(i))) plain += name[i]!.toLowerCase();
-  }
-  if (plain === "") return false;
-  if (["auth", "sid", "otp", "pin", "key", "sig", "pass", "pw", "code", "reset", "verify", "magic", "invite", "confirm", "activate", "unsubscribe"].includes(plain)) return true;
-  if (plain.endsWith("auth") || plain.endsWith("pass") || plain.endsWith("pw") || plain.endsWith("otp") || (plain.startsWith("auth") && !plain.startsWith("author"))) return true;
-  return ["token", "secret", "passw", "passphrase", "passcode", "pwd", "credential", "signature", "csrf", "xsrf", "cookie", "session", "bearer", "jwt", "oauth", "apikey", "accesskey", "privatekey", "secretkey", "authkey"].some((word) => plain.includes(word));
-}
+/**
+ * Words that say that what follows is a credential or a link meant for one person. The long ones count wherever
+ * in a name they stand, so a plural, a longer form or a joined word counts ("verification", "pwreset").
+ */
+const NAME_HOLDS = ["token", "secret", "passw", "passphrase", "passcode", "pwd", "credential", "signature", "csrf", "xsrf", "cookie", "session", "bearer", "jwt", "oauth", "apikey", "reset", "verif", "confirm", "activat", "invit", "magic", "unsubscrib", "recover", "licen", "voucher", "coupon", "redeem", "nonce", "authent", "authoriz"];
+/** The short ones count only as a whole part of a name, alone or in the plural: "pin" and "pins", not "pink". */
+const NAME_PARTS = new Set(["auth", "otp", "pin", "key", "sig", "pass", "pw", "code", "sid", "mfa", "tfa", "fa", "sso", "grant", "salt", "serial"]);
 
-/** Whether a word, by its own look, is a key or a token and not a name. */
-function opaque(word: string): boolean {
-  if (word.length > 40) return true;
-  const { letters, digits } = made(word);
-  if (word.length >= 16 && letters > 0 && digits > 0) return true;
-  return letters === 0 && digits > 12;
+/**
+ * Whether a name is, or holds, the name of a credential. The name is read a part at a time: its letters, split
+ * where anything that is not a letter stands and where a capital begins a word, in lower case.
+ */
+export function namesCredential(name: string): boolean {
+  const read = name.length > 200 ? name.slice(0, 200) : name;
+  const parts = read
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter((part) => part !== "");
+  if (parts.length === 0) return false;
+  const whole = parts.join("");
+  if (NAME_HOLDS.some((word) => whole.includes(word))) return true;
+  const single = (part: string) => (part.endsWith("es") && NAME_PARTS.has(part.slice(0, -2)) ? part.slice(0, -2) : part.endsWith("s") && NAME_PARTS.has(part.slice(0, -1)) ? part.slice(0, -1) : part);
+  return [...parts, whole].some((part) => NAME_PARTS.has(single(part)));
 }
 
 /** A part of a path segment that reads as an ordinary name or a short number. */
@@ -71,27 +75,31 @@ function ordinaryPart(part: string): boolean {
   const { letters, digits, others } = made(part);
   if (others > 0) return false;
   if (digits === 0) return letters <= 24;
-  if (letters === 0) return digits <= 12;
-  // Letters and digits mixed: "v2", "sha1" and "oauth2" are names; a longer mix may be a password.
-  return part.length <= 6;
+  // A number is an id, a code or a count, and which cannot be told: it is not kept. A short name with a digit in
+  // it that starts with a letter ("v2", "sha1", "h264") is a name.
+  return letters > 0 && part.length <= 4 && isLetter(part.charCodeAt(0));
 }
+
+/** The endings of the files a web application serves. Any other ending is not one: ".example" is the end of a host's name. */
+const ENDINGS = new Set(["js", "mjs", "cjs", "css", "map", "json", "html", "htm", "xml", "txt", "csv", "pdf", "png", "jpg", "jpeg", "gif", "svg", "webp", "avif", "ico", "woff", "woff2", "ttf", "otf", "mp4", "webm", "mp3", "wasm", "ts", "tsx", "jsx", "vue"]);
 
 /** One segment, already decoded: itself if it reads as ordinary, a file name with what is ordinary of it, or replaced. */
 function cleanSegment(segment: string): string {
   if (segment === REDACTED) return segment;
   if (segment.length > 60 || !/^[\x21-\x7e]+$/.test(segment)) return REDACTED;
   // A picture's name with its size after an @ ("logo@2x.png").
-  const sized = /^([A-Za-z0-9_.-]+)(@[1-4]x)(\.[A-Za-z0-9]{1,5})$/.exec(segment);
+  const sized = /^([A-Za-z0-9_-]+)(@[1-4]x)(\.[A-Za-z0-9]{1,5})$/.exec(segment);
   // Anything else with an @ in it is an address or a name at a host: nothing of it is kept.
   if (!sized && segment.includes("@")) return REDACTED;
   const read = sized ? `${sized[1]}${sized[3]}` : segment;
   // A file name: its ending is kept, and each part of its name is judged by itself.
   const dot = read.lastIndexOf(".");
-  const ending = dot > 0 && read.length - dot <= 6 && /^[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*$/.test(read.slice(dot + 1)) ? read.slice(dot) : "";
+  const ending = dot > 0 && ENDINGS.has(read.slice(dot + 1).toLowerCase()) ? read.slice(dot) : "";
   const name = ending === "" ? read : read.slice(0, dot);
   const gone = ending === "" ? REDACTED : `${REDACTED}${ending}`;
-  if (!/^[A-Za-z0-9_.~-]+$/.test(name.split(REDACTED).join("x"))) return gone;
-  const parts = name.split(/[-_.~]/);
+  // Letters, digits and the signs that join words. A dot inside a name is how a host or an address is written.
+  if (!/^[A-Za-z0-9_~-]+$/.test(name.split(REDACTED).join("x"))) return gone;
+  const parts = name.split(/[-_~]/);
   // Many short groups is how a key is often written. Words are few.
   if (parts.length > 6) return gone;
   if (ending === "" && !parts.every(ordinaryPart)) return REDACTED;
@@ -180,11 +188,6 @@ function cleanedPath(scrub: (text: string) => string, pathname: string): string 
       out.push(REDACTED);
       continue;
     }
-    // The engine's own placeholder, and only when what it names reads as a name.
-    if (PLACEHOLDER.test(segment) && !opaque(segment.slice(9, -2))) {
-      out.push(segment);
-      continue;
-    }
     if (namesCredential(segment)) {
       afterCredential = true;
       out.push(/^[A-Za-z]{1,24}$/.test(segment) ? segment : REDACTED);
@@ -202,14 +205,15 @@ function cleanedPath(scrub: (text: string) => string, pathname: string): string 
 
 /**
  * A value read from a page or stated by a requirement, if it is a plain
- * number or amount: digits, with a sign, separators, a currency sign or a
- * percent sign. Undefined for anything else: words are free text, and free
+ * number or amount: digits, with a sign, commas between groups of three, one
+ * fraction, a currency sign or a percent sign, and no space inside. Undefined for anything else: words are free text, and free
  * text is not kept.
  */
 export function plainAmount(value: unknown): string | undefined {
   const text = typeof value === "number" && Number.isFinite(value) ? String(value) : typeof value === "string" ? value.trim() : undefined;
   if (text === undefined || text.length === 0 || text.length > 24) return undefined;
-  if (!/^[-+]?[$€£¥]?\d{1,3}(?:[,. ]?\d{1,3}){0,5}(?:[.,]\d{1,4})?\s?%?$/.test(text)) return undefined;
+  // Digits in one run, or in groups of three with commas; then at most one fraction; nothing else between.
+  if (!/^[-+]?[$€£¥]?(?:\d{1,12}|\d{1,3}(?:,\d{3}){1,3})(?:[.,]\d{1,4})?%?$/.test(text)) return undefined;
   // A long run of digits is an account or a card, not an amount.
   if (text.replace(/\D/g, "").length > 12) return undefined;
   return text;

@@ -252,7 +252,7 @@ export async function closeSession(
     ...(session.texts && Object.keys(session.texts).length > 0 ? { textObservations: session.texts } : {}),
     steps: session.steps,
     ...(capture ? { capture } : {}),
-    evidence: { trace: "trace.zip", dir: session.outDir },
+    evidence: { trace: capture ? "not recorded" : "trace.zip", dir: session.outDir },
     usage: info.usage,
     startedAt: open.startedAt.toISOString(),
     durationMs: Date.now() - open.startedAt.getTime(),
