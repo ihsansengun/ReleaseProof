@@ -284,7 +284,8 @@ async function redraw(session: Session, collector: Collector, raw: Buffer, areas
     if (!browser) throw new Error("no browser to draw in");
     collector.easel = await (await browser.newContext({ javaScriptEnabled: true, offline: true })).newPage();
   }
-  const drawn = await within(collector.easel.evaluate(
+  const easel = collector.easel;
+  const drawn = await within(easel.evaluate(
     async ({ data, areas, jpeg }) => {
       const image = new Image();
       image.src = `data:image/png;base64,${data}`;
@@ -301,7 +302,12 @@ async function redraw(session: Session, collector: Collector, raw: Buffer, areas
       return canvas.toDataURL(jpeg ? "image/jpeg" : "image/png", 0.6).split(",")[1] ?? "";
     },
     { data: raw.toString("base64"), areas, jpeg },
-  ), COVER_TIMEOUT_MS);
+  ), COVER_TIMEOUT_MS).catch((error: unknown) => {
+    // A page that hung or failed once is not drawn in again: the next picture gets a new one.
+    collector.easel = undefined;
+    void easel.context().close().catch(() => undefined);
+    throw error;
+  });
   if (drawn === "") throw new Error("nothing drawn");
   return { picture: Buffer.from(drawn, "base64"), jpeg };
 }
@@ -311,6 +317,9 @@ export function endCapture(session: Session): Capture | undefined {
   const collector = collectors.get(session);
   if (!collector) return undefined;
   collector.stop();
+  // The page the pictures were drawn in is the engine's own, and is closed with the run.
+  void collector.easel?.context().close().catch(() => undefined);
+  collector.easel = undefined;
   collectors.delete(session);
   return collector.capture;
 }

@@ -150,11 +150,14 @@ It leaves the machine, so it is kept small and kept clean:
   The secrets the executor was given go first; then the text is cut to 4,000
   characters, and a word the cut went through is dropped. It is read once
   into words and the signs between them. Removed: an address down to its
-  cleaned path, wherever in a word it starts; e-mail addresses; the value
-  after a name that is a credential's (`password`, `access_token`,
-  `clientSecret`, `pwd`, `x-auth`, `Authorization: Bearer` and the like),
-  whether it follows `=`, `:`, `=>`, `is`, a quote or a space, whole when it
-  is in quotes or brackets, and the values after `Cookie`; a long word of
+  cleaned path, wherever in a word it starts; e-mail addresses; **everything
+  after the point a credential's value begins**, that is after a name that
+  is a credential's (`password`, `access_token`, `clientSecret`, `pwd`,
+  `x-auth`, `Cookie`, `Authorization` and the like) and a sign or a verb
+  (`=`, `:`, `=>`, `->`, `:=`, `is`, an opening bracket), or after `Bearer`,
+  `Basic`, `Digest`, `Negotiate` or `Token`. Where a value begins can be
+  told; where it ends cannot, so no attempt is made and the rest of the text
+  goes. Also removed: a long word of
   letters and digits mixed, a very long word, a long run of digits. What is
   already redacted, and the engine's own placeholder for a secret, are set
   aside first and stand as they are, and the rest of their word is judged as
@@ -177,8 +180,11 @@ It leaves the machine, so it is kept small and kept clean:
   counts every change to its own document, and it counts none.
 - **Every field found is covered, or no picture is kept.** There is no count
   beyond which fields are left showing. A page with more than 2,000 such
-  fields or more than 40 frames, or on which finding or covering them takes
-  over four seconds, gets no picture.
+  fields or more than 40 frames, or on which any one stage of finding or
+  covering them takes over four seconds, gets no picture. There are several
+  such stages, so a step on a page that stalls each of them can be held for
+  some twenty seconds before it is given up. The page the covering is drawn
+  in is discarded after a failure and closed with the run.
 - No picture is kept of a page that is not the application under test.
 - What a limit left out is counted in `evidenceLimits.leftOut`.
 - The result cleans every text and path once more as it is built, by the same
@@ -194,8 +200,11 @@ still appear:
   name; a short value encoded another way; the password of an account the
   target's manifest declares;
 - in text, also: a secret in a sentence with no name the rules know ("the pw
-  was …"); a name in one item of a list and its value in the next; what a
-  page writes from a template or a function's source;
+  was …"); a credential's name with its value straight after it and no sign
+  or verb between ("password hunter3"); a name in one item of a list and its
+  value in the next; a short secret of mixed characters cut into pieces by
+  `&`, `|` or a comma, each piece too short to look like one; what a page
+  writes from a template or a function's source;
 - in a picture: anything the page shows as text; a field of another kind
   that holds a secret (a password shown in a plain text field, a text area);
   a field inside a closed component, which the engine cannot see into; a
@@ -204,7 +213,9 @@ still appear:
   covered, but one that moves several times in that instant can show).
 
 And it errs toward removing: a message such as "password: must be at least 8
-characters" loses the word after the name; in a path, an id written in
+characters", "token is missing" or "tokens: 3 remaining" loses everything
+after the name, and so does whatever followed a credential in the same line;
+in a path, an id written in
 groups, a name of seven words or more, and a segment with brackets, a colon
 or a comma are replaced. That is the safe side to be wrong on.
 

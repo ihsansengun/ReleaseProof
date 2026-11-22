@@ -403,8 +403,22 @@ test("what cleaning must remove, and what it must leave", () => {
     ["an e-mail address with its sign written as a code", "user%40encoded-21.example"],
     ["an e-mail address stuck in front of an address", "glue@example.test,http://h.example/x"],
     ["name and password inside an address", "http://user:inline-22@host.example/x"],
+    // Found by the fifth review: where a value ends cannot be told, so nothing after its start is kept.
+    ["a value with signs inside it", "password=Tr0ub&dor;3x-23"],
+    ["a value with a comma and a bracket", "token=ab,cd)tail-24 more"],
+    ["a quoted value with a quote written inside it", '{"password":"a\\"b inner-25"}'],
+    ["a value of several words with no quotes", "{password: correct horse battery-26}"],
+    ["a value of several words after a verb", "the secret is correct horse staple-27"],
+    ["an arrow of another kind", "token -> thin-arrow-28"],
+    ["a sign of two characters", "token := walrus-29"],
+    ["a name with no sign at all before a bracket", "password(paren-30)"],
+    ["a credential far into a line of many words", `${"word ".repeat(70)}password=late-31`],
+    ["the sixteenth value of a cookie", `Cookie: ${Array.from({ length: 15 }, (_, i) => `c${i}=v${i}`).join("; ")}; sid=sixteenth-32`],
+    ["a kind of credential not named before", "Proxy-Authorization: Negotiate negotiated-33"],
+    ["a digest credential", 'Authorization: Digest username="digest-34", response="abc"'],
+    ["a long name that says what it holds at its end", `${"x".repeat(200)}_password=long-tail-35`],
   ];
-  const secrets = ["json-spaced-1", "json-nested-2", "json-tight-3", "json-inner-4", "single-quoted-5", "app.example", "colon-pass-6", "glued-7", "beside-8", "stuck-9abc", "several", "words-10", "listed-11", "after-token-12", "header-13", "cookie-14", "spaced-15", "spoken-16", "arrow-17", "pipe-18", "encoded-19", "localhost-20", "encoded-21", "glue@", "h.example", "inline-22", "host.example", "ada@example.test", "abcdefghijklmnop", "eyJhbGciOiJIUzI1NiJ9", "hunter2-plain", "acc-tok-12345", "cs-camel-12345", "first-key-123", "only-key-456", "quoted-789", "long-name-321", "REST-OF-SECRET", "arrow-value-654", "0123456789abcdef0123456789abcdef0123", "4111111111111111", "Zq7!vault-pw", "account=42", "sig=abcdef", "shop.example", "glued.example", "wstoken", "127.0.0.1", "zw-hunter2"];
+  const secrets = ["json-spaced-1", "json-nested-2", "json-tight-3", "json-inner-4", "single-quoted-5", "app.example", "colon-pass-6", "glued-7", "beside-8", "stuck-9abc", "several", "words-10", "listed-11", "after-token-12", "header-13", "cookie-14", "spaced-15", "spoken-16", "arrow-17", "pipe-18", "encoded-19", "localhost-20", "encoded-21", "glue@", "h.example", "inline-22", "dor;3x-23", "3x-23", "tail-24", "inner-25", "horse", "battery-26", "staple-27", "thin-arrow-28", "walrus-29", "paren-30", "late-31", "sixteenth-32", "negotiated-33", "digest-34", "long-tail-35", "host.example", "ada@example.test", "abcdefghijklmnop", "eyJhbGciOiJIUzI1NiJ9", "hunter2-plain", "acc-tok-12345", "cs-camel-12345", "first-key-123", "only-key-456", "quoted-789", "long-name-321", "REST-OF-SECRET", "arrow-value-654", "0123456789abcdef0123456789abcdef0123", "4111111111111111", "Zq7!vault-pw", "account=42", "sig=abcdef", "shop.example", "glued.example", "wstoken", "127.0.0.1", "zw-hunter2"];
   for (const [what, text] of gone) {
     const cleaned = cleanText(session, text);
     for (const secret of secrets) assert.ok(!cleaned.includes(secret), `${what}: ${cleaned}`);
@@ -413,7 +427,7 @@ test("what cleaning must remove, and what it must leave", () => {
     assert.equal(cleanText(session, cleaned), cleaned, `again: ${what}`);
   }
   // Left as they are: what a person needs to make sense of an error.
-  for (const kept of ["Unexpected token < in JSON at position 0", "TypeError: Cannot read properties of undefined (reading 'total')", "Failed to load resource: the server responded with a status of 404 (Not Found)", "retry=3 timeout=5000", "monkey=banana primaryKey=42", "could not sign in with {{secret:user.password}}", "token=[redacted] password=[redacted] ok"]) {
+  for (const kept of ["Unexpected token < in JSON at position 0", "TypeError: Cannot read properties of undefined (reading 'total')", "Failed to load resource: the server responded with a status of 404 (Not Found)", "retry=3 timeout=5000", "monkey=banana primaryKey=42", "could not sign in with {{secret:user.password}}", "token=[redacted]", "see [redacted value] and [redacted e-mail] ok"]) {
     assert.equal(cleanText(session, kept), kept);
   }
   assert.equal(cleanText(session, "failed at http://127.0.0.1:1/api/v2/international-shipping-rates?x=1"), "failed at /api/v2/international-shipping-rates");
