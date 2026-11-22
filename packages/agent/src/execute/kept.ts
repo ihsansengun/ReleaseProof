@@ -23,11 +23,20 @@ export type EvidenceRoute = { id: string; path: string };
 /** What stands where an endpoint would be named, when the path asked for is not on the list. */
 export const ENDPOINT_NOT_RECORDED = "Endpoint not recorded";
 
+/**
+ * The most that is counted of one kind of entry in a step: a count of this many means this many or more. Kept
+ * low, with the limits on entries, because what happens in a page is the page's doing: a page that set out to
+ * could choose how many errors of which status to cause, and so write numbers of its own into a result.
+ */
+export const MOST_COUNTED = 100;
+
 /** The most routes a list may name. */
 const MOST_ROUTES = 50;
 const ROUTE_ID = /^[a-z][a-z0-9-]{0,31}$/;
 /** A static path: from the root, plain letters, digits and the signs that join names. No query, no pattern, nothing to fill in. */
 const ROUTE_PATH = /^\/(?:[A-Za-z0-9_.~-]{1,40}(?:\/[A-Za-z0-9_.~-]{1,40}){0,7})?$/;
+/** A segment made of dots only is a step up or a step nowhere, and no address a browser asks for has one. */
+const DOTS_ONLY = /(?:^|\/)\.+(?:\/|$)/;
 
 /**
  * The routes of a list that are in the form a route must have. One that is
@@ -38,9 +47,17 @@ export function trustedRoutes(given: unknown): EvidenceRoute[] {
   if (!Array.isArray(given)) return [];
   const routes: EvidenceRoute[] = [];
   for (const entry of given.slice(0, MOST_ROUTES)) {
-    const id = (entry as { id?: unknown } | null)?.id;
-    const path = (entry as { path?: unknown } | null)?.path;
-    if (typeof id !== "string" || typeof path !== "string" || !ROUTE_ID.test(id) || !ROUTE_PATH.test(path)) continue;
+    let id: unknown;
+    let path: unknown;
+    try {
+      // Only what the entry itself holds, and nothing that cannot be read.
+      if (entry === null || typeof entry !== "object" || !Object.hasOwn(entry, "id") || !Object.hasOwn(entry, "path")) continue;
+      id = (entry as { id?: unknown }).id;
+      path = (entry as { path?: unknown }).path;
+    } catch {
+      continue;
+    }
+    if (typeof id !== "string" || typeof path !== "string" || !ROUTE_ID.test(id) || !ROUTE_PATH.test(path) || DOTS_ONLY.test(path)) continue;
     if (routes.some((route) => route.id === id || route.path === path)) continue;
     routes.push({ id, path });
   }
@@ -57,11 +74,24 @@ export function endpointOf(routes: readonly EvidenceRoute[], address: unknown, o
   if (typeof address !== "string" || address.length > 2_000) return ENDPOINT_NOT_RECORDED;
   try {
     const url = new URL(address);
-    if (url.origin !== origin) return ENDPOINT_NOT_RECORDED;
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.origin !== origin) return ENDPOINT_NOT_RECORDED;
     return routes.find((route) => route.path === url.pathname)?.id ?? ENDPOINT_NOT_RECORDED;
   } catch {
     return ENDPOINT_NOT_RECORDED;
   }
+}
+
+/**
+ * The name of the endpoint a recorded step asks for. A step gives a path, not an address, and it is compared as
+ * it is written: the characters before any query or fragment must be exactly a listed route's path. Nothing is
+ * resolved, decoded or tidied first, so a path that only comes to the same thing once a browser has read it is
+ * not named.
+ */
+export function endpointOfPath(routes: readonly EvidenceRoute[], path: unknown): string {
+  if (typeof path !== "string" || path.length > 2_000) return ENDPOINT_NOT_RECORDED;
+  const end = path.search(/[?#]/);
+  const asked = end === -1 ? path : path.slice(0, end);
+  return routes.find((route) => route.path === asked)?.id ?? ENDPOINT_NOT_RECORDED;
 }
 
 /** Whether a value is what may stand where an endpoint is named: an id from the list, or the words that say there is none. */

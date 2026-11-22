@@ -29,7 +29,7 @@
  */
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { ENDPOINT_NOT_RECORDED, endpointOf, isEndpoint, plainAmount, trustedRoutes, type EvidenceRoute } from "../execute/kept.ts";
+import { ENDPOINT_NOT_RECORDED, endpointOfPath, isEndpoint, MOST_COUNTED, plainAmount, trustedRoutes, type EvidenceRoute } from "../execute/kept.ts";
 import { assess, type RequirementStatus } from "../report/readiness.ts";
 import type { ScenarioResult, Verdict } from "../schema.ts";
 import type { RemoteRun } from "./run.ts";
@@ -169,7 +169,7 @@ const LOCATED_BY = new Set(["role", "label", "text", "testid", "labelled", "cell
 /** A time a run can have: from nothing up to a day, in milliseconds. */
 const within = (ms: unknown): ms is number => typeof ms === "number" && Number.isFinite(ms) && ms >= 0 && ms <= 86_400_000;
 /** Console entries, and network entries, taken from one scenario. The same number the collector keeps. */
-const ENTRIES = 200;
+const ENTRIES = 60;
 
 /** The kinds of request a browser makes. Any other is "other". */
 const KINDS = new Set(["document", "stylesheet", "image", "media", "font", "script", "texttrack", "xhr", "fetch", "eventsource", "websocket", "manifest", "other"]);
@@ -186,16 +186,7 @@ const ROLES = new Set(["button", "link", "textbox", "checkbox", "radio", "combob
  */
 function describeTarget(input: unknown, routes: readonly EvidenceRoute[]): string {
   const given = (input !== null && typeof input === "object" ? input : {}) as { path?: unknown; element?: unknown; target?: unknown };
-  if (typeof given.path === "string") {
-    const base = "http://target.invalid";
-    let asked: string | undefined;
-    try {
-      asked = new URL(given.path.slice(0, 2_000), `${base}/`).href;
-    } catch {
-      asked = undefined;
-    }
-    return endpointOf(routes, asked, base);
-  }
+  if (typeof given.path === "string") return endpointOfPath(routes, given.path);
   const element = (given.element ?? given.target) as { source?: unknown; by?: unknown; role?: unknown; responseId?: unknown } | undefined;
   if (element === undefined || element === null || typeof element !== "object") return "";
   if (element.source === "api") return typeof element.responseId === "string" && /^R\d{1,4}$/.test(element.responseId) ? `the answer ${element.responseId}` : "an answer";
@@ -283,7 +274,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
           leftOut.console += 1;
           continue;
         }
-        consoleEntries.push({ stepId: stepOf(entry.step), level: entry.level, endpoint: isEndpoint(routeIds, entry.endpoint) ? entry.endpoint : ENDPOINT_NOT_RECORDED, count: Math.min(entry.count, 1_000_000) });
+        consoleEntries.push({ stepId: stepOf(entry.step), level: entry.level, endpoint: isEndpoint(routeIds, entry.endpoint) ? entry.endpoint : ENDPOINT_NOT_RECORDED, count: Math.min(entry.count, MOST_COUNTED) });
       } catch {
         // An entry that cannot be read is left out, and the rest of the result stands.
         leftOut.console += 1;
@@ -309,7 +300,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         // Said from the status, not taken from the record.
         failure: status === 0 ? "no answer" : "error answer",
         endpoint: isEndpoint(routeIds, entry.endpoint) ? entry.endpoint : ENDPOINT_NOT_RECORDED,
-        count: Math.min(entry.count, 1_000_000),
+        count: Math.min(entry.count, MOST_COUNTED),
       });
     }
     leftOut.screenshots += count(result.capture?.leftOut?.screenshots);

@@ -12,7 +12,7 @@
  *
  *   - no text a page wrote is kept: not a console message, not an
  *     exception's words. Of an error only its kind, the step it happened in
- *     and how often it happened are kept;
+ *     and how often it happened (up to a hundred) are kept;
  *   - no address or part of one is kept. Of a request that failed: the
  *     status, the browser's kind of request, whether it was answered, the
  *     step and a count. An endpoint is named only when the path asked for is
@@ -30,7 +30,7 @@
  */
 import path from "node:path";
 import type { ConsoleMessage, Locator, Page, Request, Response, ElementHandle } from "playwright";
-import { endpointOf, type EvidenceRoute } from "./kept.ts";
+import { endpointOf, MOST_COUNTED, type EvidenceRoute } from "./kept.ts";
 import type { Session } from "./tools.ts";
 
 export const CAPTURE_LIMITS = {
@@ -39,9 +39,9 @@ export const CAPTURE_LIMITS = {
   /** All pictures of one scenario together, in bytes. */
   screenshotBytesPerScenario: 3_000_000,
   /** Console and network entries kept per scenario, each. */
-  entries: 200,
+  entries: 60,
   /** Entries of each kind kept from any one step, so that a noisy step does not use up the whole allowance. */
-  entriesPerStep: 40,
+  entriesPerStep: 12,
 } as const;
 
 
@@ -110,7 +110,7 @@ export function startCapture(session: Session, startedAt: number, routes: readon
   const room = (kept: { step: number }[], at: number) => kept.length < CAPTURE_LIMITS.entries && kept.filter((entry) => entry.step === at).length < CAPTURE_LIMITS.entriesPerStep;
   const count = <T extends { step: number; count: number }>(kept: T[], kind: "console" | "network", entry: T, same: (other: T) => boolean) => {
     const before = kept.find((other) => other.step === entry.step && same(other));
-    if (before) before.count = Math.min(before.count + 1, 1_000_000);
+    if (before) before.count = Math.min(before.count + 1, MOST_COUNTED);
     else if (!room(kept, entry.step)) capture.leftOut[kind] += 1;
     else kept.push(entry);
   };

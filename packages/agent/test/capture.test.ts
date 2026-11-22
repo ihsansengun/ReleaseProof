@@ -10,7 +10,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { chromium } from "playwright";
 import { CAPTURE_LIMITS } from "../src/execute/capture.ts";
-import { ENDPOINT_NOT_RECORDED, endpointOf, plainAmount, trustedRoutes, type EvidenceRoute } from "../src/execute/kept.ts";
+import { ENDPOINT_NOT_RECORDED, endpointOf, endpointOfPath, MOST_COUNTED, plainAmount, trustedRoutes, type EvidenceRoute } from "../src/execute/kept.ts";
 import { LEAKED_BEFORE, LEAKED_PATHS, SECRETS_BEFORE } from "./leaked-before.ts";
 import { runScenario } from "../src/execute/run.ts";
 import { Manifest, type Scenario, type ScenarioResult, type Step } from "../src/schema.ts";
@@ -342,6 +342,10 @@ test("a list of routes is taken only in the form a route has, and a path is matc
     { id: "same-path", path: "/api/points" },
     { id: "x".repeat(40), path: "/long-id" },
     { id: "root", path: "/" },
+    { id: "dots", path: "/a/../b" },
+    { id: "dot", path: "/." },
+    Object.create({ id: "inherited", path: "/inherited" }),
+    { id: "thrower", get path(): string { throw new Error("no"); } },
     null,
     "points",
     { id: 5, path: {} },
@@ -373,6 +377,33 @@ test("a list of routes is taken only in the form a route has, and a path is matc
     {},
     `http://app.example/${"a".repeat(5_000)}`,
   ]) assert.equal(endpointOf(routes, other, origin), ENDPOINT_NOT_RECORDED, JSON.stringify(other)?.slice(0, 60));
+  // An address that is not a web address names nothing, whatever its origin is said to be.
+  assert.equal(endpointOf(routes, "file:///api/points", "null"), ENDPOINT_NOT_RECORDED);
+
+  // A recorded step gives a path, compared as it is written: nothing is resolved, decoded or tidied first.
+  assert.equal(endpointOfPath(routes, "/api/points"), "points-api");
+  assert.equal(endpointOfPath(routes, "/api/points?account=42#frag"), "points-api");
+  for (const other of [
+    `/api/points${" ".repeat(1_995)}/more`,
+    "/\\target.invalid/api/points",
+    "http://target.invalid/api/points",
+    "//target.invalid/api/points",
+    "http://u:p@target.invalid/api/points",
+    "api/points",
+    "./api/points",
+    " /api/points",
+    "/api/po\tints",
+    "\\api\\points",
+    "/api/./points",
+    "/api/x/../points",
+    "/api/points/",
+    "/API/points",
+    "/api/%70oints",
+    `/api/points?${"q".repeat(3_000)}`,
+    "",
+    null,
+    5,
+  ]) assert.equal(endpointOfPath(routes, other), ENDPOINT_NOT_RECORDED, JSON.stringify(other)?.slice(0, 60));
 });
 
 test("nothing that got through an earlier way of cleaning is kept: the page says, throws and asks for every such text and path, and none of it is in what the run collected", async () => {
@@ -394,8 +425,11 @@ test("errors of one kind in a step are counted, not listed, however many a page 
   const { result } = await run([step("navigate", { path: "/chatty" }), FINISH], true);
   const capture = result.capture!;
   structured(capture, []);
-  // 260 from one place and 60 from sixty: with no place kept they are one entry, and its count is the whole.
-  assert.deepEqual(capture.console, [{ step: 1, level: "error", endpoint: ENDPOINT_NOT_RECORDED, count: 320 }]);
+  // 260 from one place and 60 from sixty: with no place kept they are one entry. A count stops at a hundred, which
+  // then means a hundred or more: how often a page does a thing is the page's to choose.
+  assert.equal(MOST_COUNTED, 100);
+  assert.deepEqual(capture.console, [{ step: 1, level: "error", endpoint: ENDPOINT_NOT_RECORDED, count: 100 }]);
+  assert.ok(CAPTURE_LIMITS.entriesPerStep <= 12 && CAPTURE_LIMITS.entries <= 60);
   assert.ok(JSON.stringify(capture).length < 1_000);
   assert.ok(CAPTURE_LIMITS.entriesPerStep >= 1);
 });

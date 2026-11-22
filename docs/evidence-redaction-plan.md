@@ -84,6 +84,10 @@ number, and says `not shown` for one that is words.
 - **Pictures.** Covering asks the page where its secret fields are. A page
   that answers falsely leaves a field uncovered. Not safe against a hostile
   page. Anything a page shows as text is in the picture.
+- **Numbers a page can choose.** Statuses, counts and which entries exist
+  follow from what a page does. With the limits (12 entries a step, 60 a
+  scenario, a count up to 100) that is still some hundreds of bytes a
+  scenario for a page that sets out to use it.
 - **A compared value that is a number** is kept, whatever the number means:
   a balance and a one-time code look the same.
 - **The run's working record** on the machine is uncleaned. Hosted execution

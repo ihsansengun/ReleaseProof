@@ -393,7 +393,7 @@ test("what was collected is taken in by the result's own rules, whoever wrote th
   const text = JSON.stringify(result);
   assert.ok(text.length < 120_000, `the result stays small: ${text.length}`);
   assert.ok(!text.includes("<script>") && !text.includes("HUNTER2SECRET") && !text.includes("elsewhere.example") && !text.includes("null"));
-  assert.ok(result.diagnostics.console.length <= 200);
+  assert.ok(result.diagnostics.console.length <= 60);
   for (const entry of result.diagnostics.console) {
     assert.deepEqual(Object.keys(entry).sort(), ["count", "endpoint", "level", "stepId"], JSON.stringify(entry));
     assert.ok(/^S1-[12]$/.test(entry.stepId) && ["points-api", "Endpoint not recorded"].includes(entry.endpoint), JSON.stringify(entry));
@@ -413,7 +413,14 @@ test("what was collected is taken in by the result's own rules, whoever wrote th
   ]);
   // Left out, and counted: entries whose kind, count or status is not one an entry can have, and everything past the limit.
   assert.equal(result.evidenceLimits.leftOut.network, 3);
-  assert.equal(result.evidenceLimits.leftOut.console, 2 + (5_006 - 200));
+  assert.equal(result.evidenceLimits.leftOut.console, 2 + (5_006 - 60));
+  // A count is never more than a hundred, whatever a record says.
+  const many = scenario("S1", "passed", 160);
+  many.capture!.console.push({ step: 1, level: "error", endpoint: "points-api", count: 999_999 });
+  many.capture!.network.push({ step: 1, status: 500, kind: "fetch", failure: "error answer", endpoint: "points-api", count: 1e9 });
+  const capped = remoteResult(record([many]));
+  assert.equal(capped.diagnostics.console[0]!.count, 100);
+  assert.equal(capped.diagnostics.network[0]!.count, 100);
   assert.equal(result.evidenceLimits.leftOut.screenshots, 0);
   assert.equal(result.steps[0]!.atMs, undefined);
   assert.equal(result.steps[0]!.durationMs, undefined);

@@ -71,9 +71,18 @@ What does remain of other hands, and is marked as such by where it stands:
   because the very same characters stand in an approved snapshot, in the
   same case and with the same spaces, and it is no longer than 600
   characters;
-- which entries there are, and their counts, follow from what the page did.
-  A page that set out to could write a few small numbers into a result that
-  way (a status from 400 to 599, a count), and nothing else;
+- which entries there are, and their numbers, follow from what the page
+  did, and a page that set out to could choose them. No field holds text of
+  the page's, but the numbers add up: each entry has a status (0, or 400 to
+  599), a kind of request from a list of 13, an endpoint from the list, a
+  count up to 100 and the step it belongs to, and there are up to 12 entries
+  of each sort a step and 60 a scenario. That is room for some hundreds of
+  bytes a scenario, enough to spell out a short secret in statuses and
+  counts. A review did so with a 40-character key before the limits were
+  lowered to these. It is a reason, with the pictures, not to run this
+  against a page that may be working against the run;
+- ids of requirements and of the steps and comparisons tied to them are the
+  recording's, checked to be plain names when the recording is read;
 - ids of requirements, scenarios and comparisons are the recording's, checked
   to be plain names.
 
@@ -173,16 +182,26 @@ recorded; nothing guesses.
 list routes of the application in the target manifest, as `evidenceRoutes`:
 each an `id` (a short name in small letters, digits and `-`) and a `path`
 (a static path of plain names: no query, no pattern, nothing to fill in). A
-request, a console error's file or a step's path is named by a route's `id`
-only when it is on the application's own origin and its path is, character
-for character, that route's `path`. In every other case, and when there is
+request or a console error's file is named by a route's `id` only when it
+is a web address on the application's own origin whose path, as the browser
+gives it, is exactly that route's `path`. (A browser tidies an address
+before it asks: `/api/x/../points` is asked for as `/api/points`, and is
+named so.) A recorded step is named only when the path it gives is, as
+written and before any `?` or `#`, character for character a route's
+`path`; nothing is resolved or tidied first. A page can choose which listed
+file its own error is placed in (it can name its scripts), which is a
+choice among the ids on the list and nothing more. In every other case, and when there is
 no list, the entry says `Endpoint not recorded`. Nothing of the address is
 used for anything else. An uncaught error never names an endpoint: where it
 came from would have to be read from its trace, which is the page's own
 text.
 
-The list is not the page's and not the recording's. An entry that is not in
-the form above is left out, at most 50 are read, and the result is built
+The list is not the page's and not the recording's: it is read from the
+target manifest the operator names, and nothing a recording or a page does
+reaches it. It is used for naming and nothing else: it opens no address,
+changes no requirement and no verdict. An entry whose id or path is not in
+the form above is left out (a manifest whose list is not a list of such
+pairs at all is refused whole), at most 50 are read, and the result is built
 with the same check, so only an id on the list can stand where an endpoint
 is named.
 
@@ -192,7 +211,8 @@ Limits:
 |---|---|
 | One picture | 400 kB; a larger one is redrawn as JPEG, and left out if still too large |
 | All pictures of a scenario | 3 MB |
-| Console entries, and network entries, per scenario | 200, and 40 from any one step |
+| Console entries, and network entries, per scenario | 60, and 12 from any one step |
+| A count | 100, which then means 100 or more |
 
 Errors of one kind and requests of one status, kind and endpoint in a step
 are one entry with a count. What a limit left out is counted in
