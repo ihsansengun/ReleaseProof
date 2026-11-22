@@ -296,7 +296,7 @@ const within = <T>(work: Promise<T>, ms: number): Promise<T> =>
 type Area = [x: number, y: number, width: number, height: number];
 /** Form fields and editable text: where a typed value can be shown again. */
 const FIELDS = "input, textarea, [contenteditable]";
-/** The most of a field's value that is read. (At most 5,000 fields are looked at; more than that, and no picture is kept.) */
+/** The longest secret that is looked for. A longer one typed, and no picture is kept. */
 const VALUE_READ = 4_000;
 /**
  * What each field holds and where it is, read out of the page. Nothing is passed in. An element is asked for its
@@ -305,12 +305,25 @@ const VALUE_READ = 4_000;
  */
 const fieldsOf = (elements: Element[]): [string, number, number, number, number][] => {
   if (elements.length > 5_000) throw new Error("too many fields to look at");
+  // Each field is read whole. A field read in part could hold the value in the part not read, so there is no
+  // reading in part: more than 2,000,000 characters in one document's fields, and no picture is kept.
+  let read = 0;
   return elements.map((element) => {
     const value = "value" in element && typeof (element as { value: unknown }).value === "string" ? (element as { value: string }).value : (element.textContent ?? "");
+    read += value.length;
+    if (read > 2_000_000) throw new Error("too much in the fields to read");
     const box = element.getBoundingClientRect();
-    return [value.slice(0, 4_000), box.x, box.y, box.width, box.height];
+    return [value, box.x, box.y, box.width, box.height];
   });
 };
+/**
+ * Whether the browser is at this moment drawing a picture of what was shown before over what is shown now, as
+ * it does while one view changes into another. Such a picture can show a field that is no longer anywhere in
+ * the document, so nothing in the document says where to cover it.
+ */
+const changingView = (): boolean =>
+  Boolean((document as unknown as { activeViewTransition?: unknown }).activeViewTransition) ||
+  document.getAnimations().some((animation) => String((animation.effect as { pseudoElement?: string | null } | null)?.pseudoElement ?? "").startsWith("::view-transition"));
 const rectsOf = (elements: Element[]): Area[] =>
   elements.map((element) => {
     const box = element.getBoundingClientRect();
@@ -336,6 +349,9 @@ async function findSecretAreas(session: Session, collector: Collector): Promise<
   // document it is asked where it is, and a failure to ask, whatever the cause, is a failure to cover: no
   // picture is kept. After a new document the element is ordinarily gone with the old one; a page that set out
   // to could carry it across (through another window), and then it is found, if at all, by what it holds.
+  // While one view is changing into another the browser may still show the view before, with a field in it that
+  // no document holds any more. Once a secret has been typed, no picture is kept of such a moment.
+  if ((collector.typed.length > 0 || collector.secretFields.length > 0) && (await page.evaluate(changingView))) throw new Error("the view before may still be showing");
   const gone = new Set<ElementHandle>();
   for (const { handle, document } of [...collector.secretFields]) {
     if (document !== undefined && collector.documents !== undefined && document !== collector.documents) {

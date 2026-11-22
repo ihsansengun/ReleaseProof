@@ -235,14 +235,20 @@ taken in is counted and left out.
   new document since; that is the browser's word, not the page's. In the
   same document, any failure to ask the element where it is means no
   picture, whatever caused it.
-- A form field or editable text found holding the very value the executor
-  typed is covered too, in the page and in its frames: an application may
+- A text field (`input`, `textarea`) or text marked editable found holding
+  the very value the executor typed is covered too, in the page and in its frames: an application may
   answer a form with what was sent, a browser may put a value back when it
   goes back, and a page may draw its form anew. What each field holds is
   read out and compared in the engine; **the secret is never handed to a
-  page or a frame to look for.** Up to 5,000 fields and 4,000 characters of
-  each are read; beyond that, or after more than 50 different secrets, no
-  picture is kept.
+  page or a frame to look for.** Each field is read whole, never in part. With more than
+  5,000 fields in a document, more than 2,000,000 characters in them, a
+  typed secret longer than 4,000 characters, or more than 50 different
+  secrets, no picture is kept.
+- While the browser is changing one view into another (a view transition)
+  it may still draw the view before, with a field in it that no document
+  holds any more. Once a secret has been typed, no picture is kept while
+  such a change is under way. Whether one is under way is asked of the
+  page, like where its fields are.
 - That second check finds a value only where a page lets it be read and
   only as it was typed. It does not find a secret shown as plain text, one
   the page has changed (cut, spaced out, encoded, in capitals), one in a

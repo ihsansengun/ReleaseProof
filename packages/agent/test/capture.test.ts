@@ -107,6 +107,11 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
         document.getElementById("f").contentDocument.body.append(field);
       </script>`);
     if (url.pathname === "/echo-frame-form") return html(`<form action="/echo-frame"><label for="k" style="display:block;font-size:40px">API key</label><input id="k" name="key" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button>Submit</button></form>`);
+    if (url.pathname === "/echo-long-form") return html(`<form action="/echo-long"><label for="k" style="display:block;font-size:40px">API key</label><input id="k" name="key" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><button>Submit</button></form>`);
+    if (url.pathname === "/echo-long") return html(`<label for="e" style="display:block;font-size:40px">Settings</label><textarea id="e" style="display:block;width:1200px;height:400px;font-size:200px">${"an ordinary line of settings\n".repeat(300)}key: ${(url.searchParams.get("key") ?? "").replace(/[^A-Za-z0-9{}:._-]/g, "")}</textarea>`);
+    const SLOW_CHANGE = `<style>@view-transition { navigation: auto } ::view-transition-group(root), ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 20s }</style>`;
+    if (url.pathname === "/change-form") return html(`${SLOW_CHANGE}<label for="k" style="display:block;font-size:40px">API key</label><input id="k" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><a href="/change-next">Next</a>`);
+    if (url.pathname === "/change-next") return html(`${SLOW_CHANGE}<h1>Next</h1>`);
     if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
     if (url.pathname === "/leaky") {
       return html(`<h1>Leaky</h1><script>
@@ -309,6 +314,28 @@ test("a typed secret shown again in another field is covered there: an applicati
     assert.match(entry.screenshot ?? "", /^step-\d\.png$/, `step ${entry.step}: ${entry.noScreenshot}`);
     assert.deepEqual(await pixel(path.join(dir, entry.screenshot!), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
   }
+});
+
+test("a typed secret far down a long field is found: a field is read whole, never in part", async () => {
+  const { result, dir } = await run(
+    [step("navigate", { path: "/echo-long-form" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "button", value: "Submit" } }), FINISH],
+    true,
+  );
+  // The field of the page after holds some 8,000 characters, and what was typed comes last.
+  for (const entry of result.capture!.steps.slice(2)) {
+    assert.match(entry.screenshot ?? "", /^step-\d\.png$/, `step ${entry.step}: ${entry.noScreenshot}`);
+    assert.deepEqual(await pixel(path.join(dir, entry.screenshot!), 600, 250), [0x3a, 0x3a, 0x3a], `step ${entry.step}`);
+  }
+});
+
+test("no picture is kept while the browser still draws the view before over the next: the field typed into may show in it", async () => {
+  const { result } = await run(
+    [step("navigate", { path: "/change-form" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "link", value: "Next" } }), FINISH],
+    true,
+  );
+  const taken = result.capture!.steps;
+  assert.ok(taken[1]!.screenshot !== undefined, "the field itself, covered, is pictured before the page is left");
+  for (const entry of taken.slice(2)) assert.equal(entry.screenshot, undefined, `step ${entry.step} kept a picture during the change of view`);
 });
 
 test("the secret typed is never handed to a later page to look for: what fields hold is read out and compared in the engine", async () => {
