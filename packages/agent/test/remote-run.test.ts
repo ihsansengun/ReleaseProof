@@ -673,3 +673,24 @@ test("in a remote run a presence check is removed unless the approved text says 
   assert.ok(result.planProblems.some((problem) => /is a "present" comparison, and the approved text it cites does not word the requirement that way/.test(problem)), result.planProblems.join("\n"));
   assert.ok(!result.results.some((r) => r.verdict === "passed"));
 });
+
+// ---- the result file -------------------------------------------------------------------
+
+test("a remote run writes result.json: the engine's verdict, not passed while it is not trusted", async () => {
+  const { result, dir } = await run("160");
+  assert.equal(result.results[0]!.verdict, "passed", "the scenario's comparisons matched");
+  const stated = JSON.parse(readFileSync(path.join(dir, "result.json"), "utf8")) as { formatVersion: number; runId: string; verdict: string; verdictsTrusted: boolean; verdictBasis: { observed: string }; evidence: { path: string }[] };
+  assert.equal(stated.formatVersion, 1);
+  assert.equal(stated.runId, RUN);
+  assert.equal(stated.verdictsTrusted, false);
+  assert.equal(stated.verdict, "unverified");
+  assert.equal(stated.verdictBasis.observed, "passed");
+  // Every file the result names is there.
+  for (const file of stated.evidence) assert.ok(existsSync(path.join(dir, file.path)), file.path);
+});
+
+test("the scenario result the pull-request path shares keeps its fields", async () => {
+  const { dir } = await run("160");
+  const shared = JSON.parse(readFileSync(path.join(dir, "scenarios", "S1", "result.json"), "utf8")) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(shared).sort(), ["assertionResults", "durationMs", "environment", "evidence", "mode", "observations", "reason", "scenarioId", "startedAt", "steps", "title", "verdict"]);
+});

@@ -20,6 +20,7 @@ import { RecordedDriver } from "./drivers/recorded.ts";
 import { headline } from "./report/readiness.ts";
 import { coverage } from "./report/run.ts";
 import { authoriseForExecution, authoriseRemoteRun, directoryLedger, loadTrustedKeys, unexpected } from "./remote/authority.ts";
+import { remoteResult } from "./remote/result.ts";
 import { loadRemoteRecording, runRemote, unsupported } from "./remote/run.ts";
 import { loadRemoteRequest, RemoteRequestRefused } from "./remote/request.ts";
 import { Scenario, Step, type RunReport, type ScenarioResult } from "./schema.ts";
@@ -249,7 +250,9 @@ async function main(): Promise<number> {
       console.log(`Run ${run.runId} against ${run.target.baseUrl}: ${run.results.length} ${run.results.length === 1 ? "scenario" : "scenarios"} recorded, from a recording, with no model.`);
       for (const result of run.results) console.log(`  ${result.scenarioId}  ${result.verdict}  ${result.reason}`);
       if (run.endedEarly) console.log(`Ended early: ${run.endedEarly.reason}`);
-      console.log(`Written to ${path.join(values.out!, "remote-run.json")}. No run-level verdict is stated yet.`);
+      const stated = remoteResult(run);
+      console.log(`Verdict: ${stated.verdict}${stated.verdict !== stated.verdictBasis.observed ? ` (the comparisons alone: ${stated.verdictBasis.observed}; not trusted as a verdict yet)` : ""}. ${stated.verdictBasis.reason}`);
+      console.log(`Written to ${path.join(values.out!, "result.json")}, with the working behind it in remote-run.json.`);
       return 0;
     } catch (error) {
       if (!(error instanceof RemoteRequestRefused)) throw error;
