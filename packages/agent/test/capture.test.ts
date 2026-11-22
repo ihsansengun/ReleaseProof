@@ -111,6 +111,7 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
     if (url.pathname === "/echo-long") return html(`<label for="e" style="display:block;font-size:40px">Settings</label><textarea id="e" style="display:block;width:1200px;height:400px;font-size:200px">${"an ordinary line of settings\n".repeat(300)}key: ${(url.searchParams.get("key") ?? "").replace(/[^A-Za-z0-9{}:._-]/g, "")}</textarea>`);
     const SLOW_CHANGE = `<style>@view-transition { navigation: auto } ::view-transition-group(root), ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 20s }</style>`;
     if (url.pathname === "/change-form") return html(`${SLOW_CHANGE}<label for="k" style="display:block;font-size:40px">API key</label><input id="k" type="text" style="display:block;width:1200px;height:400px;font-size:200px"><a href="/change-next">Next</a>`);
+    if (url.pathname === "/change-framed") return html(`<label for="k" style="display:block;font-size:40px">API key</label><input id="k" type="text" style="display:block;width:600px;height:100px"><button onclick="frames[0].location = '/change-next'">Go</button><iframe src="/change-form" style="display:block;width:1200px;height:400px"></iframe>`);
     if (url.pathname === "/change-next") return html(`${SLOW_CHANGE}<h1>Next</h1>`);
     if (url.pathname === "/long") return html(`<h1>Long</h1><script>console.error("x".repeat(400000));</script>`);
     if (url.pathname === "/leaky") {
@@ -336,6 +337,17 @@ test("no picture is kept while the browser still draws the view before over the 
   const taken = result.capture!.steps;
   assert.ok(taken[1]!.screenshot !== undefined, "the field itself, covered, is pictured before the page is left");
   for (const entry of taken.slice(2)) assert.equal(entry.screenshot, undefined, `step ${entry.step} kept a picture during the change of view`);
+});
+
+test("a frame that is changing its view is treated as the page is, and without a typed secret a change of view costs no picture", async () => {
+  const framed = await run(
+    [step("navigate", { path: "/change-framed" }), step("fill", { element: { by: "label", value: "API key" }, text: "{{secret:user.password}}" }), step("click", { element: { by: "role", role: "button", value: "Go" } }), FINISH],
+    true,
+  );
+  assert.ok(framed.result.capture!.steps[1]!.screenshot !== undefined, "pictured before the frame changes its view");
+  for (const entry of framed.result.capture!.steps.slice(2)) assert.equal(entry.screenshot, undefined, `step ${entry.step} kept a picture while a frame changed its view`);
+  const plain = await run([step("navigate", { path: "/change-form" }), step("click", { element: { by: "role", role: "link", value: "Next" } }), FINISH], true);
+  for (const entry of plain.result.capture!.steps) assert.ok(entry.screenshot !== undefined, `step ${entry.step}: ${entry.noScreenshot}`);
 });
 
 test("the secret typed is never handed to a later page to look for: what fields hold is read out and compared in the engine", async () => {

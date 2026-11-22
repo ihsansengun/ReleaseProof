@@ -240,15 +240,17 @@ taken in is counted and left out.
   answer a form with what was sent, a browser may put a value back when it
   goes back, and a page may draw its form anew. What each field holds is
   read out and compared in the engine; **the secret is never handed to a
-  page or a frame to look for.** Each field is read whole, never in part. With more than
+  page or a frame to look for.** Each field is read whole, never in part. Once a secret has been typed,
+  with more than
   5,000 fields in a document, more than 2,000,000 characters in them, a
   typed secret longer than 4,000 characters, or more than 50 different
   secrets, no picture is kept.
 - While the browser is changing one view into another (a view transition)
   it may still draw the view before, with a field in it that no document
   holds any more. Once a secret has been typed, no picture is kept while
-  such a change is under way. Whether one is under way is asked of the
-  page, like where its fields are.
+  such a change is under way in the page or in any of its frames. Whether
+  one is under way is asked of the page and of each frame, like where
+  their fields are.
 - That second check finds a value only where a page lets it be read and
   only as it was typed. It does not find a secret shown as plain text, one
   the page has changed (cut, spaced out, encoded, in capitals), one in a

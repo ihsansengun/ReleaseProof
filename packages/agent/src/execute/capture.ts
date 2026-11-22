@@ -351,7 +351,8 @@ async function findSecretAreas(session: Session, collector: Collector): Promise<
   // to could carry it across (through another window), and then it is found, if at all, by what it holds.
   // While one view is changing into another the browser may still show the view before, with a field in it that
   // no document holds any more. Once a secret has been typed, no picture is kept of such a moment.
-  if ((collector.typed.length > 0 || collector.secretFields.length > 0) && (await page.evaluate(changingView))) throw new Error("the view before may still be showing");
+  const secretTyped = collector.typed.length > 0 || collector.secretFields.length > 0;
+  if (secretTyped && (await page.evaluate(changingView))) throw new Error("the view before may still be showing");
   const gone = new Set<ElementHandle>();
   for (const { handle, document } of [...collector.secretFields]) {
     if (document !== undefined && collector.documents !== undefined && document !== collector.documents) {
@@ -380,6 +381,8 @@ async function findSecretAreas(session: Session, collector: Collector): Promise<
   }
   for (const frame of page.frames()) {
     if (frame === page.mainFrame()) continue;
+    // A frame changes its view like a page does, and is asked the same.
+    if (secretTyped && (await frame.evaluate(changingView))) throw new Error("the view before may still be showing in a frame");
     const inside = (await frame.locator(SECRET_FIELDS).count()) + (typed.length > 0 ? (await frame.locator(FIELDS).evaluateAll(fieldsOf)).filter(([held]) => typeof held === "string" && holdsTyped(held)).length : 0);
     if (inside === 0) continue;
     // A field in a frame is somewhere inside the frame's own box. The whole box is covered.
