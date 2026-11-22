@@ -144,51 +144,50 @@ It leaves the machine, so it is kept small and kept clean:
 | Console entries, and network entries, per scenario | 200 each, and 40 from any one step |
 | Any one text | 300 characters, of the first 4,000 a page wrote; the rest is not looked at |
 
-- Text is cut before anything else is done with it, so a line of any length
-  costs the run no time. Characters that are not shown are removed, then the
-  secrets the executor was given, then credentials under common names
-  (`access_token`, `clientSecret`, `pwd` and the like), then what the
-  engine's shared redaction knows: e-mail addresses, credentials, tokens and
-  long opaque values.
+- Text is cleaned word by word, not by patterns run over a whole line
+  (`packages/agent/src/execute/clean.ts`; why, and what comes next, is in
+  `docs/evidence-redaction-plan.md`). It is cut to 4,000 characters first.
+  Then: the secrets the executor was given; an address down to its cleaned
+  path; e-mail addresses; the value after a name that is a credential's
+  (`password`, `access_token`, `clientSecret`, `pwd`, `Authorization: Bearer`
+  and the like), also when the value is the next word; a long word of letters
+  and digits mixed, a very long word, a long run of digits. The time this
+  takes grows with the length of the text and no faster.
 - An address, in a network entry or inside a console text, is given as its
-  path: no query, fragment, parameters or host. A path is cleaned segment by
-  segment, so that one failed request can still be told from another: an
-  e-mail address is replaced, and so is a part of a segment that is 12 or
-  more letters and digits mixed (a file's hash, a token), while its name and
-  ending stay (`app-[redacted].js`). An ordinary long path, a short number
-  and an id written in groups are kept.
-- A picture cannot be cleaned after it is taken. Before each one, password,
-  card and one-time-code fields in the page itself, and every field the
-  executor typed a secret into, are covered with a flat colour.
-- An animation runs as it would without a picture, and focus, scrolling and
-  the pointer are left alone. Covering a field adds and removes an element of
-  the browser's own around the picture, which a page that watches its
-  document for changes can see. A test reads the same values with and without
-  pictures on a page that animates.
+  path: no query, fragment, parameters or host. A path is closed by default:
+  a segment is kept only if it reads as an ordinary name or a short number
+  (`/api/v2/international-shipping-rates`, `/orders/12345`). Anything else is
+  replaced: an e-mail address, a token, an id written in groups, `name=value`
+  under a credential's name. A file keeps the ordinary parts of its name and
+  its ending (`app-[redacted].js`).
+- A picture cannot be cleaned after it is taken. Password, card and
+  one-time-code fields in the page and in its frames, and every field the
+  executor typed a secret into, are covered with a flat colour. The covering
+  is drawn onto the picture in a page of the engine's own, apart from the
+  application's. **Nothing is laid over the application's page and nothing in
+  it is changed**, so taking pictures cannot alter what a later step reads. A
+  test runs a page that counts every change to its own document, and it
+  counts none. If a field cannot be covered, no picture is kept.
 - No picture is kept of a page that is not the application under test.
 - What a limit left out is counted in `evidenceLimits.leftOut`.
-- The result takes in what was collected by its own rules of form (kinds,
-  lengths, whole numbers, known steps, a path that is a path), runs the
-  shared redaction over each text once more, and leaves out and counts an
-  entry that does not fit. It cannot know what a text should have said.
+- The result cleans every text and path once more as it is built, by the same
+  rules, and checks each entry's form (kinds, lengths, whole numbers, known
+  steps). An entry that does not fit is left out and counted. Cleaning what
+  is clean changes nothing.
 
-**What this does not catch.** Redaction looks for shapes it knows. These can
+**What this does not catch.** The rules know shapes, not meanings. These can
 still appear:
 
-- in text: a secret with no name beside it ("the code is 493817"), or with a
-  name not followed by `:` or `=`; a card or telephone number, a postal
-  address, a person's name; a value encoded another way (base64,
-  percent-encoding) or written with look-alike letters; the password of an
-  account the target's manifest declares; the host of an address that is not
-  `http`, `https`, `ws` or `wss`;
-- in a path: a token of letters only, or shorter than 12 characters;
+- in text: a secret with no name beside it ("the code is 493817"); a card
+  number written in groups, a telephone number, a postal address, a person's
+  name; a short value encoded another way; the password of an account the
+  target's manifest declares;
 - in a picture: anything the page shows as text; a field of another kind
-  that holds a secret (a password shown in a plain text field, a text area);
-  a password field inside a frame or a closed component, which shows as dots.
+  that holds a secret (a password shown in a plain text field, a text area).
 
-And it errs the other way too: a message such as "password: must be at least
-8 characters" or "tokens: 3 remaining" loses the words after the name. That
-is the safe side to be wrong on.
+And it errs toward removing: a message such as "password: must be at least 8
+characters" loses the word after the name, and an id written in groups is
+replaced in a path. That is the safe side to be wrong on.
 
 That is why real customer data and real credentials stay out of these runs
 for now.

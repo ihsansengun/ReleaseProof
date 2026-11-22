@@ -29,7 +29,7 @@
  */
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { redact } from "../report/diagnostics.ts";
+import { cleanPathWith, cleanTextWith } from "../execute/clean.ts";
 import { assess, type RequirementStatus } from "../report/readiness.ts";
 import type { ScenarioResult, Verdict } from "../schema.ts";
 import type { RemoteRun } from "./run.ts";
@@ -257,7 +257,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     const stepOf = (value: unknown) => `${result.scenarioId}-${Math.min(Math.max(1, Number.isInteger(value) ? (value as number) : 1), Math.max(1, result.steps.length))}`;
     const count = (value: unknown) => (Number.isInteger(value) && (value as number) >= 0 ? Math.min(value as number, 1_000_000) : 0);
     // Redacted once more, and without characters that are not shown, whatever the record says was done already.
-    const again = (text: string) => clip(redact(text.slice(0, 2_000).replace(/[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, " ")), 300);
+    const again = (text: string) => cleanTextWith((given) => given, text);
     const said = Array.isArray(result.capture?.console) ? result.capture.console : [];
     const asked = Array.isArray(result.capture?.network) ? result.capture.network : [];
     for (const entry of said.slice(0, ENTRIES)) {
@@ -267,14 +267,16 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     for (const entry of asked.slice(0, ENTRIES)) {
       const status = Number.isInteger(entry?.status) && entry.status >= 0 && entry.status <= 599 ? entry.status : undefined;
       // A path as the collector writes one: from the root, one slash at a time, printable, and nothing a reader could take for an address or markup.
-      if (status === undefined || typeof entry.path !== "string" || !/^\/(?!\/)[\x21-\x7e]*$/.test(entry.path) || /[?#\\<>"'`]|\/\//.test(entry.path)) {
+      // The path is cleaned again here, by the same rules, and must then be a path and nothing else.
+      const where = typeof entry?.path === "string" && entry.path.startsWith("/") && !/[?#]/.test(entry.path.slice(0, 1_000)) ? cleanPathWith((given) => given, entry.path) : undefined;
+      if (status === undefined || where === undefined || !/^\/(?!\/)[\x21-\x7e]*$/.test(where) || /[\\<>"'`]|\/\//.test(where)) {
         leftOut.network += 1;
         continue;
       }
       networkEntries.push({
         stepId: stepOf(entry.step),
         method: typeof entry.method === "string" && METHODS.has(entry.method) ? entry.method : "OTHER",
-        path: clip(entry.path, 200),
+        path: where,
         status,
         kind: typeof entry.kind === "string" && /^[a-z]{1,20}$/.test(entry.kind) ? entry.kind : "other",
         ...(typeof entry.failure === "string" && entry.failure !== "" ? { failure: again(entry.failure) } : {}),
@@ -293,7 +295,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       // shared code stays in the run's directory: it is of the whole page and nothing in it is covered.
       const captured = Array.isArray(result.capture?.steps) ? result.capture.steps.find((entry) => entry?.step === index + 1) : undefined;
       let screenshot: RemoteResult["steps"][number]["screenshot"];
-      if (typeof captured?.screenshot === "string" && /^step-\d{1,3}\.(png|jpg)$/.test(captured.screenshot)) {
+      if (typeof captured?.screenshot === "string" && /^step-\d{1,3}\.(png|jpg)$/.test(captured.screenshot) && /^[A-Za-z0-9_-]{1,64}$/.test(result.scenarioId)) {
         const evidenceId = evidenceIdOf(run.runId, id, "screenshot");
         evidence.push({
           id: evidenceId,

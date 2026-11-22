@@ -10,10 +10,11 @@
  *
  * It leaves the machine, so it is kept small and kept clean:
  *
- *   - text passes through the session's own scrubbing (the secrets the
- *     executor was given) and through `redact` (e-mail addresses,
- *     credentials, tokens, long opaque values), and is cut to a length;
- *   - an address is given as its path, without query, fragment or host;
+ *   - text is cut to a length, loses the secrets the executor was given, and
+ *     is then cleaned word by word (`clean.ts`): addresses down to their
+ *     path, e-mail addresses, values of credentials, long opaque values;
+ *   - an address is given as its path, without query, fragment or host, and
+ *     each segment of the path is kept only if it reads as an ordinary name;
  *   - a picture cannot be redacted after it is taken, so before each one
  *     every password, card and one-time-code field in the page itself, and
  *     every field the executor typed a secret into, is covered. Nothing is
@@ -24,7 +25,7 @@
  */
 import path from "node:path";
 import type { ConsoleMessage, Locator, Page, Request, Response } from "playwright";
-import { redact } from "../report/diagnostics.ts";
+import { cleanPathWith, cleanTextWith, TEXT_KEPT, TEXT_READ } from "./clean.ts";
 import type { Session } from "./tools.ts";
 
 export const CAPTURE_LIMITS = {
@@ -35,11 +36,11 @@ export const CAPTURE_LIMITS = {
   /** Console and network entries kept per scenario, each. */
   entries: 200,
   /** Characters of any one text. */
-  text: 300,
+  text: TEXT_KEPT,
   /** Entries of each kind kept from any one step, so that a noisy step does not use up the whole allowance. */
   entriesPerStep: 40,
   /** Characters of a text that are looked at at all. The rest is dropped before anything else is done with it. */
-  textRead: 4_000,
+  textRead: TEXT_READ,
 } as const;
 
 const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
@@ -84,81 +85,18 @@ type Collector = {
   /** Fields the executor typed a secret into, to be covered in every picture. */
   secretFields: Locator[];
   origin: string;
+  /** A page of the engine's own, in a context apart from the application's, in which pictures are covered. Made when first needed. */
+  easel?: Page;
   stop: () => void;
 };
 
 const collectors = new WeakMap<Session, Collector>();
 
-/**
- * Credentials under names the shared redaction passes over: access_token,
- * clientSecret, pwd and the like. Every repetition is bounded and the name
- * must start where a word starts, so the time it takes grows with the length
- * of the text and no faster. The engine's own placeholder ({{secret:…}}) and
- * what is already redacted are left as they are.
- */
-const NAMED = /(?<![A-Za-z0-9_{-])([A-Za-z0-9_-]{0,40}(?:token|secret|passw(?:or)?d|passcode|pwd|apikey|api_key|credential)[A-Za-z0-9_-]{0,40}["']?\s{0,3}[:=]\s{0,3}["']?)(?!\[redacted)([^\s"',;&}\]]{1,200})/gi;
-
-/** A part of a path segment that is a key or a token more often than a name: long, with letters and digits mixed. */
-const opaquePart = (part: string) => part.length >= 12 && /\d/.test(part) && /[A-Za-z]/.test(part);
-
-/**
- * A path made fit to leave the machine, segment by segment: an e-mail address
- * and a long mixed run of letters and digits are replaced, and everything else
- * is kept, so that a failed request can still be told from another. The stem
- * and the ending of a file name stay ("app-[redacted].js").
- */
-export function cleanPath(session: Session, pathname: string): string {
-  // Cut first, as text is: nothing below may take time that grows faster than the path.
-  const scrubbed = session.vault.scrub((pathname.split(";")[0] ?? "/").slice(0, 1_000));
-  const segments = scrubbed
-    .split("/")
-    .filter((segment) => segment !== "")
-    .map((segment) => {
-      // The engine's own placeholder for a secret stands as it is.
-      if (/^\{\{secret:[^}]{1,80}\}\}$/.test(segment)) return segment;
-      let shown = segment;
-      try {
-        shown = decodeURIComponent(segment);
-      } catch {
-        // Looked at as it is written.
-      }
-      // Something on each side of an @, and a dot after it: an e-mail address.
-      const at = shown.indexOf("@");
-      if (at > 0 && shown.indexOf(".", at) > at + 1) return "[redacted-e-mail]";
-      const parts = segment.split(/([-_.~])/).map((part) => (opaquePart(part) ? "[redacted]" : part));
-      return parts.join("").slice(0, 80);
-    });
-  return `/${segments.join("/")}`.slice(0, 200);
-}
-
-/**
- * Makes a text fit to leave the machine. Cut first: a page can write a line of
- * any length, and nothing below may take time that grows faster than it.
- * Then characters that are not shown (they can split a word a pattern looks
- * for), the session's own secrets, addresses down to their cleaned path, the
- * shared redaction, credentials under other names, and the final length.
- */
-const clean = (session: Session, text: string): string => {
-  const read = text.length > CAPTURE_LIMITS.textRead ? text.slice(0, CAPTURE_LIMITS.textRead) : text;
-  const shown = session.vault.scrub(read.replace(/[\u0000-\u0008\u000B-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\u00AD]/g, "").replace(/\s+/g, " "));
-  // An address inside a text is set aside, so that the rules for text do not take a long path for one opaque value.
-  const paths: string[] = [];
-  const held = shown.replace(/\b(?:https?|wss?):\/\/[^\s"'<>)\]]{1,2000}/gi, (address) => {
-    let path = "[address]";
-    try {
-      path = cleanPath(session, new URL(address).pathname);
-    } catch {
-      // Not an address after all.
-    }
-    paths.push(path);
-    return `\u0001${paths.length - 1}\u0001`;
-  });
-  const flat = redact(held)
-    .replace(NAMED, "$1[redacted]")
-    .replace(/\u0001(\d+)\u0001/g, (_whole, index) => paths[Number(index)] ?? "[address]")
-    .trim();
-  return flat.length > CAPTURE_LIMITS.text ? `${flat.slice(0, CAPTURE_LIMITS.text - 1)}…` : flat;
-};
+/** A text made fit to leave the machine: the session's own secrets first, then the rules in `clean.ts`. */
+export const cleanText = (session: Pick<Session, "vault">, text: string): string => cleanTextWith((given) => session.vault.scrub(given), text);
+/** A path made fit to leave the machine, segment by segment. */
+export const cleanPath = (session: Pick<Session, "vault">, pathname: string): string => cleanPathWith((given) => session.vault.scrub(given), pathname);
+const clean = cleanText;
 
 /** The cleaned path of an address. Undefined when the address is not on the application. */
 function pathOf(session: Session, address: string, origin: string): string | undefined {
@@ -257,14 +195,23 @@ export async function captureStep(session: Session, began: number, mayPicture: {
     return;
   }
   try {
-    // Fields that hold a secret by their kind, and fields the executor typed a secret into.
-    const mask = [session.page.locator('input[type="password"], input[autocomplete*="password" i], input[autocomplete^="cc-" i], input[autocomplete="one-time-code" i]'), ...collector.secretFields];
-    let picture = await session.page.screenshot({ type: "png", mask, maskColor: "#3a3a3a", caret: "hide", timeout: 5_000 });
+    // Where the fields to cover are, read before and after the picture is taken: a page can move between the two.
+    const before = await secretAreas(session, collector);
+    // Nothing is asked of the page but the picture itself: no cover laid over it, no caret hidden, no style added.
+    const raw = await session.page.screenshot({ type: "png", caret: "initial", scale: "css", timeout: 5_000 });
+    const areas = [...before, ...(await secretAreas(session, collector))];
+    let picture: Buffer = raw;
     let name = `step-${index}.png`;
-    if (picture.length > CAPTURE_LIMITS.screenshotBytes) {
-      // A busy page as a PNG can be large. The same picture, compressed, usually is not.
-      picture = await session.page.screenshot({ type: "jpeg", quality: 60, mask, maskColor: "#3a3a3a", caret: "hide", timeout: 5_000 });
-      name = `step-${index}.jpg`;
+    if (areas.length > 0 || raw.length > CAPTURE_LIMITS.screenshotBytes) {
+      // Covered, and compressed if need be, in a page of the engine's own. The picture as taken is never written anywhere.
+      const drawn = await redraw(session, collector, raw, areas, raw.length > CAPTURE_LIMITS.screenshotBytes);
+      picture = drawn.picture;
+      if (drawn.jpeg) name = `step-${index}.jpg`;
+      if (!drawn.jpeg && picture.length > CAPTURE_LIMITS.screenshotBytes) {
+        const smaller = await redraw(session, collector, raw, areas, true);
+        picture = smaller.picture;
+        name = `step-${index}.jpg`;
+      }
     }
     if (picture.length > CAPTURE_LIMITS.screenshotBytes || collector.screenshotBytes + picture.length > CAPTURE_LIMITS.screenshotBytesPerScenario) {
       entry.noScreenshot = "The picture was larger than the limit.";
@@ -276,8 +223,72 @@ export async function captureStep(session: Session, began: number, mayPicture: {
     collector.screenshotBytes += picture.length;
     entry.screenshot = name;
   } catch {
+    // Also when a field could not be covered: no picture is better than one that shows it.
     entry.noScreenshot = "The picture could not be taken.";
   }
+}
+
+/** Fields that hold a secret by their kind. */
+const SECRET_FIELDS = 'input[type="password"], input[autocomplete*="password" i], input[autocomplete^="cc-" i], input[autocomplete="one-time-code" i]';
+type Area = [x: number, y: number, width: number, height: number];
+const rectsOf = (elements: Element[]): Area[] =>
+  elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return [box.x, box.y, box.width, box.height];
+  });
+
+/**
+ * Where, in the window, the fields to cover are: fields that hold a secret by
+ * their kind, fields the executor typed a secret into, and the whole of any
+ * frame that holds such a field. Only read: the page is asked where things
+ * are and nothing in it is changed.
+ */
+async function secretAreas(session: Session, collector: Collector): Promise<Area[]> {
+  const page = session.page;
+  const areas: Area[] = await page.locator(SECRET_FIELDS).evaluateAll(rectsOf);
+  for (const field of collector.secretFields) areas.push(...(await field.evaluateAll(rectsOf).catch(() => [] as Area[])));
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue;
+    const inside = await frame.locator(SECRET_FIELDS).count().catch(() => 0);
+    if (inside === 0) continue;
+    // A field in a frame is somewhere inside the frame's own box. The whole box is covered.
+    const box = await (await frame.frameElement()).boundingBox();
+    if (box) areas.push([box.x, box.y, box.width, box.height]);
+  }
+  return areas.filter(([, , width, height]) => width > 0 && height > 0).slice(0, 200);
+}
+
+/**
+ * Draws a picture again with the given areas covered, as a PNG or, when asked,
+ * a JPEG. Done in a page of the engine's own, in a browser context apart from
+ * the application's, so that nothing is done to the page under test.
+ */
+async function redraw(session: Session, collector: Collector, raw: Buffer, areas: Area[], jpeg: boolean): Promise<{ picture: Buffer; jpeg: boolean }> {
+  if (!collector.easel) {
+    const browser = session.context.browser();
+    if (!browser) throw new Error("no browser to draw in");
+    collector.easel = await (await browser.newContext({ javaScriptEnabled: true, offline: true })).newPage();
+  }
+  const drawn = await collector.easel.evaluate(
+    async ({ data, areas, jpeg }) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${data}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("no canvas");
+      context.drawImage(image, 0, 0);
+      context.fillStyle = "#3a3a3a";
+      // A little wider than the field, so that its edge does not show through.
+      for (const [x, y, width, height] of areas) context.fillRect(Math.floor(x) - 2, Math.floor(y) - 2, Math.ceil(width) + 4, Math.ceil(height) + 4);
+      return canvas.toDataURL(jpeg ? "image/jpeg" : "image/png", 0.6).split(",")[1] ?? "";
+    },
+    { data: raw.toString("base64"), areas, jpeg },
+  );
+  if (drawn === "") throw new Error("nothing drawn");
+  return { picture: Buffer.from(drawn, "base64"), jpeg };
 }
 
 /** Stops collecting and gives back what was collected. */

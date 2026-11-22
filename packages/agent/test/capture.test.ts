@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { chromium } from "playwright";
-import { CAPTURE_LIMITS, cleanPath } from "../src/execute/capture.ts";
+import { CAPTURE_LIMITS, cleanPath, cleanText } from "../src/execute/capture.ts";
 import { runScenario } from "../src/execute/run.ts";
 import { Manifest, type Scenario, type ScenarioResult, type Step } from "../src/schema.ts";
 
@@ -40,6 +40,14 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
           document.getElementById('t').addEventListener('transitionend', done);
           requestAnimationFrame(() => (document.getElementById('t').style.opacity = '0.5'));</script>`);
     }
+    if (url.pathname === "/watched") {
+      // A page that counts every change made to its own document, and holds a field to cover.
+      return html(`<h1>Watched</h1><label>Password <input type="password" value="hunter2"></label><p data-testid="changes"></p>
+        <button onclick="observer.disconnect(); document.querySelector('[data-testid=changes]').textContent = String(changes)">Show</button>
+        <script>var changes = 0; var observer = new MutationObserver((list) => { changes += list.length; });
+          observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });</script>`);
+    }
+    if (url.pathname === "/framed") return html(`<h1 style="margin:0;height:100px">Framed</h1><iframe src="/sign-in" style="display:block;border:0;width:1280px;height:600px"></iframe>`);
     if (url.pathname === "/words") {
       return html(`<h1>Words</h1><script>
         for (let i = 0; i < 5; i++) console.error("token".repeat(800));
@@ -212,24 +220,173 @@ test("a line made of the very words redaction looks for costs no more than any o
 test("a path is cleaned segment by segment: what identifies a request stays, what could be a secret goes", () => {
   const session = { vault: { scrub: (text: string) => text.replaceAll("Zq7!vault-pw", "{{secret:u.password}}") } } as never;
   const cases: [string, string][] = [
+    // Kept: what tells one request from another.
     ["/api/v1/customers/orders/recent", "/api/v1/customers/orders/recent"],
     ["/api/v2/international-shipping-rates", "/api/v2/international-shipping-rates"],
     ["/products/blue-cotton-t-shirt-2024", "/products/blue-cotton-t-shirt-2024"],
     ["/orders/12345", "/orders/12345"],
-    ["/orders/550e8400-e29b-41d4-a716-446655440000", "/orders/550e8400-e29b-41d4-a716-446655440000"],
+    ["/files/annual%20report.pdf", "/files/annual%20report.pdf"],
+    ["/img/IMG_20241122_101500.jpg", "/img/IMG_20241122_101500.jpg"],
+    ["/page=2/sort=name", "/page=2/sort=name"],
     ["/_next/static/chunks/app-1a2b3c4d5e6f7a8b.js", "/_next/static/chunks/app-[redacted].js"],
-    ["/reset/tok_live_4f9a8b7c6d5e", "/reset/tok_live_[redacted]"],
+    ["/static/js/main.8f3c1e5a9b2d.chunk.js", "/static/js/main.[redacted].chunk.js"],
+    ["/login/Zq7!vault-pw", "/login/{{secret:u.password}}"],
+    // Replaced: anything that does not read as an ordinary name or a short number.
+    ["/orders/550e8400-e29b-41d4-a716-446655440000", "/orders/[redacted]"],
+    ["/reset/tok_live_4f9a8b7c6d5e", "/reset/[redacted]"],
     ["/reset/tok4f9a8b7c6d5e4f3a2b1c", "/reset/[redacted]"],
+    ["/reset/token=abc", "/reset/[redacted]"],
+    ["/login/pwd=abc", "/login/[redacted]"],
+    ["/sid=abc/x", "/[redacted]/x"],
+    ["/verify/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.SflKxwRJ_adQssw5c", "/verify/[redacted]"],
+    ["/magic/k3Jd9sLmQpXz-AaBbCcDdEeFfGg_7hQ2wE4rT6yU8iO0pLkJ", "/magic/[redacted]"],
+    ["/b64/AbCd-EfGh_IjKl-MnOp_QrSt-UvWx_Yz01-2345_6789-abcd", "/b64/[redacted]"],
+    [`/key/${"1".repeat(40)}`, "/key/[redacted]"],
+    [`/k/${"a".repeat(40)}`, "/k/[redacted]"],
     ["/users/ada@example.test/orders", "/users/[redacted-e-mail]/orders"],
     ["/users/ada%40example.test/orders", "/users/[redacted-e-mail]/orders"],
-    ["/login/Zq7!vault-pw", "/login/{{secret:u.password}}"],
+    // No host, no parameters, no way up.
     ["//elsewhere.example/x", "/elsewhere.example/x"],
     ["/a;jsessionid=abc123def456ghi789", "/a"],
+    ["/a/../b", "/a/b"],
     ["/", "/"],
   ];
+  // Cleaning what is already clean changes nothing.
+  for (const [, expected] of cases) assert.equal(cleanPath(session, expected), expected, `again: ${expected}`);
   for (const [given, expected] of cases) assert.equal(cleanPath(session, given), expected, given);
   // And in time that grows with the length and no faster.
   const began = Date.now();
   cleanPath(session, `/${"token".repeat(20_000)}/${"a1".repeat(50_000)}`);
   assert.ok(Date.now() - began < 500, `took ${Date.now() - began} ms`);
+});
+
+// ---- taking pictures does nothing to the page ------------------------------------------
+
+test("covering a field changes nothing in the page: a page that counts its own changes counts none", async () => {
+  const steps = [step("navigate", { path: "/watched" }), step("click", { element: { by: "role", role: "button", value: "Show" } }), step("observe", { name: "changes", target: { source: "page", by: "testid", value: "changes" } }), FINISH];
+  const without = await run(steps, false);
+  const withPictures = await run(steps, true);
+  assert.deepEqual(without.result.observations, { changes: 0 });
+  assert.deepEqual(withPictures.result.observations, { changes: 0 });
+  assert.ok(withPictures.result.capture!.steps.every((entry) => entry.screenshot !== undefined));
+});
+
+/** Reads one point back out of a picture the run kept. */
+async function pixel(file: string, x: number, y: number): Promise<number[]> {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    return await page.evaluate(
+      async ({ data, x, y }) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${data}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d")!;
+        context.drawImage(image, 0, 0);
+        return Array.from(context.getImageData(x, y, 1, 1).data).slice(0, 3);
+      },
+      { data: readFileSync(file).toString("base64"), x, y },
+    );
+  } finally {
+    await browser.close();
+  }
+}
+
+test("a password field inside a frame is covered too, with the whole of its frame", async () => {
+  const { result, dir } = await run([step("navigate", { path: "/framed" }), FINISH], true);
+  const file = path.join(dir, result.capture!.steps[0]!.screenshot!);
+  assert.deepEqual(await pixel(file, 600, 400), [0x3a, 0x3a, 0x3a], "inside the frame");
+  assert.notDeepEqual(await pixel(file, 600, 50), [0x3a, 0x3a, 0x3a], "the page above the frame is as it was");
+});
+
+// ---- time: each pattern once found slow, with a limit ------------------------------------
+
+const QUIET = { vault: { scrub: (text: string) => text } } as never;
+const timed = (work: () => void): number => {
+  const began = performance.now();
+  work();
+  return performance.now() - began;
+};
+
+/** The inputs that once took seconds, each at the greatest length a page can make count. */
+const ONCE_SLOW: [string, string][] = [
+  ["a long run of one letter (the shared redaction, before text was cut first)", "x".repeat(400_000)],
+  ["the word the credential pattern looks for, repeated", "token".repeat(800)],
+  ["the same with separators", "token-_".repeat(600)],
+  ["another of its words", "apikey".repeat(700)],
+  ["and another", "credential_".repeat(400)],
+  ["a name and a separator, repeated", "password=".repeat(450)],
+  ["a quoted name, repeated", '"token":"'.repeat(450)],
+  ["addresses back to back", "http://a/".repeat(450)],
+  ["one very long address", `http://a/${"b".repeat(3_990)}`],
+  ["at signs", "a@".repeat(2_000)],
+  ["separators only", "-_".repeat(2_000)],
+];
+
+test("cleaning a text takes time that does not blow up on any pattern once found slow: under 150 ms each", () => {
+  // Once, so that the first measurement does not carry the cost of starting up.
+  cleanText(QUIET, "warm up");
+  for (const [what, text] of ONCE_SLOW) {
+    const took = timed(() => cleanText(QUIET, text));
+    assert.ok(took < 150, `${what}: ${took.toFixed(0)} ms`);
+    assert.ok(cleanText(QUIET, text).length <= CAPTURE_LIMITS.text, what);
+  }
+});
+
+test("cleaning a path does not blow up either: under 150 ms each, whatever its length", () => {
+  cleanPath(QUIET, "/warm/up");
+  for (const pathname of [`/${"token".repeat(1_000_000)}`, `/${"a1".repeat(2_000_000)}`, `/${"a@b.".repeat(500_000)}`, "/a".repeat(1_000_000), `/${"%40".repeat(500_000)}`, `/${"-_.~".repeat(500_000)}`]) {
+    const took = timed(() => cleanPath(QUIET, pathname));
+    assert.ok(took < 150, `${pathname.slice(0, 12)}… (${pathname.length} characters): ${took.toFixed(0)} ms`);
+    assert.ok(cleanPath(QUIET, pathname).length <= 200);
+  }
+});
+
+test("a whole scenario's worth of the worst lines is cleaned in under two seconds", () => {
+  const worst = "token".repeat(800);
+  const took = timed(() => {
+    for (let i = 0; i < 400; i++) cleanText(QUIET, worst);
+  });
+  assert.ok(took < 2_000, `${took.toFixed(0)} ms for 400 entries`);
+});
+
+test("what cleaning must remove, and what it must leave", () => {
+  const session = { vault: { scrub: (text: string) => text.replaceAll("Zq7!vault-pw", "{{secret:u.password}}") } } as never;
+  const gone: [string, string][] = [
+    ["an e-mail address", "mail ada@example.test now"],
+    ["a bearer credential", "Authorization: Bearer abcdefghijklmnop"],
+    ["a signed token", "got eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV"],
+    ["a named password", "password=hunter2-plain"],
+    ["a named token under another name", "access_token=acc-tok-12345"],
+    ["a camel-case name", "clientSecret: cs-camel-12345"],
+    ["the first name of a printed object", "login failed {access_token: first-key-123, user: ada}"],
+    ["a printed object with one name", "{pwd: only-key-456}"],
+    ["a name in quotes", "{client_secret: 'quoted-789'}"],
+    ["a name of 32 characters or more", "REACT_APP_THIRD_PARTY_SERVICE_ACCESS_TOKEN=long-name-321"],
+    ["a value with letters of another alphabet and a tail", `pwd=${"é".repeat(200)}REST-OF-SECRET`],
+    ["a name, a sign by itself, then the value", "my_secret_key => arrow-value-654"],
+    ["a long opaque value", "id 0123456789abcdef0123456789abcdef0123"],
+    ["a long run of digits", "card 4111111111111111"],
+    ["the executor's own secret", "tried Zq7!vault-pw twice"],
+    ["a query in an address", "GET http://shop.example/api?account=42&sig=abcdef failed"],
+    ["an address stuck to a word", "QQQhttp://glued.example/after?token=zz"],
+    ["an address of another kind", "ws://127.0.0.1/socket?token=wstoken"],
+    ["a name split by a character that is not shown", "pass\u200Bword=zw-hunter2"],
+  ];
+  const secrets = ["ada@example.test", "abcdefghijklmnop", "eyJhbGciOiJIUzI1NiJ9", "hunter2-plain", "acc-tok-12345", "cs-camel-12345", "first-key-123", "only-key-456", "quoted-789", "long-name-321", "REST-OF-SECRET", "arrow-value-654", "0123456789abcdef0123456789abcdef0123", "4111111111111111", "Zq7!vault-pw", "account=42", "sig=abcdef", "shop.example", "glued.example", "wstoken", "127.0.0.1", "zw-hunter2"];
+  for (const [what, text] of gone) {
+    const cleaned = cleanText(session, text);
+    for (const secret of secrets) assert.ok(!cleaned.includes(secret), `${what}: ${cleaned}`);
+    assert.ok(!/[\u0000-\u001f]/.test(cleaned), `${what}: a character that is not shown`);
+    // Cleaning what is already clean changes nothing.
+    assert.equal(cleanText(session, cleaned), cleaned, `again: ${what}`);
+  }
+  // Left as they are: what a person needs to make sense of an error.
+  for (const kept of ["Unexpected token < in JSON at position 0", "TypeError: Cannot read properties of undefined (reading 'total')", "Failed to load resource: the server responded with a status of 404 (Not Found)", "retry=3 timeout=5000", "monkey=banana primaryKey=42", "could not sign in with {{secret:user.password}}", "token=[redacted] password=[redacted] ok"]) {
+    assert.equal(cleanText(session, kept), kept);
+  }
+  assert.equal(cleanText(session, "failed at http://127.0.0.1:1/api/v2/international-shipping-rates?x=1"), "failed at /api/v2/international-shipping-rates");
 });
