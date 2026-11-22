@@ -1,15 +1,14 @@
 # Design: trusted checks (requirement, element and condition binding)
 
-Status: **design for review, second draft. Nothing here is implemented.**
+Status: **design for review, third draft. Nothing here is implemented.**
 Tracked as RPAI-33. Until every stage below is built, has passed an
 independent security review, and the owner has explicitly approved
 activation, a remote run reports `verdictsTrusted: false` and no requirement
 is counted as verified.
 
-The first draft was reviewed independently and found not sound: five ways it
-would have allowed a false trusted verdict or overstated a safeguard. They
-are listed at the end with what changed. The main change is in the next
-section.
+Two drafts were reviewed independently and found not sound. What each
+review found, and what changed, is listed at the end. The main change is in
+the next section.
 
 ## The problem
 
@@ -97,6 +96,9 @@ Binding
   quote              text of the snapshot, by position:
     start, end       offsets into the snapshot's text as approved, in UTF-16
                      code units, on line boundaries; at most 600 units
+  locale, timezone   what the browser is set to, as the approver saw the application
+  background         method-and-path pairs of the target that the application
+                     sends by itself and that are not counted as writes
   setup              how the check starts                      (see Setup)
   steps              ordered list, at least one                (see Step)
   observation        the place to read at the end              (see Reading)
@@ -109,8 +111,10 @@ Setup, one of
                      named so that a check with no other setup says so
   fixture            a call to the application's own test-data interface:
                      method, path and body, all written here and so all
-                     signed. The engine adds a key made from the run id and
-                     the binding's hash, so no two runs share an account
+                     signed. The body must hold the engine's key placeholder,
+                     which the engine fills with a key made from the run id
+                     and the binding's hash, so that no two runs share an
+                     account. A body without it is refused
 ```
 
 ```
@@ -119,9 +123,12 @@ Step, one of
   fill               { path, locator, value }     value: a literal, or a named
                                                   field of the fixture's answer
   act                { path, locator, expects }   a click or submit by the engine.
-                                                  expects: "write accepted" | "no write"
+                                                  expects: { method, path } of the
+                                                  one write it causes, or "no write"
   see                { reading, expected }        a condition: a value that must
-                                                  be shown before going on
+                                                  be shown before going on.
+                                                  expected: from the quote, or a
+                                                  literal marked as not from it
 ```
 
 ```
@@ -142,7 +149,9 @@ engine. A binding that breaks one is refused, never repaired.
 - **The quote** is the snapshot's text between the offsets, on whole lines.
   The approval screen shows it with the lines around it.
 - **An expected value** is exactly one whole number as the engine's own
-  reader of quoted numbers finds it at those offsets. The position is
+  reader of quoted numbers finds it at those offsets (that reader works on
+  a rewritten copy of the text, so the mapping of offsets between the two is
+  part of the definition and is tested). The position is
   authoritative: the engine reads the number there again and refuses the
   binding if it is not `value`. A span inside a longer number or inside an
   identifier is refused.
@@ -150,12 +159,32 @@ engine. A binding that breaks one is refused, never repaired.
   least", "up to", "not", and the rest of the engine's existing lists) is
   refused for binding until those kinds of comparison exist. Equality would
   read "at least 100" showing 150 as a failure.
-- **At least one `act` that expects a write, or one `see`**, besides the
-  final observation. There is no null condition. If the owner believes a
-  requirement has no precondition, it cannot be bound in this stage.
-- **A locator may not contain the expected value**, and may not be a
-  heading or a label: the same rules the engine applies to comparisons
-  today.
+- **At least one `see`** besides the final observation. There is no null
+  condition. If the owner believes a requirement has no precondition, it
+  cannot be bound in this stage.
+- **Every `act` that expects a write is followed, before the final
+  observation, by a `see` that witnesses its effect** in a reading that is
+  not the observation's. An answer from the application that it accepted a
+  request is not proof that anything happened.
+- **A check with a fixture begins with a `see`** of the state the fixture is
+  meant to give (for example a balance of nothing). If the application
+  hands back an account that was used before, the check stops there.
+- **A `see` may expect a literal** that is not in the quote: a starting
+  state is rarely written in the sentence. The literal is in the binding
+  and so signed, and the approval screen marks it "not from the criteria
+  text". The final observation's expected value always comes from the
+  quote.
+- **No credentials in a binding.** A `fill` with a literal is refused for a
+  field that holds a secret by its kind. A value taken from a fixture's
+  answer is named by an own field of that answer, must be a string or a
+  number of bounded length, and is treated as a secret by the engine: it is
+  never written to a result and its field is covered in pictures.
+- **A locator may not contain the expected value**, test ids included. That
+  is stricter than the engine's rule for comparisons today. Whether the
+  element found is a heading or a label can only be told when the check
+  runs; such a reading is unverified.
+- **The lists of bounds and negations are English.** A quote in another
+  language is refused for binding in this stage.
 - **Text** is refused unless already in Unicode NFC. The engine never
   normalises.
 
@@ -205,8 +234,11 @@ expiresAt
   `JSON.stringify` of an array whose first member is the string
   `releaseproof-bindings-v1` and whose second is the bindings sorted by id
   in code-unit order, each written as nested arrays in a fixed field
-  sequence that covers every field the engine reads. Numbers are decimal
-  strings; offsets are integers. Ids are unique in the set.
+  sequence that covers every field the engine reads, with a tag for each
+  kind of setup and step. Numbers are decimal strings; offsets are
+  integers. Ids are unique across all the sets of a run. The exact
+  sequence is written out, with test vectors, before the stage that
+  implements it.
 - **How it is carried.** In its own list, beside the criteria approvals and
   not among them: the existing code refuses a run if anything in the
   approvals list is not a criteria approval, and that stays so. A binding
@@ -224,12 +256,17 @@ expiresAt
 
 ## How the engine carries out a check
 
-For each binding in each verified set, once per run, the engine itself:
+The checks of a run are carried out before any step of a plan, one at a
+time, in the sequence of their ids. A plan's exploration shares the
+application's stored state with them, and must not get there first. For
+each binding in each verified set, once per run, the engine itself:
 
-1. Opens a new browser context with nothing stored, locale and timezone
-   pinned and recorded.
+1. Opens a new browser context with nothing stored, set to the binding's
+   locale and timezone.
 2. Applies the setup. For a fixture it makes the call written in the
-   binding, with its own key, and keeps the answer in the engine.
+   binding, with its own key, from outside the browser context so that
+   nothing the call sets is carried into it, and keeps the answer in the
+   engine.
 3. Carries out the steps in sequence, and nothing else. No step comes from a
    plan, and a plan cannot run between them.
 4. Makes the final reading, twice.
@@ -239,27 +276,41 @@ outside the page. Where a check needs a fact about the page (its address,
 whether an element is displayed), the engine gets it from the browser, not
 by asking script that the page can replace.
 
-- **Address.** Before a step or reading on `path`, the engine navigates
-  there itself with a plain request. The answer is 2xx with no redirect.
-  The main frame's address has exactly that path, byte for byte, with no
-  query and no fragment. An application that routes by fragment is not
-  supported in this stage.
+- **Address.** An `open` and every reading begin with the engine
+  navigating to the path itself with a plain request. The answer is 2xx
+  with no redirect, and the main frame's address then has exactly that
+  path, byte for byte, with no query and no fragment. A `fill` and an `act`
+  do not navigate: the address must still be their `path` from the `open`
+  before. After an `act` the page may go anywhere on the target's origin,
+  and the next step must be an `open` or a reading. An application that
+  routes by fragment is not supported in this stage.
+- **Settled.** A reading is taken only once the page has no request in
+  flight.
 - **One element.** The locator matches exactly one element, counting hidden
   ones, for both kinds of locator, in the main document.
 - **Displayed.** The element has a box of non-zero size, is visible and not
   fully transparent with all its ancestors, is in the viewport after
-  scrolling to it, and is the element found at the centre of its own box.
+  scrolling to it, and it or something inside it is what is found at the
+  centre of its box.
 - **A reading** (a `see` or the observation) is made on a page the engine
-  has just opened, with nothing done in it since: the rule the engine
-  applies to untrusted plans today, unchanged. A value is never read from a
-  page the check has typed into.
+  has just opened, with nothing done in it since. These are the conditions
+  the engine demands of an untrusted plan's readings today, but established
+  from the browser and not, as some are today, by asking script in the
+  page. A value is never read from a page the check has typed into.
 - **A number** is read by one strict grammar: ASCII digits, an optional
   leading minus, groups of exactly three if grouped, one spelling per unit.
   The currency sign is not compared, and the report says so.
-- **A write.** After an `act`, the application accepted exactly the writes
-  the step expects: one accepted write for "write accepted", none for "no
-  write". Between the first step and the final reading there is no other
-  accepted write.
+- **A write.** After an `act` that expects one, the application answered
+  exactly one request of the named method and path, with a status below
+  400. After an `act` that expects none, it answered none. Requests listed
+  as `background` are not counted. Any other request to the target that is
+  not a plain read, at any point of the check, makes the check unverified.
+  A status below 400 shows only that the application answered; that is why
+  each such `act` must be witnessed by a `see`. Effects caused through a
+  plain read or a socket are not seen at all (residual risk 11).
+- **Nothing went wrong.** Anywhere in the check: no answer from the target
+  of 400 or above, no failed request, no uncaught error in the page.
+  Otherwise the check is unverified, whatever it read.
 - **The second reading** of the observation is made after a fresh
   navigation, at least a fixed interval after the first, under all the
   same rules.
@@ -271,17 +322,21 @@ Per binding, exactly one of:
 - **verified.** Setup done; every step done under the rules; every `see`
   equal to its expected value; both final readings clean and equal to the
   expected value.
-- **failed.** Setup done; every step done under the rules; every `see`
-  equal to its expected value; both final readings clean, equal to each
-  other, and different from the expected value. This is the only way to a
-  trusted Failed: an approved observation that contradicts the requirement
-  with every approved precondition satisfied.
+- **failed.** Setup done; every step done under the rules; every write
+  witnessed by its `see`; every `see` equal to its expected value; nothing
+  went wrong anywhere in the check; both final readings clean, equal to
+  each other, and different from the expected value. This is the only way
+  to a trusted Failed: an approved observation that contradicts the
+  requirement with every approved precondition satisfied and witnessed.
 - **unverified**, with one reason from a fixed list. Everything else: the
   setup failed; a step could not be done; an element was missing, doubled
   or not displayed; the address was not the bound one; a write was not as
   expected; a `see` did not match (a precondition is unmet, which is not a
   failure of the requirement); a reading was not a number; the two final
-  readings differed; the time ran out; any error.
+  readings differed; an answer of 400 or above, a failed request or a page
+  error anywhere; an uncounted write; the time ran out; any error. A
+  mismatch seen in such a check is reported as "contradiction seen,
+  preconditions not established", and is not a failure.
 
 ## What a run's verdict is
 
@@ -318,23 +373,43 @@ real one.
 
 **A per-run authenticated result envelope**, verified by the server:
 
-- When a run is dispatched, the control plane makes a key pair for that
-  run, records the public half with the run together with the snapshot
-  revisions and binding set hashes it issued statements for, and gives the
-  private half to the worker with the run.
-- The worker signs, under the domain line `releaseproof-result-envelope-v1`:
-  run, workspace and project ids; each snapshot id and hash; each
-  `bindingsSha256`; the SHA-256 of the result's exact bytes; and for each
-  piece of evidence its reference and SHA-256.
-- The server accepts trusted fields only if the signature verifies with the
-  run's key, the ids are the token's run, the snapshot and binding hashes
-  are the ones recorded at dispatch, the result bytes hash to the signed
-  value, and each stored piece of evidence hashes to its signed value.
-  Otherwise the result is stored as untrusted, or refused.
+- **The key.** The worker makes a key pair for the run and registers the
+  public half when it claims the run, over the channel on which the worker
+  itself is authenticated. The private half never leaves the worker. (If
+  the key were handed out with the run, as the ingestion token is, whoever
+  held the token would hold the key, and the envelope would add little.)
+- **What the server stores at dispatch**, in the same transaction as
+  issuing the statements: the run's public key once registered, each
+  snapshot id and hash, each `bindingsSha256` and count, and the target
+  origin.
+- **What is signed**, under the domain line
+  `releaseproof-result-envelope-v1`: run, workspace and project ids; each
+  snapshot id and hash; each `bindingsSha256`; the SHA-256 of the result
+  exactly as the engine wrote it, byte for byte; and for each piece of
+  evidence its reference and the SHA-256 of its bytes. The engine signs,
+  not a script after it. Evidence travels beside the result, not inside
+  it, so adding pictures does not change what was signed. The result is
+  submitted as text and hashed before it is parsed.
+- **What the server checks**: the signature, with the run's registered
+  key; that the ids are the token's run; that the snapshot and set hashes
+  are those stored at dispatch; that the submitted text hashes to the
+  signed value; that each stored piece of evidence hashes to its signed
+  value.
+- **Refusal.** A result that claims trust and fails any check is refused
+  and nothing is stored. It is never stored "as untrusted": the dashboard
+  does not rewrite a result or decide its standing. A refusal does not use
+  up the run's token. For a run that was dispatched with binding
+  statements, a result without a valid envelope is refused even if it
+  claims no trust, so that a token holder cannot put an untrusted result in
+  first.
+- **Where it is verified.** The database as set up cannot verify an Ed25519
+  signature. Verification is done by a named server component, which is
+  then the only path able to record that an envelope was verified. Which
+  component is decided and reviewed in the envelope's own stage.
 
 **What this proves and does not.** It proves the result came from the
-holder of that run's key, for that run and those approved sets, and was not
-altered. It does not prove the worker was not compromised, and it does not
+worker that claimed the run, for that run and those approved sets, and that
+neither it nor its evidence was altered afterwards. It does not prove the worker was not compromised, and it does not
 prove the result is correct. A worker that the page under test has taken
 over signs whatever it is made to. Worker isolation and network
 restriction remain separate gates.
@@ -345,16 +420,23 @@ opened without it.
 
 ## The locks, stated accurately
 
-- **The engine constant** (`verdictsTrusted` written false, in the run and
-  again where the result is built) stops an honest engine from claiming
-  trust. It does nothing against someone who holds an ingestion token.
-- **The database constraint** that refuses a trusted result is the only
-  lock against a token holder. It cannot check a signature or look up the
-  approved bindings; a rule that "each verified requirement names a
-  binding" would only test the shape of what the result says about itself.
-  So the constraint is not what gets relaxed. Trust is accepted only by the
-  ingestion function, after it has verified the envelope, for a project
-  the owner has switched on, for a remote run that is not a prepared one.
+- **In the engine**, `verdictsTrusted` is written false at one place today
+  (where a run's record is made); the place where the result is built reads
+  it from the record. Until activation it is to be held false at both, by a
+  constant and a test. This stops an honest engine from claiming trust. It
+  does nothing against someone who holds an ingestion token.
+- **In the database**, a constraint on the table of results refuses every
+  row that says `verdictsTrusted: true`, however the row gets there. It is
+  the only lock against a token holder. It cannot check a signature or
+  look up the approved bindings, so a rule such as "each verified
+  requirement names a binding" would only test what a result says about
+  itself.
+- **At activation** that constraint is replaced, by a migration the owner
+  approves, with one that allows `verdictsTrusted: true` only for the new
+  format version and only on a row that carries the record of a verified
+  envelope, in columns that only the verifying component can set. The
+  screen reads trust from those columns as well as from the result, so a
+  result's own word is never enough.
 
 **A gap that exists today, found by this review.** The constraint refuses a
 result that says `verdictsTrusted: false` and `passed`, and requires a result
@@ -364,7 +446,22 @@ as `passed` with verified requirements, and only the screen qualifies it
 ("Passed, trust not stated"). That form exists for results prepared in
 advance. Whoever holds a remote run's token chooses what the result says
 its producer is, so for a remote run it should be refused whatever it says.
-This is to be fixed in the dashboard separately, before anything here.
+This is to be fixed in the dashboard separately, before anything here, in
+the ingestion function, which knows what kind of run a result is for; the
+table of results does not.
+
+## A new revision of the criteria
+
+Any change to the text is a new revision: a new hash, and no bindings.
+Nothing is issued for it until bindings are approved for it.
+
+- Re-approval of an old binding in one step is offered only where the
+  quoted lines are byte for byte the same in the new text.
+- The screen shows the lines around the quote in the old and the new text
+  side by side: the same sentence under another heading may mean something
+  else.
+- What results is a new binding, with new offsets and a new hash, approved
+  by a person at a recorded time. Nothing is carried forward without that.
 
 ## Approval and deployment
 
@@ -402,22 +499,29 @@ verify the wrong thing with full standing.
 | 18 | Application | Read, alter or forge an approval or a run key | They never enter the browser |
 | 19 | Model | Propose a check that suits it | A proposal is nothing until a person approves it |
 | 20 | Approver | Approve without reading, or approve too few conditions | Residual risks 5 and 6 |
-| 21 | Token holder | Submit a forged trusted result, or one before the real one | Refused without a valid envelope. A compromised worker: residual risk 7 |
+| 21 | Token holder who is not the worker | Submit a forged trusted result, or an untrusted one before the real one | Refused without an envelope signed with the key the worker registered. Someone who has the worker has its key: residual risk 7 |
+| 24 | Plan author | Change the application's stored state before a check reads it | Checks run before any step of a plan. A plan in another run at the same time: residual risk 12 |
+| 25 | Application | Answer "accepted" to a request that did nothing; show a default value when its own data request failed | Each write is witnessed by a `see`; any error answer makes the check unverified |
+| 26 | Application | Send a request of its own while a step sends none | Only the named method and path count; anything else that is not a plain read and not listed as background makes the check unverified |
 | 22 | Operator | Replace the trusted keys file | Out of reach of this design: the operator is trusted with it. The server checks the envelope with a key it issued itself, so a result made this way does not become trusted at the dashboard |
 | 23 | Control plane, compromised | Sign anything | Total. Residual risk 8 |
 
 ## Residual risks, stated plainly
 
-1. **Timing.** Two readings an interval apart do not catch every delay
-   between a write and its display. A value that is late by more than the
-   interval is read as a contradiction. The interval is a setting, and a
-   trusted failure should be read as "displayed otherwise, twice".
+1. **Timing.** A reading is taken on a settled page, twice, an interval
+   apart, and the write before it was witnessed elsewhere. An application
+   that shows a value late by more than the interval, with nothing in
+   flight, would still be read as contradicting. Whether that is acceptable
+   is open question 5.
 2. **Displayed is not true.** A black-box check verifies what the
    application displays in the bound element. The stored value may differ.
    Reports say "displayed", not "is".
 3. **An approval ages.** See "Approval and deployment".
 4. **A fresh account is the application's word** where a fixture is used.
    The run-bound key makes a new one each run if the interface honours it.
+   If it does not, a used account could give a false verdict in either
+   direction; the mandatory first `see` of the starting state is what
+   catches it, and only as far as that state shows the difference.
 5. **Approval can be careless.** The approval screen is part of the
    security boundary: it shows the sentence in context, every step and
    condition, and offers no "approve all" for new bindings.
@@ -431,6 +535,15 @@ verify the wrong thing with full standing.
    unverified. That is intended.
 10. **Cost of approval.** A check is approved step by step. This is real
     work for the owner, and is what the trust rests on.
+11. **Unseen effects.** A change the application makes through a plain read
+    or a socket is not counted as a write.
+12. **Shared stored state.** Checks are separate in the browser, not in the
+    application's data. Another run, or another person, using the same
+    deployment at the same time can change what a check reads. Fixtures
+    keyed by run reduce this to what is truly shared.
+13. **Usable only where the application is quiet or its background is
+    listed.** An application that sends requests of its own needs them
+    listed in `background`, by the approver, or every check is unverified.
 
 ## What changes, and where
 
@@ -441,7 +554,7 @@ verify the wrong thing with full standing.
 | Engine, result | A new format version: per binding, its hash, outcome and fixed reason; the set hashes; the envelope. The current version is still what an untrusted run writes |
 | Dashboard database | Bindings and approvals per project and snapshot revision; per-run keys and issued set hashes; envelope verification inside the ingestion function |
 | Dashboard screens | Propose, review and approve bindings; show what a verified requirement rested on, by hash; show the criteria with bound sentences marked |
-| Control plane | Issues binding statements and run keys. Until it exists, a local stand-in: its keys carry a reserved id that the engine accepts only for a target on the same machine, and the server refuses trust for a result against such a target outside a development database |
+| Control plane | Issues binding statements and records run keys. Until it exists, a local stand-in. By convention its key ids begin with a reserved prefix; the engine believes a key with that prefix only in a run started with the switch that allows a target on the same machine. The server refuses trust for a run whose stored environment is such a target unless a development setting is on, which no migration creates. The server judges this from what it stored about the run, never from what the result says about its own target |
 
 ## Stages
 
@@ -452,8 +565,9 @@ run reports until the last.
 2. Dashboard: refuse, for a remote run, a result that leaves
    `verdictsTrusted` out, whatever producer it names (the gap above), with
    a database test.
-3. Engine: the statement type, the exact hash, parsing and verification,
-   with refusal tests. Not used by a run.
+3. Engine: the exact field sequence of the set hash, written out with test
+   vectors; the statement type, parsing and verification, with refusal
+   tests. Not used by a run.
 4. Engine: the check runner and its outcomes, written to the working record
    only, with the negative suite in the same pull requests, not after.
    `verdictsTrusted` stays false at both places, and a test holds it there.
@@ -464,9 +578,10 @@ run reports until the last.
 7. The result envelope: run keys, worker signing, server verification.
 8. Independent security review of the whole, including the exact change
    that activation would make.
-9. Activation, needing the owner's explicit approval: the engine constant,
-   and the per-project switch in the ingestion function. First for the
-   synthetic shop on a development database.
+9. Activation, needing the owner's explicit approval: the engine constant;
+   the migration that replaces the constraint as described under "The
+   locks"; and a switch per project. First for the synthetic shop on a
+   development database.
 
 A real control plane is not in these stages. Activation beyond a
 development database needs it, and every hosted-execution gate.
@@ -502,10 +617,27 @@ failed.
   picture, or other set hashes; a result that leaves trust out; a second
   result for the run.
 
+- **Witnessing and errors:** an `act` answered 200 with a body that says it
+  failed; a page whose own data request fails and shows a default; a
+  request of the application's own during a step that sends none; a `fill`
+  then an `act` on one path (must work); a late value.
+- **Fixtures:** a body without the key placeholder; an application that
+  ignores the key, run twice; an answer whose named field is missing, not a
+  plain value, or inherited; a value from the answer visible in a picture.
+- **Shared state:** a plan's scenario that changes stored state in the same
+  run.
+- **Envelope:** an untrusted result submitted first with a valid token; the
+  same result written out again with other spacing; a claim of trust on a
+  row without the verified-envelope columns.
+- **Re-approval:** the same lines under a changed heading; lines changed by
+  one character.
+
 And the positive cases: a check that verifies, and a check that fails with
 every precondition satisfied.
 
-## What the first review found, and what changed
+## What the reviews found, and what changed
+
+First review:
 
 | Finding | Change |
 |---|---|
@@ -515,6 +647,14 @@ every precondition satisfied.
 | A bound reading was weaker than today's untrusted reading | Readings only on a page just opened by the engine, nothing done in it |
 | "Two locks" overstated the database constraint | Stated accurately; the envelope comes before activation; today's gap named |
 | Under-specified statement, positions, numbers, addresses, "displayed", timing, identity; approval ageing; trust table; suite gaps | Each specified above |
+
+Second review:
+
+| Finding | Change |
+|---|---|
+| A trusted Failed could come from a request that was answered but did nothing, a default value after a failed data request, a reused account, or a request of the application's own counted as the step's | Writes are named and witnessed; any error answer anywhere makes the check unverified; fixtures must take the key and begin with a `see`; readings on a settled page |
+| "The constraint is not what gets relaxed" was wrong, and "stored as untrusted" would have shown a forged result as trusted | The constraint is replaced at activation by one tied to a verified envelope; a failed claim of trust is refused, never stored |
+| A reload between filling a form and sending it; real applications send requests of their own; a `see` could expect only numbers in the quote; fixture values in pictures; the run key travelling with the token; checks sharing stored state with a plan; no rule for re-approval | Each specified above |
 
 ## Open questions for the owner
 
@@ -528,3 +668,8 @@ every precondition satisfied.
    readings: values to be proposed with the implementation.
 4. **Wording of a passed run:** "All N approved checks verified", not
    "Passed" alone and not "Ready for release". Confirm.
+5. **A late value.** After a witnessed write, on a settled page, read twice
+   an interval apart: a value still not updated is reported as a trusted
+   Failed ("displayed otherwise, twice"). Accept that, with the interval to
+   be proposed, or should a failure also need a third reading after a
+   longer wait?
