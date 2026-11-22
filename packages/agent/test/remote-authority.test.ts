@@ -642,7 +642,7 @@ test("RPAI-39: an approval's target is compared as the text it is: a space or a 
   const genuine = approval();
   assert.equal(authoriseRemoteRun(admitRemoteRun(request(), NOW), [genuine], trusted, NOW).snapshots.length, 1);
   const origin = genuine.targetOrigin;
-  for (const spelled of [` ${origin}`, `${origin} `, `${origin}\n`, `${origin}\t`, `\ufeff${origin}`, `${origin}/`, `${origin}:443`, origin.toUpperCase(), "not an address", `${origin}\ud800`, "", "ftp://shop.releaseproof.test"]) {
+  for (const spelled of [` ${origin}`, `${origin} `, `${origin}\n`, `${origin}\t`, `\ufeff${origin}`, `${origin}/`, `${origin}:443`, origin.toUpperCase(), "not an address", `${origin}\ud800`, "", "ftp://shop.releaseproof.test", "wss://shop.releaseproof.test", "ws://shop.releaseproof.test", "file://shop.releaseproof.test"]) {
     // Refused as a malformed approval, by the engine's own refusal and not by an error from somewhere beneath it.
     assert.match(refusal(request(), [{ ...genuine, targetOrigin: spelled }]), /approval 1 is malformed: targetOrigin must be an origin/, JSON.stringify(spelled));
   }
@@ -664,4 +664,14 @@ test("RPAI-39: the clock is read once and in the standard way: a date from elsew
   assert.equal(authoriseRemoteRun(admitted, [approval()], trusted, new Later(NOW.getTime())).snapshots.length, 1);
   assert.match(refusal(request(), [approval({ expiresAt: "2026-11-21T12:00:00Z" })]), /it has expired/);
   assert.throws(() => authoriseRemoteRun(admitted, [approval({ expiresAt: "2026-11-21T12:00:00Z" })], trusted, new Later(NOW.getTime())), RemoteRequestRefused);
+  // The same one reading is what "dated in the future" is measured against, for an approval and for a snapshot.
+  const later = new Later(NOW.getTime());
+  assert.throws(
+    () => authoriseRemoteRun(admitted, [approval({ issuedAt: "2026-11-21T12:05:01Z" })], trusted, later),
+    (error: unknown) => error instanceof RemoteRequestRefused && /dated in the future/.test(error.reasons.join(" ")),
+  );
+  assert.throws(
+    () => admitRemoteRun(request({ criteria: [snapshot({ approvedAt: "2026-11-21T12:05:01Z" })] }), later),
+    (error: unknown) => error instanceof RemoteRequestRefused && /claims an approval in the future/.test(error.reasons.join(" ")),
+  );
 });
