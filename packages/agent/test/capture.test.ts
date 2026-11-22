@@ -10,7 +10,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { chromium } from "playwright";
 import { CAPTURE_LIMITS, cleanPath } from "../src/execute/capture.ts";
-import { plainAmount } from "../src/execute/clean.ts";
+import { namesCredential, plainAmount } from "../src/execute/clean.ts";
 import { LEAKED_BEFORE, LEAKED_PATHS, SECRETS_BEFORE } from "./leaked-before.ts";
 import { runScenario } from "../src/execute/run.ts";
 import { Manifest, type Scenario, type ScenarioResult, type Step } from "../src/schema.ts";
@@ -361,10 +361,9 @@ test("a path is kept segment by segment only where it reads as an ordinary name;
     ["/orders/12345", "/orders/[redacted]"],
     ["/api/orders/2026-11-22", "/api/orders/[redacted]"],
     ["/docs/getting-started/installation-guide", "/docs/getting-started/installation-guide"],
-    ["/assets/logo@2x.png", "/assets/logo@2x.png"],
+    ["/assets/logo@2x.png", "/assets/[redacted]"],
     ["/assets/index-DiwrgTda.css", "/assets/index-DiwrgTda.css"],
     ["/account/settings", "/account/settings"],
-    ["/authors/jane", "/authors/jane"],
     // No query, fragment or parameters.
     ["/cb?token=abc#frag", "/cb"],
     ["/a;jsessionid=abc/b", "/a"],
@@ -401,9 +400,9 @@ test("a path is kept segment by segment only where it reads as an ordinary name;
     ["/magiclink/abcdef", "/magiclink/[redacted]"],
     ["/pwreset/abcdef", "/pwreset/[redacted]"],
     ["/apiKeys/abcdef", "/apiKeys/[redacted]"],
-    // A word that only starts like such a name is not one.
-    ["/authors/jane/books", "/authors/jane/books"],
-    ["/keyboard/layouts", "/keyboard/layouts"],
+    // A word that only starts like such a name is taken for one, and what follows it is lost.
+    ["/authors/jane/books", "/authors/[redacted]/[redacted]"],
+    ["/keyboard/layouts", "/keyboard/[redacted]"],
     ["/login/callback", "/login/callback"],
     // A word that starts or ends like a short name is taken for one: what follows is lost, and nothing is kept that should not be.
     ["/passengers/list", "/passengers/[redacted]"],
@@ -418,6 +417,15 @@ test("a path is kept segment by segment only where it reads as an ordinary name;
     ["/PASSKEY/abcdef", "/PASSKEY/[redacted]"],
     ["/x%2Ftoken/abcdef", "/[redacted]/[redacted]"],
     [`/${"a".repeat(200)}token/abcdef`, "/[redacted]/[redacted]"],
+    // A name with a digit after it is a name first: what follows it goes.
+    ["/otp1/abcdef", "/[redacted]/[redacted]"],
+    ["/key2/abcdef", "/[redacted]/[redacted]"],
+    ["/jwt1/abcdef", "/[redacted]/[redacted]"],
+    ["/pwd12/abcdef", "/[redacted]/[redacted]"],
+    ["/KEY1/abcdef", "/[redacted]/[redacted]"],
+    // No digit comes through a picture's size or a file's ending.
+    ["/a@1x.mp4/b@2x.mp3/c@3x.woff2/d@4x.mp4", "/[redacted]/[redacted]/[redacted]/[redacted]"],
+    ["/fonts/inter.woff2", "/fonts/[redacted]"],
     // One short name with a digit is kept once in a path. More of them are how a key is written in groups.
     ["/api/v2/sha1/md5", "/api/v2/[redacted]/[redacted]"],
     ["/lic/AB12-CD34-EF56-GH78", "/lic/[redacted]"],
@@ -464,12 +472,15 @@ test("a path is kept segment by segment only where it reads as an ordinary name;
 test("a value a manifest declares, such as the password of an account the application ships with, is known too, in any case", () => {
   const session = { vault: { scrub: (text: string) => text, values: () => ["wintermelon", "ab"] } } as never;
   for (const way of ["/leak/wintermelon", "/src/wintermelon.js", "/img/WinterMelon.png", "/a/winter%6Delon/b"]) assert.equal(cleanPath(session, way), "/[redacted]", way);
+  // A value that itself holds a sign that ends a path is found before anything is cut off.
+  const signed = { vault: { scrub: (text: string) => text.replaceAll("Summer;Rainfall", "{{secret:a.b}}"), values: () => ["Summer;Rainfall", "Spring;Blossom", "Winter#Snowfall", "Autumn?Leaves", "stra\u00dfenbahn"] } } as never;
+  for (const way of ["/leak/Summer;Rainfall", "/leak/Spring;Blossom", "/leak/SPRING;BLOSSOM", "/leak/Winter#Snowfall", "/leak/Autumn?Leaves", "/leak/Autumn%3FLeaves", "/x/STRASSENBAHN", "/x/stra\u00dfenbahn"]) assert.equal(cleanPath(signed, way), "/[redacted]", way);
   // A value too short to be told from part of a word is not looked for.
   assert.equal(cleanPath(session, "/about/table"), "/about/table");
 });
 
 test("for any path made of the pieces that have broken cleaning before: no error, plain printable characters only, no known secret, and cleaning again changes nothing", () => {
-  const pieces = ["password", "token", "otp", "reset", "=", ":", " ", "?", "&", "/", "//", "/./", "/../", "%41", "%25", "%2541", "%00", "%1B", "%E2%80%AE", "%E2%80%8B", "%2F", "%3F", "%20", "://", "http", "@", "@2x.png", "[redacted]", "{{secret:u.x}}", "{{secret:sEcReTt0ken1234567890abcdefXYZ}}", "%7B%7Bsecret:", "%7D%7D", "\ud800", "\udc00", "\u200b", "\u202e", "\u0085", "\u00a0", "é", "a", "b1", "hunter2", "Bearer", '"', "'", "(", ")", "[", "]", "{", "}", ",", ";", "|", "<", ">", ".", "-", "_", "~", "x".repeat(20), "12345678901234", "0", "key", "%zz", "%", "#", ".js", "Zq7!vault-pw", "Zq7%21vault-pw", "alpha", "bravo-charlie", "bravo%2Dcharlie", "my secret pw", "my%20secret", "pw"];
+  const pieces = ["password", "token", "otp", "reset", "=", ":", " ", "?", "&", "/", "//", "/./", "/../", "%41", "%25", "%2541", "%00", "%1B", "%E2%80%AE", "%E2%80%8B", "%2F", "%3F", "%20", "://", "http", "@", "@2x.png", "[redacted]", "{{secret:u.x}}", "{{secret:sEcReTt0ken1234567890abcdefXYZ}}", "%7B%7Bsecret:", "%7D%7D", "\ud800", "\udc00", "\u200b", "\u202e", "\u0085", "\u00a0", "é", "a", "b1", "hunter2", "Bearer", '"', "'", "(", ")", "[", "]", "{", "}", ",", ";", "|", "<", ">", ".", "-", "_", "~", "x".repeat(20), "12345678901234", "0", "1", "2", "12", "key", "otp", "jwt", "pwd", "cvv", "@2x", ".mp4", ".woff2", "%zz", "%", "#", ".js", "Zq7!vault-pw", "Zq7%21vault-pw", "alpha", "bravo-charlie", "bravo%2Dcharlie", "my secret pw", "my%20secret", "pw"];
   // The same cases every time: a generator with a fixed start.
   let state = 42;
   const next = () => {
@@ -483,7 +494,11 @@ test("for any path made of the pieces that have broken cleaning before: no error
     const way = cleanPath(VAULT, `/${text}`);
     assert.match(way, /^\/[\x21-\x7e]*$/, `from ${JSON.stringify(text)}`);
     for (const secret of ["Zq7!vault-pw", "alpha/bravo-charlie", "my secret pw"]) assert.ok(!way.includes(secret), `${secret} in ${way} from ${JSON.stringify(text)}`);
-    assert.ok(!/\d{3}/.test(way), `three digits together in ${way} from ${JSON.stringify(text)}`);
+    // No digits but those of one short name; and nothing but "[redacted]" after a segment that names a credential.
+    assert.ok(way.replace(/\D/g, "").length <= 2, `more than two digits in ${way} from ${JSON.stringify(text)}`);
+    const kept = way.split("/").slice(1);
+    const named = kept.findIndex((segment) => segment !== "[redacted]" && namesCredential(segment));
+    assert.ok(named === -1 || kept.slice(named + 1).every((segment) => segment === "[redacted]"), `something after a name in ${way} from ${JSON.stringify(text)}`);
     assert.equal(cleanPath(VAULT, way), way, `again, from ${JSON.stringify(text)}`);
     assert.equal(cleanPath(QUIET, way), way, `again by the result's own rule, from ${JSON.stringify(text)}`);
   }

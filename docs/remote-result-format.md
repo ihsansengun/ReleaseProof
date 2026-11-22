@@ -182,8 +182,11 @@ web application serves. Anything else becomes `[redacted]`.
 - **Numbers are not kept**: an id, a code and a count cannot be told apart,
   so `/orders/12345` is given as `/orders/[redacted]`. The one exception is
   a single short name of one to three letters followed by one or two digits
-  (`v2`, `sha1`, `md5`), kept once in a path. A second one, or a longer
-  one, is replaced: that is how a key is written in groups.
+  (`v2`, `sha1`, `md5`) that is not a credential's name, kept once in a
+  path. A second one, or a longer one, is replaced: that is how a key is
+  written in groups. No other digit is kept: not a picture's size
+  (`logo@2x.png` is replaced) and not an ending with a digit in it
+  (`.mp4`, `.woff2`).
 - A name with a dot inside it, which is how a host is written, is replaced.
 - A segment that names a credential or a link meant for one person is kept
   only if it is one plain word, and **every segment after it is replaced**.
@@ -192,20 +195,24 @@ web application serves. Anything else becomes `[redacted]`.
   `session`, `reset`, `verification`, `magiclink`). Short names (`otp`,
   `pin`, `key`, `pass`, `code`, `auth` and the like) count at the start or
   the end of a part of a segment, so `otpcode`, `accesskey`, `apiKeys`,
-  `pins` and `2fa` count; so do `passengers` and `monkey`, and what follows
-  those is lost. The list is of names, and a name not on it is not known:
+  `pins`, `otp1` and `2fa` count; so do `passengers`, `monkey`, `authors`
+  and `keyboard`, and what follows those is lost. The list is of names, and a name not on it is not known:
   see the residual risk below.
 - A path that holds a value the executor was given is replaced whole: a
   secret, or a value a manifest declares such as the password of an account
-  the application ships with (four characters or more), in any case, read
-  as a whole and decoded up to three times, with or without the empty and
-  hidden segments a reader would skip. So is a path with an address inside
-  it.
+  the application ships with. A value of four characters or more is found
+  in small letters and in capitals; a shorter one only as it is written.
+  It is looked for in the whole of what was asked for, before anything is
+  cut off (such a value may itself hold a `?`, a `#` or a `;`), as written
+  and decoded up to three times, with or without the empty and hidden
+  segments a reader would skip. So is a path with an address inside it.
 
-At most 20 segments and 200 characters are kept. Cleaning a cleaned path
+At most 20 segments, with one `[redacted]` for all the rest, and 200
+characters are kept. Cleaning a cleaned path
 changes nothing; a test makes 120,000 paths from the pieces that broke
-earlier versions and holds each to that, to plain printable output, to no
-three digits together, and to holding no known secret.
+earlier versions and holds each to that, to plain printable output, to at
+most two digits, to nothing but `[redacted]` after a credential's name, and
+to holding no known secret.
 
 Limits:
 

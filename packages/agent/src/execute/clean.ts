@@ -11,7 +11,7 @@
  *
  *   - a path, cleaned segment by segment and closed by default: a segment is
  *     kept only if it reads as an ordinary name of letters (one short name
- *     with a digit, such as "v2", is kept once in a path; no other number),
+ *     with a digit, such as "v2", is kept once in a path; no other digit),
  *     nothing after a segment that names a credential is kept;
  *   - a value that is a plain number or amount.
  *
@@ -55,8 +55,6 @@ const NAME_HOLDS = ["token", "secret", "passw", "passphrase", "passcode", "pwd",
  * taken for a name too: what follows it is lost, and nothing is kept that should not be.
  */
 const NAME_ENDS = ["auth", "otp", "pin", "key", "pass", "code", "mfa", "tfa", "sso", "grant", "salt", "serial", "cvv", "cvc", "ssn"];
-/** Words that start so and are known not to be such names. */
-const NOT_NAMES = new Set(["author", "authors", "authored", "keyboard", "keyboards", "keyword", "keywords"]);
 /** Two letters are too few to look for inside a word: these count only as a whole part. */
 const NAME_PARTS = new Set(["pw", "fa", "sig", "sid"]);
 
@@ -74,7 +72,7 @@ export function namesCredential(name: string): boolean {
   const whole = parts.join("");
   if (NAME_HOLDS.some((word) => whole.includes(word))) return true;
   const plural = (part: string) => (part.endsWith("es") ? [part, part.slice(0, -1), part.slice(0, -2)] : part.endsWith("s") ? [part, part.slice(0, -1)] : [part]);
-  return [...parts, whole].some((part) => !NOT_NAMES.has(part) && plural(part).some((form) => NAME_PARTS.has(form) || NAME_ENDS.some((word) => form.startsWith(word) || form.endsWith(word))));
+  return [...parts, whole].some((part) => plural(part).some((form) => NAME_PARTS.has(form) || NAME_ENDS.some((word) => form.startsWith(word) || form.endsWith(word))));
 }
 
 /** A part of a path segment that reads as an ordinary name or a short number. */
@@ -88,17 +86,15 @@ function ordinaryPart(part: string): boolean {
 }
 
 /** The endings of the files a web application serves. Any other ending is not one: ".example" is the end of a host's name. */
-const ENDINGS = new Set(["js", "mjs", "cjs", "css", "map", "json", "html", "htm", "xml", "txt", "csv", "pdf", "png", "jpg", "jpeg", "gif", "svg", "webp", "avif", "ico", "woff", "woff2", "ttf", "otf", "mp4", "webm", "mp3", "wasm", "ts", "tsx", "jsx", "vue"]);
+const ENDINGS = new Set(["js", "mjs", "cjs", "css", "map", "json", "html", "htm", "xml", "txt", "csv", "pdf", "png", "jpg", "jpeg", "gif", "svg", "webp", "avif", "ico", "woff", "ttf", "otf", "webm", "wasm", "ts", "tsx", "jsx", "vue"]);
 
 /** One segment, already decoded: itself if it reads as ordinary, a file name with what is ordinary of it, or replaced. */
 function cleanSegment(segment: string): string {
   if (segment === REDACTED) return segment;
   if (segment.length > 60 || !/^[\x21-\x7e]+$/.test(segment)) return REDACTED;
-  // A picture's name with its size after an @ ("logo@2x.png").
-  const sized = /^([A-Za-z0-9_-]+)(@[1-4]x)(\.[A-Za-z0-9]{1,5})$/.exec(segment);
-  // Anything else with an @ in it is an address or a name at a host: nothing of it is kept.
-  if (!sized && segment.includes("@")) return REDACTED;
-  const read = sized ? `${sized[1]}${sized[3]}` : segment;
+  // Anything with an @ in it is an address or a name at a host: nothing of it is kept.
+  if (segment.includes("@")) return REDACTED;
+  const read = segment;
   // A file name: its ending is kept, and each part of its name is judged by itself.
   const dot = read.lastIndexOf(".");
   const ending = dot > 0 && ENDINGS.has(read.slice(dot + 1).toLowerCase()) ? read.slice(dot) : "";
@@ -112,16 +108,14 @@ function cleanSegment(segment: string): string {
   if (ending === "" && !parts.every(ordinaryPart)) return REDACTED;
   let rebuilt = "";
   let position = 0;
-  let whole = true;
   for (const part of parts) {
-    if (!ordinaryPart(part)) whole = false;
     rebuilt += ordinaryPart(part) ? part : REDACTED;
     position += part.length;
     if (position < name.length) rebuilt += name[position];
     position += 1;
   }
   if (rebuilt.length + ending.length > 60) return gone;
-  return `${rebuilt}${sized && whole ? sized[2] : ""}${ending}`;
+  return `${rebuilt}${ending}`;
 }
 
 /** A text with every %-code in it decoded, however many times over it was encoded, up to three. Undefined when it cannot be read. */
@@ -165,10 +159,15 @@ export function cleanPathWith(scrub: (text: string) => string, pathname: string)
 
 function cleanedPath(scrub: (text: string) => string, pathname: string): string {
   if (typeof pathname !== "string") return `/${REDACTED}`;
+  // A path longer than is read is not read in part: a cut can go through a secret and leave most of it.
+  if (pathname.length > PATH_READ * 4) return `/${REDACTED}`;
+  // A value the caller knows, anywhere in what was given, before anything is cut off it: such a value may itself
+  // hold one of the signs that end a path.
+  const given = decoded(pathname) ?? pathname;
+  if (scrub(pathname) !== pathname || scrub(given) !== given) return `/${REDACTED}`;
   // Nothing after the first sign that ends a path: a query, a fragment, or parameters.
   const end = pathname.slice(0, PATH_READ + 1).search(/[?#;]/);
   const read = end === -1 ? pathname : pathname.slice(0, end);
-  // A path longer than is read is not read in part: a cut can go through a secret and leave most of it.
   if (read.length > PATH_READ) return `/${REDACTED}`;
   // A secret the caller knows, anywhere in the whole: as it reads decoded, with what is not shown taken out, and
   // with the empty and dotted segments a reader would skip taken out.
@@ -201,7 +200,7 @@ function cleanedPath(scrub: (text: string) => string, pathname: string): string 
     }
     // One short name of letters with one or two digits after them ("v2", "sha1", "md5"), once in a path: more of
     // them, or longer ones, are how a key is written in groups.
-    if (!versioned && /^[A-Za-z]{1,3}\d{1,2}$/.test(segment)) {
+    if (!versioned && /^[A-Za-z]{1,3}\d{1,2}$/.test(segment) && !namesCredential(segment)) {
       versioned = true;
       out.push(segment);
       continue;

@@ -119,7 +119,7 @@ export type RemoteResult = {
    * failures are kept: an empty list beside "collected" means the run listened and heard none.
    */
   diagnostics: {
-    /** What an error said is not kept. `source` is a file of the application under test; `count` is how often it happened in the step. */
+    /** What an error said is not kept. `source` is the place named for the error, kept only when it is a path on the application under test; `count` is how often it happened in the step. */
     console: { stepId: string; level: "error" | "uncaught"; source?: { path: string; line?: number; column?: number }; count: number }[];
     /** `status` 0 means the request got no answer. `path` has no query, fragment or host. */
     network: { stepId: string; method: string; path: string; status: number; kind: string }[];
@@ -332,8 +332,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
       const made = assertionId && step.ok ? compared.get(assertionId) : undefined;
       const requirementId = assertionId ? assertions.get(assertionId)?.requirementId : undefined;
       const requirementIds = requirementId ? [requirementId] : [];
-      // The picture taken after this step, where the run collected one. A picture taken at a comparison by the
-      // shared code stays in the run's directory: it is of the whole page and nothing in it is covered.
+      // The picture taken after this step, where the run collected one.
       const captured = Array.isArray(result.capture?.steps) ? result.capture.steps.find((entry) => entry?.step === index + 1) : undefined;
       let screenshot: RemoteResult["steps"][number]["screenshot"];
       if (typeof captured?.screenshot === "string" && /^step-\d{1,3}\.(png|jpg)$/.test(captured.screenshot) && scenarioId === result.scenarioId) {

@@ -59,8 +59,8 @@ export type CapturedStep = {
 };
 
 /**
- * An error the page wrote to its console, or one it did not catch. What it said is not kept. `source` is where
- * the browser says it came from, when that is a file of the application under test; `count` is how many times
+ * An error the page wrote to its console, or one it did not catch. What it said is not kept. `source` is
+ * the place named for it, when that is a file of the application under test (for an uncaught error the place is read from its own trace, which a page can write); `count` is how many times
  * the same error from the same place happened in the step.
  */
 export type CapturedConsole = { step: number; level: "error" | "uncaught"; source?: { path: string; line?: number; column?: number }; count: number };
@@ -108,12 +108,16 @@ export const cleanPath = (session: Pick<Session, "vault">, pathname: string): st
  */
 function knownBy(session: Pick<Session, "vault">): (text: string) => string {
   const vault = session.vault as Session["vault"] & { values?: () => string[] };
-  const values = (typeof vault.values === "function" ? vault.values() : []).filter((value) => typeof value === "string" && value.length >= 4).map((value) => value.toLowerCase());
+  const values = (typeof vault.values === "function" ? vault.values() : []).filter((value) => typeof value === "string" && value.length >= 4);
+  // In lower case and in capitals: some letters have a capital that is not one letter ("ß"), or a small form of their own.
+  const lowered = values.map((value) => value.toLowerCase());
+  const raised = values.map((value) => value.toUpperCase());
   return (given) => {
     const scrubbed = vault.scrub(given);
     if (scrubbed !== given) return scrubbed;
     const lower = given.toLowerCase();
-    return values.some((value) => lower.includes(value)) ? "{{secret:known}}" : given;
+    const upper = given.toUpperCase();
+    return lowered.some((value) => lower.includes(value)) || raised.some((value) => upper.includes(value)) ? "{{secret:known}}" : given;
   };
 }
 
@@ -121,7 +125,19 @@ function knownBy(session: Pick<Session, "vault">): (text: string) => string {
 function pathOf(session: Session, address: string, origin: string): string | undefined {
   try {
     const url = new URL(address);
-    return url.origin === origin ? cleanPath(session, url.pathname) : undefined;
+    if (url.origin !== origin) return undefined;
+    // A value the executor was given may hold a sign that ends a path ("?", "#"), and the browser has then already
+    // cut the path there. It is looked for in the whole of what was asked for, as written and as it reads decoded.
+    const asked = `${url.pathname}${url.search}${url.hash}`.slice(0, 4_000);
+    let plain = asked;
+    try {
+      plain = decodeURIComponent(asked);
+    } catch {
+      // Looked for as written.
+    }
+    const known = knownBy(session);
+    if (known(asked) !== asked || known(plain) !== plain) return "/[redacted]";
+    return cleanPath(session, url.pathname);
   } catch {
     return undefined;
   }
