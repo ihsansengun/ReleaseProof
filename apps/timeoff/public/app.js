@@ -94,6 +94,22 @@ async function employeeScreen() {
       error.textContent = e.message;
     }
   };
+  const cancelError = el("p", { className: "error", role: "alert" });
+  const cancelButton = (request) =>
+    el("button", {
+      className: "secondary",
+      textContent: "Cancel",
+      ariaLabel: `Cancel request from ${request.start} to ${request.end}`,
+      onclick: async () => {
+        try {
+          await call("POST", `/api/requests/${request.id}/cancel`);
+          render();
+        } catch (e) {
+          cancelError.textContent = e.message;
+        }
+      },
+    });
+  const canCancel = (request) => request.status === "Pending" || request.status === "Approved";
   shell(
     el("section", {}, el("h1", { textContent: "My time off" }), el("p", {}, "Days remaining: ", el("strong", { textContent: String(me.balance) }))),
     el("section", {}, el("h2", { textContent: "Request time off" }), error, form),
@@ -101,9 +117,13 @@ async function employeeScreen() {
       "section",
       {},
       el("h2", { textContent: "My requests" }),
+      cancelError,
       requests.length === 0
         ? el("p", { textContent: "You have not requested any time off." })
-        : table(["First day", "Last day", "Days", "Reason", "Status"], requests.map((r) => [r.start, r.end, String(r.days), r.reason, r.status])),
+        : table(
+            ["First day", "Last day", "Days", "Reason", "Status", "Action"],
+            requests.map((r) => [r.start, r.end, String(r.days), r.reason, r.status, canCancel(r) ? cancelButton(r) : ""]),
+          ),
     ),
   );
 }

