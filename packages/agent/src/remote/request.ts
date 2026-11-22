@@ -127,6 +127,10 @@ export function sha256Hex(text: string): string {
  * clock beyond comparing the approval time with `now`.
  */
 export function admitRemoteRun(raw: unknown, now: Date = new Date(), options: { allowLocalTarget?: boolean } = {}): AdmittedRun {
+  // A time that cannot be read would make the comparison below false for every snapshot, whenever it is dated.
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
+    throw new RemoteRequestRefused(["the time now cannot be read, so the request cannot be admitted"]);
+  }
   const parsed = (options.allowLocalTarget === true ? RemoteRunRequestOnThisMachine : RemoteRunRequest).safeParse(raw);
   if (!parsed.success) {
     throw new RemoteRequestRefused(

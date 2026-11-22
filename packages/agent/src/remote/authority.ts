@@ -32,7 +32,17 @@ export const APPROVAL_VERSION = 1;
 const DOMAIN = "releaseproof-criteria-approval-v1";
 
 /** One line of the signed statement: no line breaks, so fields cannot run into each other. */
-const Line = z.string().min(1).max(500).regex(/^[^\r\n]+$/, "must be a single line");
+/**
+ * Half of a surrogate pair with no other half. It has no spelling of its own in bytes: written out as UTF-8 it
+ * becomes U+FFFD, so two different texts would be signed as the same bytes.
+ */
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+const Line = z
+  .string()
+  .min(1)
+  .max(500)
+  .regex(/^[^\r\n]+$/, "must be a single line")
+  .refine((text) => !LONE_SURROGATE.test(text), "must be well-formed Unicode");
 /** A key id is printed in refusals, so it is kept to characters that are safe to print. */
 const KeyId = z.string().regex(/^[A-Za-z0-9._-]{1,100}$/, "must be letters, digits, dot, underscore or hyphen");
 const MAX_APPROVALS = 40;
@@ -164,6 +174,10 @@ export function authoriseRemoteRun(
   now: Date = new Date(),
 ): AuthorisedRun {
   const reasons: string[] = [];
+  // A time that cannot be read would make every comparison with it false, and nothing would ever have expired.
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
+    throw new RemoteRequestRefused(["the time now cannot be read, so no approval can be checked"]);
+  }
   if (trusted.size === 0) {
     throw new RemoteRequestRefused(["no trusted approval key was given, so no approval can be checked"]);
   }
