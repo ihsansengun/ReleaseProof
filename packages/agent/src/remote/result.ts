@@ -261,17 +261,29 @@ export function remoteResult(run: RemoteRun): RemoteResult {
     const said = Array.isArray(result.capture?.console) ? result.capture.console : [];
     const asked = Array.isArray(result.capture?.network) ? result.capture.network : [];
     for (const entry of said.slice(0, ENTRIES)) {
-      if ((entry?.level !== "error" && entry?.level !== "uncaught") || typeof entry.text !== "string") leftOut.console += 1;
-      else consoleEntries.push({ stepId: stepOf(entry.step), level: entry.level, text: again(entry.text) });
+      try {
+        if ((entry?.level !== "error" && entry?.level !== "uncaught") || typeof entry.text !== "string") leftOut.console += 1;
+        else consoleEntries.push({ stepId: stepOf(entry.step), level: entry.level, text: again(entry.text) });
+      } catch {
+        // An entry that cannot be read is left out, and the rest of the result stands.
+        leftOut.console += 1;
+      }
     }
     for (const entry of asked.slice(0, ENTRIES)) {
+      try {
+        addRequest(entry);
+      } catch {
+        leftOut.network += 1;
+      }
+    }
+    function addRequest(entry: (typeof asked)[number]): void {
       const status = Number.isInteger(entry?.status) && entry.status >= 0 && entry.status <= 599 ? entry.status : undefined;
       // A path as the collector writes one: from the root, one slash at a time, printable, and nothing a reader could take for an address or markup.
       // The path is cleaned again here, by the same rules, and must then be a path and nothing else.
       const where = typeof entry?.path === "string" && entry.path.startsWith("/") && !/[?#]/.test(entry.path.slice(0, 1_000)) ? cleanPathWith((given) => given, entry.path) : undefined;
       if (status === undefined || where === undefined || !/^\/(?!\/)[\x21-\x7e]*$/.test(where) || /[\\<>"'`]|\/\//.test(where)) {
         leftOut.network += 1;
-        continue;
+        return;
       }
       networkEntries.push({
         stepId: stepOf(entry.step),
@@ -279,7 +291,7 @@ export function remoteResult(run: RemoteRun): RemoteResult {
         path: where,
         status,
         kind: typeof entry.kind === "string" && /^[a-z]{1,20}$/.test(entry.kind) ? entry.kind : "other",
-        ...(typeof entry.failure === "string" && entry.failure !== "" ? { failure: again(entry.failure) } : {}),
+        ...(typeof entry.failure === "string" && again(entry.failure) !== "" ? { failure: again(entry.failure) } : {}),
       });
     }
     leftOut.screenshots += count(result.capture?.leftOut?.screenshots);

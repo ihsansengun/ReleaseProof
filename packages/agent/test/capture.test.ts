@@ -40,6 +40,11 @@ async function app(): Promise<{ baseUrl: string; server: Server }> {
           document.getElementById('t').addEventListener('transitionend', done);
           requestAnimationFrame(() => (document.getElementById('t').style.opacity = '0.5'));</script>`);
     }
+    if (url.pathname === "/many") {
+      // More password fields than fit in the window, so that the first of them are above it once scrolled.
+      const n = Number(url.searchParams.get("n") ?? "250");
+      return html(`<div>${Array.from({ length: n }, () => '<input type="password" value="hunter2" style="display:block;width:1280px;height:60px;font-size:40px;box-sizing:border-box">').join("")}</div><script>scrollTo(0, 1e9)</script>`);
+    }
     if (url.pathname === "/watched") {
       // A page that counts every change made to its own document, and holds a field to cover.
       return html(`<h1>Watched</h1><label>Password <input type="password" value="hunter2"></label><p data-testid="changes"></p>
@@ -375,8 +380,31 @@ test("what cleaning must remove, and what it must leave", () => {
     ["an address stuck to a word", "QQQhttp://glued.example/after?token=zz"],
     ["an address of another kind", "ws://127.0.0.1/socket?token=wstoken"],
     ["a name split by a character that is not shown", "pass\u200Bword=zw-hunter2"],
+    // Found by the fourth review.
+    ["a quoted name with a space after it, as JSON is printed", '{ "user": "ada", "password": "json-spaced-1", "nested": { "token": "json-nested-2" } }'],
+    ["a name that is not the first, in JSON with no spaces", '{"user":"ada","password":"json-tight-3","x":1}'],
+    ["JSON inside a printed object", 'resp {status: 401, body: {"error":"bad","token":"json-inner-4"}}'],
+    ["single quotes", "{'password': 'single-quoted-5'}"],
+    ["an address in a line that also holds the executor's secret", "GET https://app.example/login?user=ada@example.test&pw=Zq7!vault-pw failed"],
+    ["an e-mail address before a colon", "ada@example.test:colon-pass-6"],
+    ["a value next to something already redacted", "token=glued-7[redacted]"],
+    ["a value beside the engine's placeholder", "password=beside-8&x={{secret:u.x}}"],
+    ["a kind of credential stuck to its name", "authorization:Bearer stuck-9abc"],
+    ["a value of several words in quotes", 'password="several words-10 here" next'],
+    ["a list of values", 'token: ["a", "listed-11"] after'],
+    ["the word Token before a credential", "Token after-token-12"],
+    ["a header named for what it holds", "x-auth: header-13"],
+    ["every value of a cookie", "Cookie: theme=dark; id=cookie-14"],
+    ["a space before the sign", "password =spaced-15"],
+    ["a name, a verb, a value", "password is spoken-16"],
+    ["other signs between name and value", "token>arrow-17 token|pipe-18"],
+    ["a sign written as a code", "token%3Dencoded-19"],
+    ["an e-mail address with no dot", "ada@localhost-20"],
+    ["an e-mail address with its sign written as a code", "user%40encoded-21.example"],
+    ["an e-mail address stuck in front of an address", "glue@example.test,http://h.example/x"],
+    ["name and password inside an address", "http://user:inline-22@host.example/x"],
   ];
-  const secrets = ["ada@example.test", "abcdefghijklmnop", "eyJhbGciOiJIUzI1NiJ9", "hunter2-plain", "acc-tok-12345", "cs-camel-12345", "first-key-123", "only-key-456", "quoted-789", "long-name-321", "REST-OF-SECRET", "arrow-value-654", "0123456789abcdef0123456789abcdef0123", "4111111111111111", "Zq7!vault-pw", "account=42", "sig=abcdef", "shop.example", "glued.example", "wstoken", "127.0.0.1", "zw-hunter2"];
+  const secrets = ["json-spaced-1", "json-nested-2", "json-tight-3", "json-inner-4", "single-quoted-5", "app.example", "colon-pass-6", "glued-7", "beside-8", "stuck-9abc", "several", "words-10", "listed-11", "after-token-12", "header-13", "cookie-14", "spaced-15", "spoken-16", "arrow-17", "pipe-18", "encoded-19", "localhost-20", "encoded-21", "glue@", "h.example", "inline-22", "host.example", "ada@example.test", "abcdefghijklmnop", "eyJhbGciOiJIUzI1NiJ9", "hunter2-plain", "acc-tok-12345", "cs-camel-12345", "first-key-123", "only-key-456", "quoted-789", "long-name-321", "REST-OF-SECRET", "arrow-value-654", "0123456789abcdef0123456789abcdef0123", "4111111111111111", "Zq7!vault-pw", "account=42", "sig=abcdef", "shop.example", "glued.example", "wstoken", "127.0.0.1", "zw-hunter2"];
   for (const [what, text] of gone) {
     const cleaned = cleanText(session, text);
     for (const secret of secrets) assert.ok(!cleaned.includes(secret), `${what}: ${cleaned}`);
@@ -389,4 +417,17 @@ test("what cleaning must remove, and what it must leave", () => {
     assert.equal(cleanText(session, kept), kept);
   }
   assert.equal(cleanText(session, "failed at http://127.0.0.1:1/api/v2/international-shipping-rates?x=1"), "failed at /api/v2/international-shipping-rates");
+});
+
+test("every field is covered or no picture is kept: fields beyond a count are never left showing", async () => {
+  // 250 fields, scrolled to the last of them: the ones in the window are the last in the page.
+  const many = await run([step("navigate", { path: "/many?n=250" }), FINISH], true);
+  const file = path.join(many.dir, many.result.capture!.steps[0]!.screenshot!);
+  for (const y of [30, 200, 400, 600, 700]) assert.deepEqual(await pixel(file, 640, y), [0x3a, 0x3a, 0x3a], `row at ${y}`);
+  // More than can be covered with care: no picture at all, and it is said why not.
+  const tooMany = await run([step("navigate", { path: "/many?n=2500" }), FINISH], true);
+  const entry = tooMany.result.capture!.steps[0]!;
+  assert.equal(entry.screenshot, undefined);
+  assert.equal(entry.noScreenshot, "The picture could not be taken.");
+  assert.deepEqual(readdirSync(tooMany.dir).filter((name) => name.startsWith("step-1")), []);
 });

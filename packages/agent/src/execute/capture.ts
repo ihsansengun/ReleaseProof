@@ -229,7 +229,14 @@ export async function captureStep(session: Session, began: number, mayPicture: {
 }
 
 /** Fields that hold a secret by their kind. */
-const SECRET_FIELDS = 'input[type="password"], input[autocomplete*="password" i], input[autocomplete^="cc-" i], input[autocomplete="one-time-code" i]';
+const SECRET_FIELDS = ["input", "select", "textarea"].map((tag) => `${tag}[autocomplete*="password" i], ${tag}[autocomplete*="cc-" i], ${tag}[autocomplete*="one-time-code" i]`).join(", ") + ', input[type="password"]';
+/** More fields or frames than this, and no picture is kept: there is a limit to what can be covered with care. */
+const MOST_AREAS = 2_000;
+const MOST_FRAMES = 40;
+/** How long finding the fields, and drawing the cover, may each take. */
+const COVER_TIMEOUT_MS = 4_000;
+const within = <T>(work: Promise<T>, ms: number): Promise<T> =>
+  Promise.race([work, new Promise<T>((_resolve, reject) => setTimeout(() => reject(new Error("took too long")), ms).unref())]);
 type Area = [x: number, y: number, width: number, height: number];
 const rectsOf = (elements: Element[]): Area[] =>
   elements.map((element) => {
@@ -244,7 +251,12 @@ const rectsOf = (elements: Element[]): Area[] =>
  * are and nothing in it is changed.
  */
 async function secretAreas(session: Session, collector: Collector): Promise<Area[]> {
+  return within(findSecretAreas(session, collector), COVER_TIMEOUT_MS);
+}
+
+async function findSecretAreas(session: Session, collector: Collector): Promise<Area[]> {
   const page = session.page;
+  if (page.frames().length > MOST_FRAMES + 1) throw new Error("too many frames to look into");
   const areas: Area[] = await page.locator(SECRET_FIELDS).evaluateAll(rectsOf);
   for (const field of collector.secretFields) areas.push(...(await field.evaluateAll(rectsOf).catch(() => [] as Area[])));
   for (const frame of page.frames()) {
@@ -255,7 +267,10 @@ async function secretAreas(session: Session, collector: Collector): Promise<Area
     const box = await (await frame.frameElement()).boundingBox();
     if (box) areas.push([box.x, box.y, box.width, box.height]);
   }
-  return areas.filter(([, , width, height]) => width > 0 && height > 0).slice(0, 200);
+  const shown = areas.filter(([, , width, height]) => width > 0 && height > 0);
+  // Never some of them: either every field is covered or no picture is kept.
+  if (shown.length > MOST_AREAS) throw new Error("too many fields to cover");
+  return shown;
 }
 
 /**
@@ -269,7 +284,7 @@ async function redraw(session: Session, collector: Collector, raw: Buffer, areas
     if (!browser) throw new Error("no browser to draw in");
     collector.easel = await (await browser.newContext({ javaScriptEnabled: true, offline: true })).newPage();
   }
-  const drawn = await collector.easel.evaluate(
+  const drawn = await within(collector.easel.evaluate(
     async ({ data, areas, jpeg }) => {
       const image = new Image();
       image.src = `data:image/png;base64,${data}`;
@@ -286,7 +301,7 @@ async function redraw(session: Session, collector: Collector, raw: Buffer, areas
       return canvas.toDataURL(jpeg ? "image/jpeg" : "image/png", 0.6).split(",")[1] ?? "";
     },
     { data: raw.toString("base64"), areas, jpeg },
-  );
+  ), COVER_TIMEOUT_MS);
   if (drawn === "") throw new Error("nothing drawn");
   return { picture: Buffer.from(drawn, "base64"), jpeg };
 }

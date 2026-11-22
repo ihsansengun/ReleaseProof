@@ -371,7 +371,7 @@ test("what was collected is taken in by the result's own rules, whoever wrote th
   assert.ok(!text.includes("<script>") && !text.includes("HUNTER2SECRET") && !text.includes("elsewhere.example") && !text.includes("null"));
   assert.ok(result.diagnostics.console.length <= 200);
   assert.ok(result.diagnostics.console.every((entry) => entry.text.length <= 300 && /^S1-[12]$/.test(entry.stepId)));
-  assert.deepEqual(result.diagnostics.network, [{ stepId: "S1-2", method: "OTHER", path: "/api/x", status: 400, kind: "other", failure: "[redacted value]" }]);
+  assert.deepEqual(result.diagnostics.network, [{ stepId: "S1-2", method: "OTHER", path: "/api/x", status: 400, kind: "other" }]);
   // Left out, and counted: the entry with a level of its own, the two requests that do not fit, and everything past the limit.
   assert.equal(result.evidenceLimits.leftOut.network, 2);
   assert.equal(result.evidenceLimits.leftOut.console, 1 + (5_002 - 200));
@@ -379,5 +379,15 @@ test("what was collected is taken in by the result's own rules, whoever wrote th
   assert.equal(result.steps[0]!.atMs, undefined);
   assert.equal(result.steps[0]!.durationMs, undefined);
   assert.equal(result.steps[1]!.durationMs, 121);
+  assert.equal(result.verdict, "unverified");
+});
+
+test("an entry that cannot be read is left out and counted, and the rest of the result stands", () => {
+  const odd = scenario("S1", "passed", 160);
+  odd.capture!.network.push({ step: 1, method: "GET", path: "/a/\ud800", status: 404, kind: "fetch" }, { step: 1, method: "GET", path: "/ok", status: 404, kind: "fetch" });
+  odd.capture!.console.push({ step: 1, level: "error", text: "lone \udc00 surrogate password=hunter2" });
+  const result = remoteResult(record([odd]));
+  assert.ok(result.diagnostics.network.some((entry) => entry.path === "/ok"));
+  assert.ok(!JSON.stringify(result).includes("hunter2"));
   assert.equal(result.verdict, "unverified");
 });
