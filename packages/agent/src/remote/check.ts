@@ -623,6 +623,8 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
           progress.writesCounted += 1;
           lastWriteAt = written[0]!.answeredAt ?? now();
           progress.lastWriteAfterMs = Math.ceil(lastWriteAt - began);
+          // The settling time is counted from the moment the record gives, so that the record shows all of it.
+          lastWriteAt = began + progress.lastWriteAfterMs;
           // After a write the page may have gone anywhere on the target: it is not worked in again.
           await closeByEngine(watch, page);
           current = undefined;
@@ -869,6 +871,15 @@ async function watchRequests(context: BrowserContext, origin: string, binding: B
   // Nor a request that is put by for the browser to send when the page is gone.
   await context.addInitScript("delete globalThis.SharedWorker; delete globalThis.fetchLater;");
 
+  /** Whether an answer sends the browser on to another host. */
+  const sentElsewhere = (response: { status(): number; headers(): Record<string, string>; url(): string }): boolean => {
+    if (response.status() < 300 || response.status() > 399) return false;
+    try {
+      return new URL(response.headers()["location"] ?? "", response.url()).origin !== origin;
+    } catch {
+      return true;
+    }
+  };
   context.on("request", (request) => {
     watch.inFlight.add(request);
     const url = toTarget(request);
@@ -887,13 +898,7 @@ async function watchRequests(context: BrowserContext, origin: string, binding: B
     const url = toTarget(request);
     if (!url) return;
     const status = response.status();
-    if (status >= 300 && status < 400) {
-      try {
-        if (new URL(response.headers()["location"] ?? "", request.url()).origin !== origin) watch.wrong ??= "redirect-to-other-host";
-      } catch {
-        watch.wrong ??= "redirect-to-other-host";
-      }
-    }
+    if (sentElsewhere(response)) watch.wrong ??= "redirect-to-other-host";
     const written = writes.get(request);
     if (written) {
       written.status = status;
@@ -909,8 +914,20 @@ async function watchRequests(context: BrowserContext, origin: string, binding: B
     const page = pageOf(request);
     // Cancelled because the engine itself closed the page it had finished with.
     if (cancelled && page && watch.closing.has(page)) return;
-    if (cancelled && window) window.aborted += 1;
-    else watch.wrong ??= "request-failed";
+    if (cancelled && window) return void (window.aborted += 1);
+    // A request that fails because its answer sent the browser to a host the engine blocks is that, and not a
+    // failure of the application's. The browser may tell of the failure before it tells of the answer: the answer
+    // is asked for, and until it is known the request counts as in flight, so that no step goes on without it.
+    watch.inFlight.add(request);
+    void request
+      .response()
+      .catch(() => null)
+      .then((answer) => {
+        const onward = request.redirectedTo();
+        const elsewhere = (answer !== null && sentElsewhere(answer)) || (onward !== null && !toTarget(onward));
+        watch.wrong ??= elsewhere ? "redirect-to-other-host" : "request-failed";
+        watch.inFlight.delete(request);
+      });
   });
   context.on("weberror", () => void (watch.wrong ??= "page-error"));
   return watch;
