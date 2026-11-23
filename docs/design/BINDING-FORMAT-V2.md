@@ -263,7 +263,10 @@ Which is which, by the kind of wording and where it stands:
   no confirmation makes a bound into an equality. Until the owner says
   otherwise this cell is the strict one: nothing under such a heading can be
   bound, and the remedy is a new revision of the criteria with another
-  heading. (Open question 1 names the cells that could be loosened.)
+  heading. (Open question 1 names the cells that could be loosened.) A verb
+  of change or a hedge in a heading stays a question: the owner's rule names
+  bounds and negations, and a heading such as "Default settings" is seldom
+  about the value. Those two cells are also for the owner to confirm.
 - **A refusal anywhere wins.** Otherwise every question at every place is
   asked: a word in the quote and another in the heading are two questions.
 - The rows name kinds, with examples. **The stage that implements this
@@ -297,7 +300,7 @@ The questions, in the fixed words the approver sees:
 | --- | --- |
 | `not-a-rate` | "The marked word does not make N an amount per something or added to something: N is the value that is shown. If this is wrong, a correct page can be reported as failed." |
 | `condition-established` | "The steps of this check (shown) make the marked condition true. If they do not, a correct page can be reported as failed." |
-| `heading-not-about-value` | "The marked heading does not make N a limit, a minimum, a maximum, a change, something that is not the case or something that holds only sometimes. If it does, a correct page can be reported as failed." |
+| `heading-not-about-value` | "The marked heading does not make N a change or something that holds only sometimes. If it does, a correct page can be reported as failed." |
 | `whole-statement` | "The marked lines are the whole statement about N; the lines shown around them do not change what it says. If they do, a correct page can be reported as failed." |
 
 ```
@@ -474,8 +477,8 @@ Consequences:
 - Its hits no longer decide what a binding means. Per the table above a hit
   refuses, or is a question that must have been confirmed at that place.
 - It has a version, which is signed.
-- It may be narrowed later (it refuses "add" and dates, and raises a
-  question for every ordinary heading with a listed word in it), but only as
+- It may be narrowed later (it refuses "add" and dates, and refuses
+  or raises a question for every ordinary heading with a listed word in it), but only as
   a new safeguard version, with its own review. Until then it stays as wide
   as it is.
 - The runner's doc keeps saying what it does not see.
@@ -712,7 +715,8 @@ stays Unverified.
    Two in particular: a bound or a negation **in a heading** refuses here,
    which makes whole sections unbindable under headings such as "Limits and
    balances" (loosening it to a question would need the owner's explicit
-   decision, and an answer "it is a bound" that ends in a new revision); and
+   decision, and an answer "it is a bound" that ends in a new revision); a
+   verb of change or a hedge in a heading, which is a question here; and
    **`condition-established`**, where the engine can check least, since
    whether the steps make a condition true is the approver's judgement.
 2. Whether the person who drafts a binding may be the one who approves it.
