@@ -912,6 +912,91 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     assert.ok(runs.some((run) => run.asked), "the server was asked in at least one run");
   });
 
+  // ---- an action reaches the document the engine looked at, or nothing ----
+
+  /** A check whose typing is the last thing done in its page: nothing later looks at that page again. */
+  const typesLast = (field = "username") =>
+    binding({
+      setup: { kind: "fixture", method: "POST", path: "/fixture", body: '{"key":"{{key}}"}' },
+      steps: [{ kind: "open", path: "/enter" }, { kind: "fill", path: "/enter", locator: { by: "role", role: "textbox", name: "Name" }, value: { from: "fixture", field } }, see("count", "0"), see("balance", "0"), ...BUY, see("count", "1")],
+    });
+  /** A check with an act that sends nothing as the last thing done in its page. */
+  const pressesLast = binding({ steps: [see("count", "0"), see("balance", "0"), { kind: "open", path: "/prep" }, { kind: "act", path: "/prep", locator: button("Prep"), expects: { write: "none" } }, ...BUY, see("count", "1")] });
+  const secondPage = `<input aria-label="Name" autofocus oninput="fetch('/taken?typed=' + this.value)"><button onclick="fetch('/taken?pressed')">Prep</button>`;
+  const fixture: Routes = { "POST /fixture": () => json({ username: "not-for-others" }), "GET /taken": () => json({}) };
+  const taken = (ledger: Ledger) => ledger.requests.filter((line) => line.includes("/taken"));
+
+  test("a page that turns into another as the engine looks for the element: nothing is typed into it or pressed in it", async () => {
+    // The element is below the fold; the engine scrolls to it, the page hears the scrolling and turns into a second
+    // document with the same field and button. That one would send on whatever is typed or pressed. Nothing is.
+    const onScroll = (first: string): string => `<div style="height:3000px"></div>${first}<script>addEventListener("scroll", () => location.replace(location.pathname + "2"), { once: true })</script>`;
+    const typed = await check({ ...fixture, "GET /enter": () => html(onScroll(`<input aria-label="Name">`)), "GET /enter2": () => html(`<div style="height:3000px"></div>${secondPage}`) }, typesLast());
+    assert.equal(typed.record.outcome, "unverified");
+    assert.deepEqual(taken(typed.ledger), [], "a value of the fixture was typed into another document");
+    const pressed = await check({ ...fixture, "GET /prep": () => html(onScroll(`<button>Prep</button>`)), "GET /prep2": () => html(`<div style="height:3000px"></div>${secondPage}`) }, pressesLast);
+    assert.equal(pressed.record.outcome, "unverified");
+    assert.deepEqual(taken(pressed.ledger), [], "the engine pressed a button in another document");
+  });
+
+  test("a page that goes to another address as the engine acts on it gets no verdict", async () => {
+    // In answer to the engine's own act, before it is done: on focus, before the text goes in, on the press.
+    for (const on of ["onfocus", "onbeforeinput", "oninput"]) {
+      const { record } = await check({ ...fixture, "GET /enter": () => html(`<input aria-label="Name" ${on}="history.pushState(null, '', '/other')">`) }, typesLast());
+      unverified(record, "address-not-bound");
+    }
+    for (const on of ["onpointerdown", "onmousedown", "onmouseup", "onclick"]) {
+      const { record } = await check({ "GET /prep": () => html(`<button ${on}="history.pushState(null, '', '/other')">Prep</button>`) }, pressesLast);
+      unverified(record, "address-not-bound");
+    }
+    // An act that sends nothing and follows a link: the page is no longer the one that was opened.
+    unverified((await check({ "GET /prep": () => html(`<a href="/more" role="button">Prep</a>`), "GET /more": () => html(`<p>More</p>`) }, pressesLast)).record, "address-not-bound");
+    // The same acts on a page that stays where it is: carried out, and the check verifies.
+    assert.equal((await check({ ...fixture, "GET /enter": () => html(`<input aria-label="Name" onfocus="this.dataset.seen = 1" oninput="this.dataset.typed = this.value">`) }, typesLast())).record.outcome, "verified");
+    assert.equal((await check({ "GET /prep": () => html(`<button onmousedown="this.dataset.down = 1" onclick="this.textContent = 'Prep'">Prep</button>`) }, pressesLast)).record.outcome, "verified");
+  });
+
+  test("a page that turns into another at any moment around the engine's act: never typed into, never pressed", async () => {
+    // By the clock, in small steps across the time the engine takes to look and act. Whenever the page turns, the
+    // second document gets nothing; and a check in which it turned before the act gives no verdict.
+    const moments = Array.from({ length: 24 }, (_unused, index) => 500 + index * 15);
+    for (let start = 0; start < moments.length; start += 6) {
+      await Promise.all(
+        moments.slice(start, start + 6).map(async (after) => {
+          const turn = `<script>setTimeout(() => location.replace(location.pathname + "2"), ${after})</script>`;
+          const typed = await check({ ...fixture, "GET /enter": () => html(`<input aria-label="Name">${turn}`), "GET /enter2": () => html(secondPage) }, typesLast());
+          assert.deepEqual(taken(typed.ledger), [], `typed into another document, turning after ${after} ms`);
+          const pressed = await check({ ...fixture, "GET /prep": () => html(`<button>Prep</button>${turn}`), "GET /prep2": () => html(secondPage) }, pressesLast);
+          assert.deepEqual(taken(pressed.ledger), [], `pressed in another document, turning after ${after} ms`);
+        }),
+      );
+    }
+  });
+
+  test("a write is the page's own by what the browser says of it, not by when it was heard of", async () => {
+    const buys = (onclick: string, extra = ""): Routes => ({ "GET /buy": () => html(`<button onclick="${onclick}">Buy</button>${extra}`) });
+    const post = `fetch('/purchase', { method: 'POST' })`;
+    // An ordinary page that sends and then moves on in one handler: the write was sent from the bound address.
+    assert.equal((await check(buys(`${post}; history.pushState(null, '', '/thanks')`))).record.outcome, "verified");
+    assert.equal((await check(buys(`navigator.sendBeacon('/purchase', 'x')`))).record.outcome, "verified");
+    // A form that is sent: the request is the navigation itself, from the page that was opened.
+    assert.equal((await check({ "GET /buy": () => html(`<form method="post" action="/purchase"><button>Buy</button></form>`), "POST /purchase": (ledger) => ((ledger.balance += 100), (ledger.count += 1), { status: 303, headers: { location: "/account" } }) })).record.outcome, "verified");
+    // Moved first and sent from the other address; sent by the page it turned into; sent from a frame; from a worker.
+    const notThePages: [string, Routes][] = [
+      ["moved, then sent", buys(`history.pushState(null, '', '/other'); ${post}`)],
+      ["sent by the page it turned into", { ...buys(`location.replace('/buy2')`), "GET /buy2": () => html(`<script>${post}</script>`) }],
+      ["sent from a frame", { ...buys(`frames[0].postMessage('send', '*')`, `<iframe src="/inner" style="width:10px;height:10px;border:0"></iframe>`), "GET /inner": () => html(`<script>addEventListener("message", () => ${post})</script>`) }],
+      ["sent from a worker", { ...buys(`new Worker('/worker.js')`), "GET /worker.js": () => ({ headers: { "content-type": "text/javascript" }, body: `fetch("/purchase", { method: "POST" })` }) }],
+    ];
+    for (const [name, routes] of notThePages) {
+      const { record } = await check(routes);
+      assert.equal(record.outcome, "unverified", name);
+      assert.equal(record.reason, "write-not-attributed", name);
+    }
+    // A document put in the page's place through a script address, which the browser tells of in no other way.
+    const swapped = await check(buys(`location.href = 'javascript:&quot;<script>${post.replaceAll("'", "\\'")}<\\/script>&quot;'`));
+    assert.equal(swapped.record.outcome, "unverified");
+  });
+
   test("the time limit ends a check as unverified", async () => {
     unverified((await check({}, binding(), { limitMs: 1 })).record, "time-ran-out");
     unverified((await check({}, binding(), { limitMs: 1_500 })).record, "time-ran-out");
