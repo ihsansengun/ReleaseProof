@@ -285,7 +285,6 @@ test("a binding is for its criteria text: whole lines, the number written at its
     [{ quote: { start: purchase.start + 6, end: purchase.end }, expected: { start: 28, end: 31, value: "100" } }, criteria, /not whole lines/],
     [{ quote: { start: purchase.start, end: purchase.end - 1 } }, criteria, /not whole lines/],
     [{ quote: { start: purchase.start, end: purchase.end + 1 } }, criteria, /not whole lines/],
-    [{ quote: { start: 9, end: 10 }, expected: { start: 0, end: 1, value: "1" } }, criteria, /holds no text|not whole lines/],
     // A span that is not one whole number: inside a longer one, more than one, inside a word.
     [{ expected: { ...within(purchase, "100"), end: within(purchase, "100").end - 1, value: "10" } }, criteria, /not at one whole number/],
     [{ expected: { start: within(purchase, "100").start + 1, end: within(purchase, "100").start + 2, value: "0" } }, criteria, /not at one whole number/],
@@ -300,6 +299,105 @@ test("a binding is for its criteria text: whole lines, the number written at its
     [{ quote: line("Le solde est de 100 apr\u00e8s un achat."), expected: within(line("Le solde est de 100 apr\u00e8s un achat."), "100") }, criteria, /outside the English alphabet/],
   ];
   for (const [change, text, expected] of refusals) assert.match(criteriaProblems(bound(change), text).join("\n"), expected, JSON.stringify(change));
+
+  // One text, one line (or more) quoted whole, the last number in it bound: what does the engine say?
+  const said = (text: string, quoted: string, number: string, value = number) => {
+    const quote = { start: text.indexOf(quoted), end: text.indexOf(quoted) + quoted.length };
+    const at = quoted.lastIndexOf(number);
+    return criteriaProblems(binding({ snapshotSha256: sha256Hex(text), quote, expected: { start: at, end: at + number.length, value } }), text).join("\n");
+  };
+  const oneLine = (sentence: string, number = "100", value = number) => said(`${sentence}\n`, sentence, number, value);
+  assert.equal(oneLine("After a purchase the balance is 100."), "");
+  assert.equal(oneLine("The total is 1,250 after the second purchase.", "1,250", "1250"), "");
+  assert.match(oneLine("The total is 1,250 after the second purchase.", "1,250", "1,250".replace(",", "0")), /not the number written/);
+  // A span that ends where a number ends and begins inside it.
+  assert.match(said("The balance is 100.\n", "The balance is 100.", "00", "0"), /not at one whole number/);
+
+  // A bound, however it is written out: over a line break, with other space, in emphasis, in capitals.
+  for (const sentence of [
+    "After a purchase the balance is at\nleast 100.",
+    "After a purchase the balance is at  least 100.",
+    "After a purchase the balance is at\tleast 100.",
+    "After a purchase the balance is at\u00a0least 100.",
+    "After a purchase the balance is _at least_ 100.",
+    "After a purchase the balance is **at least** 100.",
+    "After a purchase the balance is AT LEAST 100.",
+    "After a purchase the balance is up\r\nto 100.",
+    "After a purchase the balance is at most 100.",
+    "After a purchase the balance is 100 or\nmore.",
+    "After a purchase the balance is more than 100.",
+    "After a purchase the balance is less than 100.",
+    "After a purchase the balance is over 100.",
+    "After a purchase the balance is under 100.",
+    "After a purchase the balance is between 50 and 100.",
+    "After a purchase the balance goes from 50 to 100.",
+    "After a purchase the balance is about 100.",
+    "After a purchase the balance is approximately 100.",
+    "After a purchase the balance is >= 100.",
+    "After a purchase the balance is \u2265 100.",
+    "After a purchase the balance is < 100.",
+    "The balance has a max of 100.",
+    "The balance is 100+ after a purchase.",
+    "The balance does exceed 100.",
+    "The balance stays within 100.",
+  ]) {
+    assert.match(oneLine(sentence), /words a bound/, JSON.stringify(sentence));
+  }
+  // A negation, with every kind of apostrophe and in emphasis.
+  for (const sentence of [
+    "After a purchase the balance isn\u2019t 100.",
+    "After a purchase the balance isn't 100.",
+    "After a purchase the balance won't be 100.",
+    "After a purchase the balance doesn\u02bct reach 100.",
+    "After a purchase the balance is _not_ 100.",
+    "After a purchase the balance is __never__ 100.",
+    "After a purchase the balance is NOT 100.",
+    "Neither balance is 100.",
+    "Nothing but 100 is shown.",
+    "The balance is 100 unless a refund was made.",
+    "The balance is non-zero, namely 100.",
+  ]) {
+    assert.match(oneLine(sentence), /words a negation/, JSON.stringify(sentence));
+  }
+  // Part of a sentence that runs over several lines: the words left out may be the bound.
+  const wrapped = "# Refunds\n\nAfter a purchase the balance is 100 and\nit is never more than 150.\n\n- The balance after two is 200\n  or more.\n- A refund gives 100\n";
+  assert.match(said(wrapped, "After a purchase the balance is 100 and", "100"), /ends in the middle of a sentence/);
+  assert.match(said(wrapped, "it is never more than 150.", "150"), /begins in the middle of a sentence/);
+  assert.match(said(wrapped, "- The balance after two is 200", "200"), /ends in the middle of a sentence/);
+  // An item of a list, with another item after it, is whole.
+  assert.equal(said("- The balance is 100\n- A refund gives 50\n", "- The balance is 100", "100"), "");
+  assert.equal(said(wrapped, "- A refund gives 100", "100"), "");
+
+  // Line ends. A carriage return ends a line only before a line feed.
+  const windows = "The balance is 100.\r\nA refund gives 50.\r\n";
+  assert.equal(said(windows, "The balance is 100.", "100"), "");
+  assert.match(said(windows, "The balance is 100.\r", "100"), /not whole lines/);
+  assert.match(said("The balance is 100\r or more.\n", "The balance is 100", "100"), /not whole lines/);
+  // A quote of nothing but space.
+  assert.match(said("One.\n   \nTwo is 2.\n", "   ", " ", "2"), /holds no text/);
+
+  // A sign the text does not state plainly.
+  for (const [sentence, number, value] of [
+    ["The balance is -$5.00 after.", "5.00", "5.00"],
+    ["The balance is -\u00a35 after.", "5", "5"],
+    ["The balance is (5.00) after.", "5.00", "5.00"],
+    ["Balance:-5 after.", "5", "5"],
+    ["There are \u21925 items.", "\u21925", "-5"],
+    ["The balance is \u20265 after.", "\u20265", "-5"],
+    ["The balance is 100 - 5 after.", "5", "5"],
+  ] as const) {
+    assert.match(oneLine(sentence, number, value), /sign that the text does not state plainly/, sentence);
+  }
+  assert.equal(oneLine("The balance is -5 after.", "-5"), "");
+  assert.equal(oneLine("The balance is \u22125 after.", "\u22125", "-5"), "");
+  assert.equal(oneLine("The balance is $5.00 after.", "5.00"), "");
+
+  // Characters that are not seen, a mark on a letter that is its own character, text that is not well formed.
+  assert.match(oneLine("After a purchase the balance is n\u200bot 100."), /characters that are not seen/);
+  assert.match(oneLine("The balance is \u00ad5 after.", "\u00ad5", "-5"), /characters that are not seen/);
+  assert.match(oneLine("\ufeffThe balance is 100."), /characters that are not seen/);
+  assert.match(oneLine("Le solde est de 100 apre\u0300s un achat."), /outside the English alphabet/);
+  assert.match(criteriaProblems(binding({}), "The balance is 100\ud800.\n").join("\n"), /not well-formed/);
 
   // A refused binding is not carried out: nothing is asked of the application.
   const { baseUrl, server, ledger } = await app({});

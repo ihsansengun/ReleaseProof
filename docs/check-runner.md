@@ -15,14 +15,29 @@ the runner, and no source file writes a trusted result.
 Given a browser, the target's address, a run id, a binding and the text of
 the criteria snapshot the binding is for:
 
-0. Refuses the binding if it is not for that text (`criteriaProblems`): the
-   text is another revision than the binding names; the quote is not whole
-   lines of it; an expected value taken from the quote is not at exactly one
-   whole number, as the engine's own reader of quoted numbers finds numbers,
-   or is not the number written there; the quote words a bound ("at least",
-   "up to") or a negation ("not", "no", "never"), since only equality can be
-   checked; the quote holds letters outside the English alphabet, since the
-   words for bounds and negations are known in English only.
+0. Refuses the binding if it is not for that text (`criteriaProblems`):
+   - the text is another revision than the binding names, or is not
+     well-formed text;
+   - the quote is not whole lines of it (a line ends at a line feed, or at a
+     carriage return a line feed follows), holds no text, or holds
+     characters that are not seen;
+   - the quote begins or ends in the middle of a sentence that runs over
+     several lines, as far as lines can tell: the line before it must end a
+     sentence, be empty or be a heading, or the quote must begin an item of
+     a list; the same at its end;
+   - an expected value taken from the quote is not at exactly one whole
+     number, as the engine's own reader of quoted numbers finds numbers, or
+     is not the number written there, or has a sign the text does not state
+     plainly (a minus read from another mark, or a minus, a currency sign or
+     brackets standing apart from the digits);
+   - the quote words anything but an equality: a bound, a comparison, a
+     range, an approximation, a symbol such as `<` or `+`, or a negation.
+     The words are looked for as the quote reads: in one case, with one
+     space wherever there is space or a line break, without marks of
+     emphasis, with every kind of apostrophe as one. The list is the
+     validator's and a wider one of the runner's own (`NOT_EQUALITY`);
+   - the quote holds letters outside the English alphabet, or with marks on
+     them, since those words are known in English only.
 1. Refuses the binding if it breaks a rule that can be told without the
    criteria text (`checkProblems`): a write with no before-and-after witness
    (the observation's own element is no witness); writes that all come
@@ -244,8 +259,22 @@ Set by the owner on 23 November 2026. None is met by this code.
   in units** ("21.60" in the text, 2160 on the page): the expected value is
   the number written in the quote, and it must be one the reading's unit can
   spell.
-- **Words for a negation are common.** A sentence with "no", "not" or
-  "never" anywhere in it cannot be bound, whatever it negates.
+- **The words that refuse a quote are common ones.** A sentence with "no",
+  "not", "never", "over", "under", "about", "around", "some", "within",
+  "between", "limit", "empty", "missing", "zero" or "from … to" anywhere in
+  it cannot be bound, whatever the word is about; nor can one with an
+  accented letter in a name. The list is wide on purpose: a wording it
+  misses lets a check compare for equality where the text says something
+  else.
+- **The list is still a list.** A bound or a negation worded in a way that
+  is not on it ("no fewer" is, "tops out at" is not) is taken for an
+  equality. What the sentence means is the approver's judgement, and the
+  approval screen is to show the quote with the lines around it.
+- **A sentence that goes on after a full stop** is not seen to go on: "The
+  balance is 100. It may be more after a refund." can be bound by its first
+  line.
+- A number that begins a line and is followed by a full stop and a space is
+  read as the number of a list item, and cannot be bound.
 - The engine's own limits (`CHECK_LIMITS`) only ever end a check as
   unverified. A check is given up five seconds past its limit even if a page
   keeps the browser busy.

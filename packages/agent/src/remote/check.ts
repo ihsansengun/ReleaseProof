@@ -102,7 +102,7 @@ export type CheckRecord = {
 type Reading = Binding["observation"];
 type BoundLocator = Reading["locator"];
 
-const CURRENCY_MARK = "(?:[$€£¥₹₩₺₽]|USD|EUR|GBP|JPY|CHF|CAD|AUD|NZD|SEK|NOK|DKK|PLN|INR)";
+const CURRENCY_MARK = "(?:[$\u20ac\u00a3\u00a5\u20b9\u20a9\u20ba\u20bd]|USD|EUR|GBP|JPY|CHF|CAD|AUD|NZD|SEK|NOK|DKK|PLN|INR)";
 const DIGITS = "(0|[1-9][0-9]{0,2}(?:,[0-9]{3})+|[1-9][0-9]*)";
 
 /**
@@ -281,28 +281,90 @@ export function checkProblems(binding: Binding): string[] {
  * plainly in another language is refused too.
  */
 export function criteriaProblems(binding: Binding, criteria: string): string[] {
+  if (typeof criteria !== "string" || LONE_HALF.test(criteria)) return ["the criteria text is not well-formed text"];
   if (sha256Hex(criteria) !== binding.snapshotSha256) return ["the criteria text is not the revision the binding is for"];
   const { start, end } = binding.quote;
   if (end > criteria.length) return ["its quote lies outside the criteria text"];
   const problems: string[] = [];
   const quote = criteria.slice(start, end);
-  // Whole lines: it begins where a line begins and ends where one ends, with nothing of a line left out.
-  if ((start > 0 && criteria[start - 1] !== "\n") || (end < criteria.length && criteria[end] !== "\n" && criteria[end] !== "\r") || quote.endsWith("\n") || quote.endsWith("\r")) problems.push("its quote is not whole lines of the criteria text");
+
+  // Whole lines: it begins where a line begins and ends where one ends, with nothing of a line left out. A line
+  // ends at a line feed, or at a carriage return that a line feed follows.
+  const endsLine = end === criteria.length || criteria[end] === "\n" || (criteria[end] === "\r" && criteria[end + 1] === "\n");
+  if ((start > 0 && criteria[start - 1] !== "\n") || !endsLine || /[\r\n]$/.test(quote)) problems.push("its quote is not whole lines of the criteria text");
   if (quote.trim() === "") problems.push("its quote holds no text");
-  const said = quote.toLowerCase();
-  if (WORDING.atLeast.test(said) || WORDING.atMost.test(said)) problems.push("its quote words a bound, and only equality can be checked");
-  if (WORDING.negation.test(said)) problems.push("its quote words a negation, and only equality can be checked");
-  if (/[^\u0000-\u007f]/u.test(quote.replace(/[^\p{L}]/gu, ""))) problems.push("its quote holds letters outside the English alphabet, and the words for bounds and negations are known in English only");
+  // Characters that are not seen could part a word, or stand where a sign is read.
+  if (UNSEEN.test(quote)) problems.push("its quote holds characters that are not seen");
+
+  // Whole sentences, as far as lines can tell: a quote that begins or ends in the middle of a sentence that runs
+  // over several lines could leave out the words that make it a bound. The line before it ends a sentence or is
+  // empty, or the quote begins an item of its own; the same at its end.
+  const lines = criteria.split("\n").map((line) => line.replace(/\r$/, ""));
+  const first = criteria.slice(0, start).split("\n").length - 1;
+  const last = criteria.slice(0, end).split("\n").length - 1;
+  const closes = (line: string) => line.trim() === "" || /^\s*#/.test(line) || /[.!?:;]["')\]*_`]*\s*$/.test(line);
+  const opens = (line: string) => /^\s*(?:[-*+]|\d+[.)]|#+|\|)\s/.test(line);
+  if (first > 0 && !closes(lines[first - 1]!) && !opens(lines[first]!)) problems.push("its quote begins in the middle of a sentence");
+  if (last < lines.length - 1 && !closes(lines[last]!) && !opens(lines[last + 1]!) && lines[last + 1]!.trim() !== "") problems.push("its quote ends in the middle of a sentence");
+
+  // Equality only. The words are looked for in the quote as it reads: in one case, with one space wherever there
+  // is space or a line break, without the marks of emphasis, and with every kind of apostrophe as one.
+  const said = quote
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u02bc\u02b9`\u00b4]/g, "'")
+    .replace(/[_*]/g, "")
+    .replace(/\s+/gu, " ");
+  if (WORDING.atLeast.test(said) || WORDING.atMost.test(said) || NOT_EQUALITY.bound.test(said)) problems.push("its quote words a bound, and only equality can be checked");
+  if (WORDING.negation.test(said) || NOT_EQUALITY.negation.test(said)) problems.push("its quote words a negation, and only equality can be checked");
+  // The words above are English. Letters of another alphabet, or with marks on them, say the quote may not be.
+  if (/[^\u0000-\u007f]/u.test(quote.normalize("NFC").replace(/[^\p{L}\p{M}]/gu, ""))) problems.push("its quote holds letters outside the English alphabet, and the words for bounds and negations are known in English only");
+
   const numbers = quotedNumbers(quote);
   const written = (span: { start: number; end: number; value: string }, what: string) => {
     const found = numbers.find((number) => number.start === span.start && number.end === span.end);
-    if (!found) problems.push(`${what} is not at one whole number of the quote, as the engine reads numbers`);
-    else if (found.text.replaceAll(",", "") !== span.value) problems.push(`${what} is not the number written at its place in the quote`);
+    if (!found) return void problems.push(`${what} is not at one whole number of the quote, as the engine reads numbers`);
+    if (found.text.replaceAll(",", "") !== span.value) problems.push(`${what} is not the number written at its place in the quote`);
+    // Its sign must be what the text says. The reader takes several marks for a minus, and takes none where
+    // something stands between the minus and the digits: neither is certain enough to rest a check on.
+    const before = quote.slice(0, span.start).replace(/[\s$\u20ac\u00a3\u00a5\u20b9\u20a9\u20ba\u20bd]+$/u, "");
+    const signRead = found.text.startsWith("-") && quote[span.start] !== "-" && quote[span.start] !== "\u2212";
+    const signLeft = DASH.test(before.slice(-1)) || (quote[span.start - 1] === "(" && quote[span.end] === ")");
+    if (signRead || signLeft) problems.push(`${what} has a sign that the text does not state plainly`);
   };
   written(binding.expected, "its expected value");
   for (const step of binding.steps) if (step.kind === "see" && step.expected.from === "quote") written(step.expected, "a condition's expected value");
   return problems;
 }
+
+/** Half of a pair with no other half: text that has no one spelling in bytes. */
+const LONE_HALF = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+/** Control characters but tab and the line breaks, and characters that are not seen or that turn the direction of reading. */
+const UNSEEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\u3164\ufeff\ufff9-\ufffb]/;
+/** Every mark the reader of quoted numbers takes for a minus. */
+const DASH = /[-\u2010-\u2015\u2212\ufe58\ufe63\uff0d\u00ad\u2043\u058a~\u2026\u2192]/;
+
+/**
+ * Wordings that are not an equality, beyond the validator's lists. Those lists
+ * confirm that a text words a bound a plan claims; here the question is the
+ * other one, whether a text might NOT be an equality, and a miss lets a check
+ * rest on the wrong comparison. So this list is wide, and refuses much that
+ * is harmless. Matched against the quote in lower case, as `criteriaProblems`
+ * prepares it.
+ */
+const NOT_EQUALITY = {
+  bound: new RegExp(
+    [
+      String.raw`(?<![a-z])(?:more than|less than|fewer than|greater than|lower than|higher than|smaller than|larger than|bigger than)(?![a-z])`,
+      String.raw`(?<![a-z])(?:under|over|below|above|beyond|within|between|exceed(?:s|ed|ing)?|limit(?:s|ed)?|cap(?:ped)?|range|atleast|atmost|upto|at-least|at-most|up-to)(?![a-z])`,
+      String.raw`(?<![a-z])(?:min|max|minimal|maximal|minimum|maximum)(?![a-z])`,
+      String.raw`(?<![a-z])(?:approximately|approx|about|around|roughly|nearly|almost|circa|some)(?![a-z])`,
+      String.raw`(?<![a-z])from(?![a-z])[^.]*(?<![a-z])(?:to|until|through)(?![a-z])`,
+      String.raw`[<>\u2264\u2265\u2260\u00b1\u2248~]|[0-9]\+`,
+    ].join("|"),
+  ),
+  negation: /(?<![a-z])(?:[a-z]+n't|neither|nor|none|nothing|nobody|nowhere|non|unless|except|excluding|zero|fails?|failed|refused?|rejects?|rejected|denied|prevents?|blocked|disabled|unable|missing|empty|unavailable)(?![a-z])/,
+} as const;
 
 // ---- the browser's isolated world ----------------------------------------------
 
