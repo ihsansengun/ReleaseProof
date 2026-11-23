@@ -392,6 +392,77 @@ test("a binding is for its criteria text: whole lines, the number written at its
   assert.equal(oneLine("The balance is \u22125 after.", "\u22125", "-5"), "");
   assert.equal(oneLine("The balance is $5.00 after.", "5.00"), "");
 
+  // What the second review found. A sign in the forms accounts are written in.
+  for (const [sentence, number] of [
+    ["The balance is ($5.00) now.", "5.00"],
+    ["The balance is ( 5.00 ) now.", "5.00"],
+    ["The balance is (5.00 USD) now.", "5.00"],
+    ["The balance is (USD 5.00) now.", "5.00"],
+    ["The balance is -USD 5.00 now.", "5.00"],
+    ["The balance is - R$ 5.00 now.", "5.00"],
+    ["The balance is -\u20aa5.00 now.", "5.00"],
+    ["The balance is 5.00- now.", "5.00"],
+    ["The balance is 5.00 CR now.", "5.00"],
+  ] as const) {
+    assert.match(oneLine(sentence, number), /sign that the text does not state plainly/, sentence);
+  }
+  for (const sentence of ["The balance is minus 5 now.", "The balance is negative 5 now.", "The account is overdrawn at 5."]) assert.match(oneLine(sentence, "5"), /words a negation/, sentence);
+  // A dash that marks an item of a list is not a sign.
+  assert.equal(said("Rewards:\n\n- 100 is the balance of a new member.\n", "- 100 is the balance of a new member.", "100"), "");
+
+  // Words listed before, slightly varied; and wordings that were not listed.
+  for (const sentence of [
+    "After a purchase the balance is at the most 100.",
+    "After a purchase the balance is at the very least 100.",
+    "After a purchase the balance is at\u2011least 100.",
+    "After a purchase the balance tops out at 100.",
+    "After a purchase the balance is as much as 100.",
+    "After a purchase the balance is 100 or so.",
+    "After a purchase the balance is 100 to 200.",
+    "After a purchase the balance is 100 \u2013 200.",
+    "After a purchase the balance is 100 or 200.",
+    "The balance goes from 1.50 to 100.",
+    "After a purchase the balance is 100 +/- 5.",
+    "After a purchase the balance is longer than 100.",
+    "The threshold is 100.",
+  ]) {
+    assert.match(oneLine(sentence), /words a bound/, JSON.stringify(sentence));
+  }
+  for (const sentence of ["After a purchase the balance isnt 100.", "After a purchase the balance isn\u2032t 100.", "The balance is anything but 100.", "The balance is 100 instead of 50.", "The balance is nonzero, 100."]) {
+    assert.match(oneLine(sentence), /words a negation/, JSON.stringify(sentence));
+  }
+  // A change, a rate or a share is not what a page shows as one number; nor is what holds only sometimes.
+  for (const sentence of ["A purchase increases the balance by 100.", "A purchase adds 100.", "The member gets 100 per purchase.", "The member gets another 100.", "The discount is 100%.", "The balance is usually 100.", "If premium, the balance is 100.", "The balance may be 100."]) {
+    assert.match(oneLine(sentence), /words a change, a rate or a condition/, JSON.stringify(sentence));
+  }
+  assert.match(oneLine("The balance is &ge; 100."), /markup that stands for a character/);
+  assert.match(oneLine("The balance is at&nbsp;least 100."), /markup that stands for a character/);
+
+  // What is said above the quote counts: its heading, the line that introduces its list, the header of its table.
+  const context = /above its quote words something other than an equality/;
+  assert.match(said("Balance after one purchase (maximum):\n- Basic: 100\n- Premium: 500\n", "- Basic: 100", "100"), context);
+  assert.match(said("| Plan | Max |\n|---|---|\n| Basic | 100 |\n", "| Basic | 100 |", "100"), context);
+  assert.match(said("## Minimum balances\n\nAfter a purchase the balance is 100.\n", "After a purchase the balance is 100.", "100"), context);
+  assert.match(said("The balance must never be:\n- Basic: 100\n", "- Basic: 100", "100"), context);
+  assert.equal(said("## Balances\n\nBalance after one purchase:\n- Basic: 100\n- Premium: 500\n", "- Basic: 100", "100"), "");
+  assert.equal(said("| Plan | Balance |\n|---|---|\n| Basic | 100 |\n", "| Basic | 100 |", "100"), "");
+  // A full stop after an abbreviation, a colon and a semicolon do not end a sentence.
+  assert.match(said("After a purchase the balance is max.\n100 for a basic account.\n", "100 for a basic account.", "100"), /begins in the middle of a sentence/);
+  assert.match(said("The balance is 100;\nmore for a premium account.\n", "The balance is 100;", "100"), /ends in the middle of a sentence/);
+  assert.match(said("Note the following:\nthe balance is 100.\n", "the balance is 100.", "100"), /begins in the middle of a sentence/);
+  // What does end one: a question mark, an exclamation mark, a full stop inside quotes or emphasis; and a heading.
+  for (const prior of ["Is it shown?", "It is shown!", "He said \"shown.\"", "It is **shown.**", "# Balance"]) assert.equal(said(`${prior}\nThe balance is 100.\n`, "The balance is 100.", "100"), "", prior);
+  // An item of a list is whole even after a line that does not end a sentence.
+  assert.equal(said("Balances\n- Basic: 100\n", "- Basic: 100", "100"), "");
+  assert.match(said("Balances\nBasic: 100\n", "Basic: 100", "100"), /begins in the middle of a sentence/);
+
+  // Characters that are not seen, in any plane; a blank that is not space.
+  assert.match(oneLine("After a purchase the balance is n\u{e0061}ot 100."), /characters that are not seen/);
+  assert.match(oneLine("After a purchase the balance is at\u2800least 100."), /characters that are not seen/);
+  // A picture with its selector is not a letter of another alphabet; a mark that does not compose is.
+  assert.equal(oneLine("The balance is 100 \u2714\ufe0f."), "");
+  assert.match(oneLine("The balance is 100 x\u0336."), /outside the English alphabet/);
+
   // Characters that are not seen, a mark on a letter that is its own character, text that is not well formed.
   assert.match(oneLine("After a purchase the balance is n\u200bot 100."), /characters that are not seen/);
   assert.match(oneLine("The balance is \u00ad5 after.", "\u00ad5", "-5"), /characters that are not seen/);

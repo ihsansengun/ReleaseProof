@@ -23,21 +23,38 @@ the criteria snapshot the binding is for:
      characters that are not seen;
    - the quote begins or ends in the middle of a sentence that runs over
      several lines, as far as lines can tell: the line before it must end a
-     sentence, be empty or be a heading, or the quote must begin an item of
-     a list; the same at its end;
+     sentence (with a full stop, a question mark or an exclamation mark, not
+     after an abbreviation), be empty or be a heading, or the quote must
+     begin an item of a list, a heading or a row of a table; the same at
+     its end;
    - an expected value taken from the quote is not at exactly one whole
      number, as the engine's own reader of quoted numbers finds numbers, or
      is not the number written there, or has a sign the text does not state
-     plainly (a minus read from another mark, or a minus, a currency sign or
-     brackets standing apart from the digits);
-   - the quote words anything but an equality: a bound, a comparison, a
-     range, an approximation, a symbol such as `<` or `+`, or a negation.
-     The words are looked for as the quote reads: in one case, with one
-     space wherever there is space or a line break, without marks of
-     emphasis, with every kind of apostrophe as one. The list is the
-     validator's and a wider one of the runner's own (`NOT_EQUALITY`);
+     plainly (a minus read from another mark; a minus, brackets, a trailing
+     minus or "CR" with a currency sign or code between it and the digits);
+   - the quote holds markup that stands for a character (`&ge;`);
+   - the quote words anything but an equality with what is shown: a bound,
+     a comparison, a range, an approximation, a symbol such as `<` or `+`;
+     a negation, or a sign written as a word; a change, a rate, a share or a
+     condition ("increases by", "per", "%", "if", "usually"). The words are
+     looked for as the quote reads: in one case, with one space wherever
+     there is space or a line break, without marks of emphasis, with every
+     kind of apostrophe and of dash as one. The list is the validator's and
+     a wider one of the runner's own (`NOT_EQUALITY`);
+   - the heading the quote stands under, the line that introduces the list
+     it is an item of, or the header of the table it is a row of words any
+     of those;
    - the quote holds letters outside the English alphabet, or with marks on
      them, since those words are known in English only.
+
+   **These wording rules are a second check, not what says a requirement
+   is an equality.** No list of words can tell what a sentence means. By
+   the owner's decision of 23 November 2026 the next version of the binding
+   format carries the comparison as an explicit, signed field, shown to the
+   approver in words beside the quote before signing; it starts with exact
+   equality only, and anything unsupported, contradictory or ambiguous
+   stays unverified. Until that exists, what the quote means rests on this
+   list, and that is one more reason nothing here is used by a run.
 1. Refuses the binding if it breaks a rule that can be told without the
    criteria text (`checkProblems`): a write with no before-and-after witness
    (the observation's own element is no witness); writes that all come
@@ -261,18 +278,28 @@ Set by the owner on 23 November 2026. None is met by this code.
   spell.
 - **The words that refuse a quote are common ones.** A sentence with "no",
   "not", "never", "over", "under", "about", "around", "some", "within",
-  "between", "limit", "empty", "missing", "zero" or "from … to" anywhere in
-  it cannot be bound, whatever the word is about; nor can one with an
-  accented letter in a name. The list is wide on purpose: a wording it
-  misses lets a check compare for equality where the text says something
-  else.
+  "between", "limit", "empty", "missing", "zero", "by", "per", "each",
+  "every", "if", "may", "more", "less" or "from … to" anywhere in it cannot
+  be bound, whatever the word is about; nor can one with an accented letter
+  in a name, with `>` in it (a block quote, an arrow), or struck through.
+- **Common ways of writing criteria cannot be bound.** One requirement to a
+  line without full stops, and lines of "Given … When … Then …", are
+  refused as the middle of a sentence; so is a line after a bold label or
+  after a line that ends with a bracket; so are lists marked with letters
+  or bullets other than `-`, `*`, `+` and numbers, and tables written
+  without spaces. These are refused because a line break alone does not say
+  where a sentence ends.
 - **The list is still a list.** A bound or a negation worded in a way that
   is not on it ("no fewer" is, "tops out at" is not) is taken for an
   equality. What the sentence means is the approver's judgement, and the
   approval screen is to show the quote with the lines around it.
 - **A sentence that goes on after a full stop** is not seen to go on: "The
   balance is 100. It may be more after a refund." can be bound by its first
-  line.
+  line. Neither is a line that carries on a sentence and happens to begin
+  like an item of a list, or what a paragraph further up says about the
+  quote.
+- A word broken over a line with a hyphen ("at le-" and "ast") is not put
+  together again.
 - A number that begins a line and is followed by a full stop and a space is
   read as the number of a list item, and cannot be bound.
 - The engine's own limits (`CHECK_LIMITS`) only ever end a check as

@@ -294,7 +294,9 @@ export function criteriaProblems(binding: Binding, criteria: string): string[] {
   if ((start > 0 && criteria[start - 1] !== "\n") || !endsLine || /[\r\n]$/.test(quote)) problems.push("its quote is not whole lines of the criteria text");
   if (quote.trim() === "") problems.push("its quote holds no text");
   // Characters that are not seen could part a word, or stand where a sign is read.
-  if (UNSEEN.test(quote)) problems.push("its quote holds characters that are not seen");
+  if (UNSEEN.test(quote.replace(/[\t\n\r]/g, ""))) problems.push("its quote holds characters that are not seen");
+  // Markup that stands for a character ("&ge;", "&nbsp;") is not read as that character here.
+  if (/&(?:#[0-9a-z]+|[a-z][a-z0-9]*);/i.test(quote)) problems.push("its quote holds markup that stands for a character");
 
   // Whole sentences, as far as lines can tell: a quote that begins or ends in the middle of a sentence that runs
   // over several lines could leave out the words that make it a bound. The line before it ends a sentence or is
@@ -302,23 +304,46 @@ export function criteriaProblems(binding: Binding, criteria: string): string[] {
   const lines = criteria.split("\n").map((line) => line.replace(/\r$/, ""));
   const first = criteria.slice(0, start).split("\n").length - 1;
   const last = criteria.slice(0, end).split("\n").length - 1;
-  const closes = (line: string) => line.trim() === "" || /^\s*#/.test(line) || /[.!?:;]["')\]*_`]*\s*$/.test(line);
+  // A full stop after an abbreviation does not end a sentence, and neither does a colon or a semicolon.
+  const closes = (line: string) => line.trim() === "" || /^\s*#/.test(line) || (/[.!?]["')\]*_`]*\s*$/.test(line) && !/(?<![a-z])(?:e\.g|i\.e|max|min|approx|ca|etc|vs|no|nr|incl|excl)\.["')\]*_`]*\s*$/i.test(line));
   const opens = (line: string) => /^\s*(?:[-*+]|\d+[.)]|#+|\|)\s/.test(line);
   if (first > 0 && !closes(lines[first - 1]!) && !opens(lines[first]!)) problems.push("its quote begins in the middle of a sentence");
   if (last < lines.length - 1 && !closes(lines[last]!) && !opens(lines[last + 1]!) && lines[last + 1]!.trim() !== "") problems.push("its quote ends in the middle of a sentence");
 
   // Equality only. The words are looked for in the quote as it reads: in one case, with one space wherever there
   // is space or a line break, without the marks of emphasis, and with every kind of apostrophe as one.
-  const said = quote
-    .normalize("NFC")
-    .toLowerCase()
-    .replace(/[\u2018\u2019\u02bc\u02b9`\u00b4]/g, "'")
-    .replace(/[_*]/g, "")
-    .replace(/\s+/gu, " ");
-  if (WORDING.atLeast.test(said) || WORDING.atMost.test(said) || NOT_EQUALITY.bound.test(said)) problems.push("its quote words a bound, and only equality can be checked");
-  if (WORDING.negation.test(said) || NOT_EQUALITY.negation.test(said)) problems.push("its quote words a negation, and only equality can be checked");
+  const asRead = (text: string) =>
+    text
+      .normalize("NFC")
+      .toLowerCase()
+      .replace(/[\u2018\u2019\u02bc\u02b9\u0060\u00b4\u2032\uff07]/g, "'")
+      .replace(new RegExp(DASH.source.replace("~", ""), "g"), "-")
+      .replace(/[_*]/g, "")
+      .replace(/\s+/gu, " ");
+  const wording = (text: string): string[] => {
+    const said = asRead(text);
+    const found: string[] = [];
+    if (WORDING.atLeast.test(said) || WORDING.atMost.test(said) || NOT_EQUALITY.bound.test(said)) found.push("a bound");
+    if (WORDING.negation.test(said) || NOT_EQUALITY.negation.test(said)) found.push("a negation");
+    if (NOT_EQUALITY.change.test(said)) found.push("a change, a rate or a condition");
+    return found;
+  };
+  for (const kind of wording(quote)) problems.push(`its quote words ${kind}, and only equality with what is shown can be checked`);
+  // What is said about the quote from above it counts as said in it: the heading it stands under, the line that
+  // introduces the list it is an item of, and the header of the table it is a row of.
+  const above: string[] = [];
+  for (let at = first - 1; at >= 0; at--) {
+    if (/^\s*#/.test(lines[at]!)) {
+      above.push(lines[at]!);
+      break;
+    }
+  }
+  for (let at = first - 1; at >= 0 && lines[at]!.trim() !== ""; at--) {
+    if (/:\s*$/.test(lines[at]!) || (/^\s*\|/.test(lines[first]!) && /^\s*\|/.test(lines[at]!))) above.push(lines[at]!);
+  }
+  if (above.some((line) => wording(line).length > 0)) problems.push("the heading, the introducing line or the table header above its quote words something other than an equality");
   // The words above are English. Letters of another alphabet, or with marks on them, say the quote may not be.
-  if (/[^\u0000-\u007f]/u.test(quote.normalize("NFC").replace(/[^\p{L}\p{M}]/gu, ""))) problems.push("its quote holds letters outside the English alphabet, and the words for bounds and negations are known in English only");
+  if (/[^\u0000-\u007f]/u.test(quote.normalize("NFC").replace(/[^\p{L}\p{M}]|[\ufe0e\ufe0f]/gu, ""))) problems.push("its quote holds letters outside the English alphabet, and the words for bounds and negations are known in English only");
 
   const numbers = quotedNumbers(quote);
   const written = (span: { start: number; end: number; value: string }, what: string) => {
@@ -327,9 +352,14 @@ export function criteriaProblems(binding: Binding, criteria: string): string[] {
     if (found.text.replaceAll(",", "") !== span.value) problems.push(`${what} is not the number written at its place in the quote`);
     // Its sign must be what the text says. The reader takes several marks for a minus, and takes none where
     // something stands between the minus and the digits: neither is certain enough to rest a check on.
-    const before = quote.slice(0, span.start).replace(/[\s$\u20ac\u00a3\u00a5\u20b9\u20a9\u20ba\u20bd]+$/u, "");
+    // What may stand between a sign and the digits, or after them: space, a currency sign, a currency code.
+    const money = String.raw`(?:[\s\p{Sc}]|[A-Z]{1,3}\$|(?<![A-Za-z])[A-Z]{3}(?![A-Za-z]))*`;
+    const before = quote.slice(0, span.start).replace(new RegExp(`${money}$`, "u"), "");
+    const after = quote.slice(span.end).replace(new RegExp(`^${money}`, "u"), "");
     const signRead = found.text.startsWith("-") && quote[span.start] !== "-" && quote[span.start] !== "\u2212";
-    const signLeft = DASH.test(before.slice(-1)) || (quote[span.start - 1] === "(" && quote[span.end] === ")");
+    // A dash that only marks an item of a list, at the start of its line, is not a sign.
+    const marksItem = /(?:^|\n)[ \t]*-$/.test(before);
+    const signLeft = (DASH.test(before.slice(-1)) && !marksItem) || before.endsWith("(") || DASH.test(after.slice(0, 1)) || /^(?:cr|dr)(?![a-z])/i.test(after);
     if (signRead || signLeft) problems.push(`${what} has a sign that the text does not state plainly`);
   };
   written(binding.expected, "its expected value");
@@ -339,8 +369,8 @@ export function criteriaProblems(binding: Binding, criteria: string): string[] {
 
 /** Half of a pair with no other half: text that has no one spelling in bytes. */
 const LONE_HALF = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
-/** Control characters but tab and the line breaks, and characters that are not seen or that turn the direction of reading. */
-const UNSEEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\u3164\ufeff\ufff9-\ufffb]/;
+/** Control and format characters, whatever plane they are in, and blanks that are not space. Asked of a text with tabs and line breaks taken out. */
+const UNSEEN = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Zl}\p{Zp}\u034f\u115f\u1160\u2800\u3164]/u;
 /** Every mark the reader of quoted numbers takes for a minus. */
 const DASH = /[-\u2010-\u2015\u2212\ufe58\ufe63\uff0d\u00ad\u2043\u058a~\u2026\u2192]/;
 
@@ -355,15 +385,33 @@ const DASH = /[-\u2010-\u2015\u2212\ufe58\ufe63\uff0d\u00ad\u2043\u058a~\u2026\u
 const NOT_EQUALITY = {
   bound: new RegExp(
     [
-      String.raw`(?<![a-z])(?:more than|less than|fewer than|greater than|lower than|higher than|smaller than|larger than|bigger than)(?![a-z])`,
-      String.raw`(?<![a-z])(?:under|over|below|above|beyond|within|between|exceed(?:s|ed|ing)?|limit(?:s|ed)?|cap(?:ped)?|range|atleast|atmost|upto|at-least|at-most|up-to)(?![a-z])`,
+      String.raw`(?<![a-z])[a-z]+er than(?![a-z])|(?<![a-z])(?:more|less|fewer|higher|lower|greater|smaller|larger)(?![a-z])`,
+      String.raw`(?<![a-z])at the (?:very )?(?:most|least|latest|earliest)(?![a-z])|(?<![a-z])(?:as much as|as many as|and up|or so|give or take|tops out|tops)(?![a-z])`,
+      String.raw`(?<![a-z])(?:under|over|below|above|beyond|within|between|exceed(?:s|ed|ing)?|limit(?:s|ed)?|unlimited|cap(?:s|ped)?|range|until|upwards|starting|threshold|ceiling|floor|bound|tolerance|latest|earliest|atleast|atmost|upto|at-least|at-most|up-to)(?![a-z])`,
       String.raw`(?<![a-z])(?:min|max|minimal|maximal|minimum|maximum)(?![a-z])`,
-      String.raw`(?<![a-z])(?:approximately|approx|about|around|roughly|nearly|almost|circa|some)(?![a-z])`,
-      String.raw`(?<![a-z])from(?![a-z])[^.]*(?<![a-z])(?:to|until|through)(?![a-z])`,
-      String.raw`[<>\u2264\u2265\u2260\u00b1\u2248~]|[0-9]\+`,
+      String.raw`(?<![a-z])(?:approximately|approx|about|around|roughly|nearly|almost|circa|ca|some|thereabouts|either)(?![a-z])`,
+      String.raw`(?<![a-z])from(?![a-z]).*(?<![a-z])(?:to|until|through)(?![a-z])`,
+      String.raw`[0-9] ?(?:to|or|-) ?[0-9]`,
+      String.raw`[<>\u2264\u2265\u2260\u00b1\u2248~\u223c\u2243\u2272\u2273\u2a7d\u2a7e\u2266\u2267]|[0-9]\+|\+\/-`,
     ].join("|"),
   ),
-  negation: /(?<![a-z])(?:[a-z]+n't|neither|nor|none|nothing|nobody|nowhere|non|unless|except|excluding|zero|fails?|failed|refused?|rejects?|rejected|denied|prevents?|blocked|disabled|unable|missing|empty|unavailable)(?![a-z])/,
+  negation: new RegExp(
+    [
+      String.raw`(?<![a-z])(?:[a-z]+n't|isnt|arent|wasnt|werent|doesnt|dont|didnt|cant|wont|shouldnt|wouldnt|couldnt|mustnt|hasnt|havent|hadnt)(?![a-z])`,
+      String.raw`(?<![a-z])(?:neither|nor|none|nothing|nobody|nowhere|non|nonzero|unless|except|excluding|excludes?|exclusive|instead|anything but|lacks?|ceases?|stops?|hardly|barely|rarely|seldom|zero)(?![a-z])`,
+      String.raw`(?<![a-z])(?:fails?|failed|refused?|rejects?|rejected|denied|prevents?|blocked|disabled|unable|missing|empty|unavailable)(?![a-z])`,
+      // A sign that is written out as a word.
+      String.raw`(?<![a-z])(?:minus|negative|debit|credit|owed|owes|overdrawn|deficit)(?![a-z])`,
+    ].join("|"),
+  ),
+  /** A value that is a change, a rate or a share, or that holds only sometimes: not what a page shows as one number. */
+  change: new RegExp(
+    [
+      String.raw`(?<![a-z])(?:by|adds?|added|plus|per|each|every|extra|additional|another|doubles?|doubled|half|twice|times|increases?|increased|decreases?|decreased|reduces?|reduced|raises?|raised|drops?|dropped|grows?|gains?|loses?)(?![a-z])`,
+      String.raw`[0-9] ?%`,
+      String.raw`(?<![a-z])(?:if|otherwise|may|might|could|usually|typically|sometimes|optionally|default)(?![a-z])`,
+    ].join("|"),
+  ),
 } as const;
 
 // ---- the browser's isolated world ----------------------------------------------
