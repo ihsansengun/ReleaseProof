@@ -185,7 +185,9 @@ Set by the owner on 23 November 2026. None is met by this code.
   request as it goes that nobody sees: the witness rules are what stands
   against that.
 - An answer that sends the browser to another host is seen, and stops the
-  check, but the request to that host has then been sent. Keeping a worker
+  check, but the request to that host has then been sent. The reason given
+  is `redirect-to-other-host`, or `request-failed` when the browser tells
+  of the failed request without saying where it had been sent on. Keeping a worker
   from other hosts is a matter for the network it runs in, not for this
   code.
 - **A number drawn beside the element** (by a sibling, or by generated text

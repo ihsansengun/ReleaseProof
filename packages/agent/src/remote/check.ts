@@ -923,10 +923,13 @@ async function watchRequests(context: BrowserContext, origin: string, binding: B
     void request
       .response()
       .catch(() => null)
-      .then((answer) => {
-        const onward = request.redirectedTo();
-        const elsewhere = (answer !== null && sentElsewhere(answer)) || (onward !== null && !toTarget(onward));
-        watch.wrong ??= elsewhere ? "redirect-to-other-host" : "request-failed";
+      .then(async (answer) => {
+        // The browser library may also tell of the failure before it has tied the request to where it was sent
+        // on. A moment is given for that. If it never does, the reason given is the plainer one: either way the
+        // check stops.
+        const sentOn = () => (answer !== null && sentElsewhere(answer)) || (request.redirectedTo() !== null && !toTarget(request.redirectedTo()!));
+        for (let waited = 0; waited < CHECK_LIMITS.quietMs && !sentOn() && watch.wrong === undefined; waited += 25) await sleep(25);
+        watch.wrong ??= sentOn() ? "redirect-to-other-host" : "request-failed";
         watch.inFlight.delete(request);
       });
   });

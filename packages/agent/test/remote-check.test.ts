@@ -692,7 +692,13 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     const other = await app({ "GET /balance": () => ({ status: 503, body: "" }) });
     try {
       const sent: Routes = { "GET /account": (ledger) => html(`<p data-testid="balance">0</p><p data-testid="count">${ledger.count}</p><script>fetch("/data").then(() => {}).catch(() => {})</script>`), "GET /data": () => ({ status: 302, headers: { location: `${other.baseUrl}/balance` } }) };
-      unverified((await check(sent)).record, "redirect-to-other-host");
+      // The check stops. Its reason is the redirect, unless the browser tells of the failed request without ever
+      // saying where it had been sent on, as it sometimes does: then it is a failed request, which it also is.
+      const { record } = await check(sent);
+      assert.equal(record.outcome, "unverified");
+      assert.ok(record.reason === "redirect-to-other-host" || record.reason === "request-failed", record.reason);
+      // An answer that sends the bound page itself elsewhere is seen as the answer it is.
+      unverified((await check({ "GET /account": () => ({ status: 302, headers: { location: `${other.baseUrl}/balance` } }) })).record, "redirect-to-other-host");
     } finally {
       other.server.closeAllConnections();
       await new Promise((resolve) => other.server.close(resolve));
