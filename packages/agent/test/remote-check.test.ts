@@ -633,6 +633,13 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
       ["squeezed sideways", `<p data-testid="balance" style="font-size:30px;transform:scaleX(0.06);transform-origin:left">100</p>`],
       ["digits on top of each other", `<p data-testid="balance" style="letter-spacing:-0.58em">100</p>`],
       ["blended away", `<p data-testid="balance" style="mix-blend-mode:difference;color:black">100</p>`],
+      // What the third review found.
+      ["something of its own painted over its digits", `<p data-testid="balance" style="position:relative;margin:0">100<span style="position:absolute;left:0;top:0;width:2ch;height:100%;background:white"></span></p>`],
+      ["a cover of its own, as while loading", `<p data-testid="balance" style="position:relative;margin:0">100<span style="position:absolute;inset:0;background:#ddd"></span></p>`],
+      ["a second copy drawn as a shadow", `<p data-testid="balance" style="text-shadow:3ch 0 0 #000">100</p>`],
+      ["a second copy drawn as a reflection", `<p data-testid="balance" style="display:inline-block;-webkit-box-reflect:right">100</p>`],
+      ["set large and scaled to nothing", `<p data-testid="balance" style="font-size:20px;transform:scale(0.3);transform-origin:left top">100</p>`],
+      ["a strip over part of a digit", `<p data-testid="balance" style="margin:0;font:40px monospace">100</p><div style="position:fixed;left:26px;top:0;width:8px;height:50px;background:white"></div>`],
       ["a small thing over one digit", `<p data-testid="balance" style="margin:0;font:40px monospace">100</p><div style="position:fixed;left:24px;top:0;width:24px;height:50px;background:white;font:40px monospace">9</div>`],
     ];
     for (const [name, body] of [...cases, ...more]) {
@@ -695,7 +702,7 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
       `document.addEventListener("visibilitychange", () => navigator.sendBeacon("/hit", "x"))`,
       `addEventListener("pagehide", () => fetch("/hit", { method: "POST", keepalive: true }))`,
       `addEventListener("unload", () => navigator.sendBeacon("/hit", "x"))`,
-      `window.onbeforeunload = () => { navigator.sendBeacon("/hit", "x") }`,
+      `window.onpagehide = () => { navigator.sendBeacon("/hit", "x") }`,
     ]) {
       for (const frame of [false, true]) {
         const { record, ledger } = await check(leaving(script, frame));
@@ -707,8 +714,14 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
     const commitOnLeave = await check({ "GET /buy": () => html(`<button onclick="fetch('/purchase', { method: 'POST' })">Buy</button><script>addEventListener("pagehide", () => navigator.sendBeacon("/commit"))</script>`), "POST /purchase": (ledger) => ((ledger.count += 1), json({})), "POST /commit": (ledger) => ((ledger.balance += 100), json({})) });
     unverified(commitOnLeave.record, "leave-script-suppressed");
     assert.equal(commitOnLeave.record.contradictionSeen, true);
+    // A request put by for the browser to send when the page is gone: there is no such thing to be had.
+    const deferred = await check({ "GET /account": (ledger) => account(ledger, `<script>if (window.fetchLater) fetchLater("/hit", { method: "POST", activateAfter: 600000 })</script>`), "POST /hit": () => json({}) });
+    assert.equal(deferred.record.outcome, "verified");
+    assert.deepEqual(deferred.ledger.requests.filter((line) => line.startsWith("POST /hit")), []);
+    // A frame the browser keeps apart cannot be asked what it has registered: no verdict.
+    assert.equal((await check({ "GET /account": (ledger) => account(ledger, `<iframe sandbox="allow-scripts" srcdoc="<script>addEventListener('pagehide', () => {})</script>"></iframe>`) })).record.outcome, "unverified");
     // Listeners for other things are nobody's business.
-    assert.equal((await check({ "GET /account": (ledger) => account(ledger, `<script>addEventListener("click", () => {}); addEventListener("pageshow", () => {})</script>`) })).record.outcome, "verified");
+    assert.equal((await check({ "GET /account": (ledger) => account(ledger, `<script>addEventListener("click", () => {}); addEventListener("pageshow", () => {}); addEventListener("beforeunload", () => {})</script>`) })).record.outcome, "verified");
     const shared = await check(leaving(`new SharedWorker(URL.createObjectURL(new Blob(['fetch("' + location.origin + '/hit", { method: "POST" })'], { type: "text/javascript" })))`));
     assert.equal(shared.record.outcome, "unverified");
     assert.deepEqual(shared.ledger.requests.filter((line) => line.startsWith("POST /hit")), [], "no request the engine could not see was sent");
@@ -717,11 +730,18 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
   test("a check does not type a value it expects to read, in any obvious spelling", async () => {
     const typing = (text: string, change: Partial<Draft> = {}) =>
       binding({ steps: [see("count", "0"), see("balance", "0"), { kind: "open", path: "/buy" }, { kind: "fill", path: "/buy", locator: testid("field"), value: { from: "literal", text } }, BUY[1], see("count", "1")], ...change });
-    for (const text of ["100", "1", "0", "amount 100", "1,00", "100.00", "-100", "1.00"]) assert.match(checkProblems(typing(text)).join("\n"), /types a value that the check expects to read/, text);
+    for (const text of ["100", "1", "amount 100", "1,00", "100.00", "-100", "1.00", "0100", "100px", "x100", "+100"]) assert.match(checkProblems(typing(text)).join("\n"), /types a value that the check expects to read/, text);
+    // Digits of another script are refused as such.
+    for (const text of ["\uff11\uff10\uff10", "\u0661\u0660\u0660"]) assert.match(checkProblems(typing(text)).join("\n"), /digits that are not the plain ones/, text);
+    // Typed in two steps and put together by the application.
+    const inTwo = binding({ steps: [see("count", "0"), see("balance", "0"), { kind: "open", path: "/buy" }, { kind: "fill", path: "/buy", locator: testid("a"), value: { from: "literal", text: "10" } }, { kind: "fill", path: "/buy", locator: testid("b"), value: { from: "literal", text: "0" } }, BUY[1], see("count", "1")] });
+    assert.match(checkProblems(inTwo).join("\n"), /types a value that the check expects to read/);
+    // A starting state that was read before the value was typed is not read after it: nought may be typed.
+    assert.deepEqual(checkProblems(typing("0")), []);
     // 24.99 expected: typed as hundredths, or with a sign, it is the same amount.
     const priced = { observation: reading("/account", "price", "currency-units", "amount"), expected: { start: 0, end: 5, value: "24.99" } } as const;
     for (const text of ["24.99", "2499", "$24.99", "24"]) assert.match(checkProblems(typing(text, priced)).join("\n"), /types a value that the check expects to read/, text);
-    for (const text of ["7", "blue", "1000", "2024-01-05", "10"]) assert.deepEqual(checkProblems(typing(text)), [], text);
+    for (const text of ["7", "blue", "1000", "2024-12-25", "10"]) assert.deepEqual(checkProblems(typing(text)), [], text);
     unverified((await check({}, typing("100"))).record, "binding-refused");
     // A value from a fixture's answer is only known when the check runs: the same rule, then.
     const fromFixture = binding({

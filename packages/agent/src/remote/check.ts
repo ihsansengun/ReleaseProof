@@ -148,7 +148,7 @@ export function expectedInUnit(value: string, unit: Reading["unit"]): string | u
  * its unit spells it, without its sign, its whole part alone, and the same
  * amount counted in hundredths or in units.
  */
-function holdsValue(text: string, value: string, spelled: string | undefined, apart = false): boolean {
+function holdsValue(text: string, value: string, spelled: string | undefined, typed?: "written" | "made"): boolean {
   const spellings = new Set<string>();
   for (const one of [value, spelled ?? value]) {
     const plain = one.replace(/^-/, "");
@@ -159,12 +159,15 @@ function holdsValue(text: string, value: string, spelled: string | undefined, ap
     if (part.length === 0 && whole.length > 0) spellings.add(`${whole.length > 2 ? whole.slice(0, -2) : "0"}.${whole.slice(-2).padStart(2, "0")}`);
   }
   spellings.delete("");
-  if (!apart) return [...spellings].some((form) => mentions(text, form));
-  // In a text that is typed, every number in it is taken for itself, however many noughts are written after it:
-  // "100.00" is 100. A digit inside a word is part of the word.
-  const bare = (number: string) => (number.includes(".") ? number.replace(/0+$/, "").replace(/\.$/, "") : number);
-  const typed = new Set((text.replaceAll(",", "").match(/(?<![A-Za-z0-9.])[0-9]+(?:\.[0-9]+)?(?![A-Za-z0-9])/g) ?? []).map(bare));
-  return [...spellings].some((form) => typed.has(bare(form)));
+  if (typed === undefined) return [...spellings].some((form) => mentions(text, form));
+  // In a text that is typed, every run of digits is taken for a number, inside a word too, however many noughts
+  // are written before or after it: "0100", "100.00" and "100px" are 100.
+  const bare = (number: string) => (number.includes(".") ? number.replace(/0+$/, "").replace(/\.$/, "") : number).replace(/^0+(?=[0-9])/, "");
+  // A value the application made itself (a name, a code) is not written to be a number: there, a digit inside a
+  // word is part of the word, and only a number standing by itself is taken for one.
+  const runs = typed === "written" ? /[0-9]+(?:\.[0-9]+)?/g : /(?<![A-Za-z0-9.])[0-9]+(?:\.[0-9]+)?(?![A-Za-z0-9])/g;
+  const numbers = new Set((text.replaceAll(",", "").match(runs) ?? []).map(bare));
+  return [...spellings].some((form) => numbers.has(bare(form)));
 }
 
 /** Whether a text holds a number as a whole: not as part of a longer one. */
@@ -201,9 +204,17 @@ export function checkProblems(binding: Binding): string[] {
   if (steps.some((step, index) => step.kind === "see" && named(step.reading.locator, step.expected.value, seen[index]))) problems.push("a condition's locator contains its expected value");
 
   // A check may not type a value it expects to read: what it read could be what it typed, kept by the page.
-  const expectedOnes: [string, string | undefined][] = [[binding.expected.value, finalExpected], ...steps.flatMap((step, index): [string, string | undefined][] => (step.kind === "see" ? [[step.expected.value, seen[index]]] : []))];
-  if (steps.some((step) => step.kind === "fill" && step.value.from === "literal" && expectedOnes.some(([value, spelled]) => holdsValue((step.value as { text: string }).text, value, spelled, true)))) {
-    problems.push("a step types a value that the check expects to read");
+  // What is read after it is what counts: the final value, and every condition that comes later. What is typed in
+  // several steps is also taken together, as an application may put it together.
+  let typedSoFar = "";
+  for (const [at, step] of steps.entries()) {
+    if (step.kind !== "fill" || step.value.from !== "literal") continue;
+    const text = step.value.text;
+    // Digits of another script than the plain ones: a page would read them as numbers, and this rule would not.
+    if (/\p{Nd}/u.test(text.replace(/[0-9]/g, ""))) problems.push("a step types digits that are not the plain ones");
+    typedSoFar += text;
+    const readLater: [string, string | undefined][] = [[binding.expected.value, finalExpected], ...steps.flatMap((later, index): [string, string | undefined][] => (index > at && later.kind === "see" ? [[later.expected.value, seen[index]]] : []))];
+    if (readLater.some(([value, spelled]) => holdsValue(text, value, spelled, "written") || holdsValue(typedSoFar, value, spelled, "written"))) problems.push("a step types a value that the check expects to read");
   }
 
   // What follows what. A fill and an act work in the page of the open before them.
@@ -300,7 +311,7 @@ function registerEngine(): Promise<void> {
 }
 
 /** The smallest text the engine takes as legible, and the least opacity, with all ancestors. */
-const LEGIBLE = { glyphHeightPx: 6, glyphWidthPx: 2, opacity: 0.9, mostLetters: 40 } as const;
+const LEGIBLE = { glyphHeightPx: 6, glyphWidthPx: 2, fontPx: 8, opacity: 0.9, mostLetters: 40 } as const;
 
 /**
  * Finds a node of the main document by its place. Runs in an isolated world of
@@ -330,6 +341,7 @@ const NODE_AT = `function (path) {
  * and, for a reading, the centre of every box of text.
  */
 const FACTS_OF = `function (wantText) {
+  ${PATH_OF}
   const out = { displayed: false, value: false, secret: false, text: "", places: [] };
   const el = this;
   if (!(el instanceof Element)) return out;
@@ -342,6 +354,7 @@ const FACTS_OF = `function (wantText) {
       const style = getComputedStyle(at);
       if (style.display === "none" || style.contentVisibility === "hidden") return true;
       if (style.filter !== "none" || style.clipPath !== "none" || style.mixBlendMode !== "normal") return true;
+      if ((style.webkitBoxReflect || "none") !== "none") return true;
       if ((style.maskImage || style.webkitMaskImage || "none") !== "none") return true;
       opacity *= Number(style.opacity);
     }
@@ -353,7 +366,7 @@ const FACTS_OF = `function (wantText) {
   if (getComputedStyle(el).visibility !== "visible" || unseen(el)) return out;
   const centre = [box.left + box.width / 2, box.top + box.height / 2];
   if (!inView(centre[0], centre[1])) return out;
-  out.places.push(centre);
+  out.places.push([centre[0], centre[1], null]);
   out.value = !el.closest("h1, h2, h3, h4, h5, h6, label, legend, caption, th, dt, summary, option, [role=heading]") && !el.closest("input, textarea, select, button, [contenteditable]");
   out.secret = el.matches(${JSON.stringify(SECRET_FIELDS)});
   if (wantText) {
@@ -388,7 +401,11 @@ const FACTS_OF = `function (wantText) {
           if (alpha(shown.color) < ${LEGIBLE.opacity} || alpha(shown.webkitTextFillColor || shown.color) < ${LEGIBLE.opacity}) return out;
         }
       }
-      if ((style.webkitTextSecurity || "none") !== "none") return out;
+      if ((style.webkitTextSecurity || "none") !== "none" || style.textShadow !== "none") return out;
+      // Drawn at the size it is set in, or near it: text set large and scaled down to nothing is not legible.
+      const scale = holder.offsetHeight > 0 ? holder.getBoundingClientRect().height / holder.offsetHeight : 1;
+      if (!(scale >= 0.5) || !(parseFloat(style.fontSize) * scale >= ${LEGIBLE.fontPx})) return out;
+      const where = pathOf(holder);
       // Letter by letter: each has one box, wide and high enough to be read, in the viewport, and to the right of
       // the one before it or on a line below. Text drawn in another sequence than it is written is not what is read.
       for (let index = 0; index < node.data.length; index++) {
@@ -406,7 +423,8 @@ const FACTS_OF = `function (wantText) {
           if (sameLine ? rect.left < last.right - 1 : rect.top < last.bottom - 1) return out;
         }
         last = rect;
-        out.places.push([rect.left + rect.width / 2, rect.top + rect.height / 2]);
+        // At three places across the letter, what is found must be the text's own element: nothing over any part of it.
+        for (const part of [0.25, 0.5, 0.75]) out.places.push([rect.left + rect.width * part, rect.top + rect.height / 2, where]);
       }
     }
     if (drawn === 0) return out;
@@ -414,6 +432,13 @@ const FACTS_OF = `function (wantText) {
   }
   out.displayed = true;
   return out;
+}`;
+
+/** Where the element is that a found node is, or is the text of. */
+const HOLDER_PATH = `function () {
+  ${PATH_OF}
+  const node = this.nodeType === 3 ? this.parentNode : this;
+  return node && node.ownerDocument === document ? pathOf(node) : null;
 }`;
 
 /** Whether a node the browser found at a place is the element or lies inside it, shadow trees included. */
@@ -575,7 +600,7 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
           // The same rule as for a literal, for a value only known now.
           const typed = text;
           const expectedOnes = [[binding.expected.value, expected] as const, ...binding.steps.flatMap((other) => (other.kind === "see" ? [[other.expected.value, expectedInUnit(other.expected.value, other.reading.unit)] as const] : []))];
-          if (expectedOnes.some(([value, spelled]) => holdsValue(typed, value, spelled, true))) throw new Stop("typed-value-is-expected");
+          if (expectedOnes.some(([value, spelled]) => holdsValue(typed, value, spelled, "made"))) throw new Stop("typed-value-is-expected");
         }
         await field.fill(text, { timeout: CHECK_LIMITS.actionMs }).catch(() => {
           throw new Stop("step-not-done");
@@ -841,7 +866,8 @@ async function watchRequests(context: BrowserContext, origin: string, binding: B
     void socket.close();
   });
   // A worker shared between pages sends its requests where no page's events show them. Pages are given none.
-  await context.addInitScript("delete globalThis.SharedWorker;");
+  // Nor a request that is put by for the browser to send when the page is gone.
+  await context.addInitScript("delete globalThis.SharedWorker; delete globalThis.fetchLater;");
 
   context.on("request", (request) => {
     watch.inFlight.add(request);
@@ -897,7 +923,8 @@ async function watchRequests(context: BrowserContext, origin: string, binding: B
  * is switched off first, and nothing is sent. If that cannot be done, the
  * check says nothing.
  */
-const LEAVING = new Set(["pagehide", "unload", "beforeunload", "visibilitychange", "freeze"]);
+/** What a page can register to do as it is left. (`beforeunload` is not among them: it is not run when the engine closes a page.) */
+const LEAVING = new Set(["pagehide", "unload", "visibilitychange", "freeze"]);
 
 async function closeByEngine(watch: Watch, page: Page): Promise<void> {
   if (page.isClosed()) return;
@@ -911,7 +938,8 @@ async function closeByEngine(watch: Watch, page: Page): Promise<void> {
     const worlds: number[] = [];
     session.on("Runtime.executionContextCreated", (event) => void ((event.context.auxData as { isDefault?: boolean } | undefined)?.isDefault === true && worlds.push(event.context.id)));
     await session.send("Runtime.enable");
-    if (worlds.length === 0) throw new Error("no world of the page was shown");
+    // A frame whose world is not shown here (one the browser keeps in a process of its own) cannot be asked.
+    if (worlds.length === 0 || worlds.length < page.frames().length) watch.leaveSuppressed = true;
     for (const contextId of worlds) {
       for (const expression of ["window", "document"]) {
         const { result } = await session.send("Runtime.evaluate", { expression, contextId });
@@ -986,7 +1014,7 @@ function find(page: Page, locator: BoundLocator): Locator {
   return page.getByRole(locator.role as Parameters<Page["getByRole"]>[0], { name: locator.name, exact: true, includeHidden: true });
 }
 
-type Facts = { displayed: boolean; value: boolean; secret: boolean; text: string; places: [number, number][] };
+type Facts = { displayed: boolean; value: boolean; secret: boolean; text: string; places: [number, number, string | null][] };
 type Shown = { found: Locator; facts: Facts };
 
 /**
@@ -1068,9 +1096,12 @@ async function displayed(page: Page, watch: Watch, locator: BoundLocator, deadli
     if ((await found.count()) !== 1 || (await found.locator(`${ENGINE}=is:${place}`).count()) !== 1) throw new Stop("element-not-displayed");
     if (!facts || facts.displayed !== true || !Array.isArray(facts.places) || facts.places.length === 0) throw new Stop("element-not-displayed");
     // At every place: what the browser finds there is the element or inside it. Nothing lies over the text.
-    for (const [x, y] of facts.places) {
+    // At a letter, it is the letter's own element, or the text itself: not something else inside the element, drawn over it.
+    for (const [x, y, holder] of facts.places) {
       const hit = await hitAt(x, y);
-      if (hit === undefined || (await call(element, HOLDS, [{ objectId: hit }])) !== true) throw new Stop("element-not-displayed");
+      if (hit === undefined) throw new Stop("element-not-displayed");
+      const held = holder === null ? (await call(element, HOLDS, [{ objectId: hit }])) === true : (await call(hit, HOLDER_PATH, [])) === holder;
+      if (!held) throw new Stop("element-not-displayed");
     }
     return { found, facts };
   } catch (error) {
