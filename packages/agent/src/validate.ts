@@ -166,11 +166,11 @@ export function validatePlan(
         const said = source.quote.toLowerCase();
         const bound =
           a.kind === "number_at_least"
-            ? /\b(at least|or more|minimum|no less than|not less than|or greater|or above)\b/
+            ? WORDING.atLeast
             : a.kind === "number_at_most"
-              ? /\b(at most|or less|maximum|no more than|not more than|up to|or fewer|or below)\b/
+              ? WORDING.atMost
               : a.kind === "absent"
-                ? /\b(not|no|never|without|hidden|removed|absent|cannot|can't|isn't|doesn't)\b/
+                ? WORDING.negation
                 : a.kind === "present"
                   ? /\b(shown|shows|show|displayed|displays|display|visible|appears?|present|sees?|listed|lists)\b/
                   : undefined;
@@ -306,6 +306,18 @@ export function validatePlan(
   return { plan, problems };
 }
 
+/**
+ * How an approved text words a requirement that is not an equality: a lower
+ * bound, an upper bound, a negation. English, and matched against the text in
+ * lower case. One list, used wherever the engine asks what kind of comparison
+ * a text states.
+ */
+export const WORDING = {
+  atLeast: /\b(at least|or more|minimum|no less than|not less than|or greater|or above)\b/,
+  atMost: /\b(at most|or less|maximum|no more than|not more than|up to|or fewer|or below)\b/,
+  negation: /\b(not|no|never|without|hidden|removed|absent|cannot|can't|isn't|doesn't)\b/,
+} as const;
+
 // A number as the text writes it. It ends where its digits end: "160px" states no number, and neither does a part of "1600".
 // Not a number the text states either: part of a reference ("KAN-160", "#160"), of a fraction, a range, a date or a time.
 const QUOTED_NUMBER = /(?<![\p{L}\p{N}_.,#/:]|[\p{L}\p{N}]-)-?\d+(?:,\d{3})*(?:\.\d+)?(?![\p{L}\p{N}_/:]|[.,]\d|-\d)/gu;
@@ -316,6 +328,21 @@ const unnumbered = (quote: string) =>
     .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D\u00AD\u2043\u058A~\u2026\u2192]/g, "-")
     .replace(/[\u00A0\u2007\u202F]/g, " ")
     .replace(/^[ \t]*\d+[.)][ \t]+(?=\S)/gm, "");
+
+/**
+ * The numbers a text states, each with where it stands in the text as given:
+ * `start` and `end` in UTF-16 code units. The same reader as `notQuoted`, on a
+ * copy of the text rewritten so that nothing in it moves: every character
+ * that is read as another is replaced by one of the same length, and a list
+ * marker is blanked, not removed.
+ */
+export function quotedNumbers(quote: string): { start: number; end: number; text: string }[] {
+  const still = quote
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D\u00AD\u2043\u058A~\u2026\u2192]/g, "-")
+    .replace(/[\u00A0\u2007\u202F]/g, " ")
+    .replace(/^[ \t]*\d+[.)][ \t]+(?=\S)/gm, (marker) => " ".repeat(marker.length));
+  return [...still.matchAll(QUOTED_NUMBER)].map((match) => ({ start: match.index, end: match.index + match[0].length, text: match[0] }));
+}
 
 /**
  * Says what part of an expected value the quoted text does not state, if any.

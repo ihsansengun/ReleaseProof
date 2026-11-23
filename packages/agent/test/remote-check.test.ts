@@ -11,7 +11,9 @@ import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium, type Browser } from "playwright";
 import { Binding } from "../src/remote/binding.ts";
-import { carryOutCheck, checkProblems, expectedInUnit, fixtureKey, readStrictNumber, UNVERIFIED_REASONS, type CheckRecord } from "../src/remote/check.ts";
+import { carryOutCheck, checkProblems, criteriaProblems, expectedInUnit, fixtureKey, readStrictNumber, UNVERIFIED_REASONS, type CheckRecord } from "../src/remote/check.ts";
+import { sha256Hex } from "../src/remote/request.ts";
+import { notQuoted, quotedNumbers } from "../src/validate.ts";
 
 // ---- a stand-in application ----------------------------------------------------
 
@@ -89,6 +91,18 @@ function binding(change: Partial<Draft> = {}): Binding {
   return Binding.parse(draft);
 }
 
+/**
+ * A criteria text for a binding of these tests, and the binding made to be for it: one line that states the
+ * expected value first. The tests of the rules about the text itself write their own.
+ */
+function forText(bound: Binding): { binding: Binding; criteria: string } {
+  const criteria = `${bound.expected.value} is the value shown when the journey is done.`;
+  const made = Binding.parse({ ...bound, snapshotSha256: sha256Hex(criteria), quote: { start: 0, end: criteria.length }, expected: { start: 0, end: bound.expected.value.length, value: bound.expected.value } });
+  return { binding: made, criteria };
+}
+/** Carries a check out as the tests of the journey mean it: with a criteria text that states its expected value. */
+const carry = (options: Omit<Parameters<typeof carryOutCheck>[0], "criteria">) => carryOutCheck({ ...options, ...forText(options.binding) });
+
 let browser: Browser;
 before(async () => {
   browser = await chromium.launch();
@@ -101,7 +115,7 @@ let runs = 0;
 async function check(routes: Routes, bound: Binding = binding(), options: { limitMs?: number; runId?: string } = {}): Promise<{ record: CheckRecord; ledger: Ledger; baseUrl: string }> {
   const { baseUrl, server, ledger } = await app(routes);
   try {
-    const record = await carryOutCheck({ browser, baseUrl, runId: options.runId ?? `00000000-0000-4000-8000-${String(++runs).padStart(12, "0")}`, binding: bound, ...(options.limitMs === undefined ? {} : { limitMs: options.limitMs }) });
+    const record = await carry({ browser, baseUrl, runId: options.runId ?? `00000000-0000-4000-8000-${String(++runs).padStart(12, "0")}`, binding: bound, ...(options.limitMs === undefined ? {} : { limitMs: options.limitMs }) });
     return { record, ledger, baseUrl };
   } finally {
     server.closeAllConnections();
@@ -214,6 +228,281 @@ test("a binding that breaks a rule of the journey is refused, and its check is n
   assert.deepEqual(checkProblems(binding({ steps: [see("count", "0"), see("balance", "0"), ...BUY, see("count", "1"), ...BUY, see("count", "2")], expected: { start: 0, end: 3, value: "200" } })), []);
 });
 
+// ---- rules that need the criteria text -----------------------------------------
+
+test("the reader of quoted numbers says where each number stands, and reads what the validator's reader reads", () => {
+  const texts = [
+    "After a purchase of 24.99 the balance is 100.",
+    "1. The balance is 100\n2) A purchase adds 1,250 to it\n  3. Nothing else changes",
+    "KAN-160 says 160px is 3/4 of #160, from 10:30 to 100\u2013160, and 2026-01-05.",
+    "A balance of \u22125 is shown as 5.00, never as 5.0.1 or 1,24.",
+    "Total:\u00a0100\u00a0items \u2026 7",
+    "",
+  ];
+  for (const text of texts) {
+    const numbers = quotedNumbers(text);
+    // Each number is the text at its place, but for a dash that is read as a minus.
+    for (const number of numbers) assert.equal(text.slice(number.start, number.end).replace(/[\u2010-\u2015\u2212]/g, "-"), number.text, text);
+    // And they are the validator's numbers: each is stated, and nothing else in the text is.
+    for (const number of numbers) assert.equal(notQuoted({ literal: Number(number.text.replaceAll(",", "")) }, text, "plain"), undefined, `${number.text} in ${text}`);
+    const stated = new Set(numbers.map((number) => Number(number.text.replaceAll(",", ""))));
+    for (const candidate of [1, 2, 3, 4, 5, 7, 10, 30, 100, 160, 1250, 24.99, 2026, -5, 5.0, 24]) {
+      assert.equal(notQuoted({ literal: candidate }, text, "plain") === undefined, stated.has(candidate), `${candidate} in ${JSON.stringify(text)}`);
+    }
+  }
+  assert.deepEqual(quotedNumbers("1. The balance is 100\n2) A purchase adds 1,250 to it"), [
+    { start: 18, end: 21, text: "100" },
+    { start: 41, end: 46, text: "1,250" },
+  ]);
+});
+
+test("a binding is for its criteria text: whole lines, the number written at its place, equality only", async () => {
+  const criteria = "# Balance\n\nAfter one purchase the balance is 100.\nA new account starts with a balance of 0.\nThe balance is at least 50 after a refund.\nThe total is 1,250 and never 1250.5.\nLe solde est de 100 apr\u00e8s un achat.\n";
+  const line = (text: string) => ({ start: criteria.indexOf(text), end: criteria.indexOf(text) + text.length });
+  // Where a number stands in a quote: its last place, so that "0" is the nought at the end and not one of "100".
+  const within = (span: { start: number; end: number }, number: string, value = number) => {
+    const at = criteria.slice(span.start, span.end).lastIndexOf(number);
+    return { start: at, end: at + number.length, value };
+  };
+  const purchase = line("After one purchase the balance is 100.");
+  const starts = line("A new account starts with a balance of 0.");
+  const both = { start: purchase.start, end: starts.end };
+  const bound = (change: Partial<Draft> = {}) => binding({ snapshotSha256: sha256Hex(criteria), quote: purchase, expected: within(purchase, "100"), ...change });
+
+  assert.deepEqual(criteriaProblems(bound(), criteria), []);
+  // Two lines, a condition from the one and the final value from the other.
+  const fromQuote = bound({ quote: both, expected: within(both, "100"), steps: [see("count", "0"), { kind: "see", reading: reading("/account", "balance"), expected: { from: "quote", ...within(both, "0") } }, ...BUY, see("count", "1")] });
+  assert.deepEqual(criteriaProblems(fromQuote, criteria), []);
+  // A number written with a group separator is that number.
+  const total = line("The total is 1,250 and never 1250.5.");
+  assert.match(criteriaProblems(bound({ quote: total, expected: within(total, "1,250", "1250") }), criteria).join("\n"), /words a negation/);
+
+  const refusals: [Partial<Draft>, string, RegExp][] = [
+    [{}, `${criteria} `, /not the revision/],
+    [{ snapshotSha256: "b".repeat(64) }, criteria, /not the revision/],
+    [{ quote: { start: purchase.start, end: criteria.length + 5 } }, criteria, /outside the criteria text/],
+    // Offsets off a line boundary: a line begun late, ended early, or with its line break.
+    [{ quote: { start: purchase.start + 6, end: purchase.end }, expected: { start: 28, end: 31, value: "100" } }, criteria, /not whole lines/],
+    [{ quote: { start: purchase.start, end: purchase.end - 1 } }, criteria, /not whole lines/],
+    [{ quote: { start: purchase.start, end: purchase.end + 1 } }, criteria, /not whole lines/],
+    // A span that is not one whole number: inside a longer one, more than one, inside a word.
+    [{ expected: { ...within(purchase, "100"), end: within(purchase, "100").end - 1, value: "10" } }, criteria, /not at one whole number/],
+    [{ expected: { start: within(purchase, "100").start + 1, end: within(purchase, "100").start + 2, value: "0" } }, criteria, /not at one whole number/],
+    [{ expected: { start: within(purchase, "one").start, end: within(purchase, "one").end, value: "1" } }, criteria, /not at one whole number/],
+    // A value that is not the number at the offsets.
+    [{ expected: within(purchase, "100", "200") }, criteria, /not the number written/],
+    [{ expected: within(purchase, "100", "100.0") }, criteria, /not the number written/],
+    [{ quote: both, expected: within(both, "100"), steps: [see("count", "0"), { kind: "see", reading: reading("/account", "balance"), expected: { from: "quote", ...within(both, "0", "5") } }, ...BUY, see("count", "1")] }, criteria, /condition's expected value is not the number written/],
+    // A bound, a negation, another language.
+    [{ quote: line("The balance is at least 50 after a refund."), expected: within(line("The balance is at least 50 after a refund."), "50") }, criteria, /words a bound/],
+    [{ quote: total, expected: within(total, "1,250", "1250") }, criteria, /words a negation/],
+    [{ quote: line("Le solde est de 100 apr\u00e8s un achat."), expected: within(line("Le solde est de 100 apr\u00e8s un achat."), "100") }, criteria, /outside the English alphabet/],
+  ];
+  for (const [change, text, expected] of refusals) assert.match(criteriaProblems(bound(change), text).join("\n"), expected, JSON.stringify(change));
+
+  // One text, one line (or more) quoted whole, the last number in it bound: what does the engine say?
+  const said = (text: string, quoted: string, number: string, value = number) => {
+    const quote = { start: text.indexOf(quoted), end: text.indexOf(quoted) + quoted.length };
+    const at = quoted.lastIndexOf(number);
+    return criteriaProblems(binding({ snapshotSha256: sha256Hex(text), quote, expected: { start: at, end: at + number.length, value } }), text).join("\n");
+  };
+  const oneLine = (sentence: string, number = "100", value = number) => said(`${sentence}\n`, sentence, number, value);
+  assert.equal(oneLine("After a purchase the balance is 100."), "");
+  assert.equal(oneLine("The total is 1,250 after the second purchase.", "1,250", "1250"), "");
+  assert.match(oneLine("The total is 1,250 after the second purchase.", "1,250", "1,250".replace(",", "0")), /not the number written/);
+  // A span that ends where a number ends and begins inside it.
+  assert.match(said("The balance is 100.\n", "The balance is 100.", "00", "0"), /not at one whole number/);
+
+  // A bound, however it is written out: over a line break, with other space, in emphasis, in capitals.
+  for (const sentence of [
+    "After a purchase the balance is at\nleast 100.",
+    "After a purchase the balance is at  least 100.",
+    "After a purchase the balance is at\tleast 100.",
+    "After a purchase the balance is at\u00a0least 100.",
+    "After a purchase the balance is _at least_ 100.",
+    "After a purchase the balance is **at least** 100.",
+    "After a purchase the balance is AT LEAST 100.",
+    "After a purchase the balance is up\r\nto 100.",
+    "After a purchase the balance is at most 100.",
+    "After a purchase the balance is 100 or\nmore.",
+    "After a purchase the balance is more than 100.",
+    "After a purchase the balance is less than 100.",
+    "After a purchase the balance is over 100.",
+    "After a purchase the balance is under 100.",
+    "After a purchase the balance is between 50 and 100.",
+    "After a purchase the balance goes from 50 to 100.",
+    "After a purchase the balance is about 100.",
+    "After a purchase the balance is approximately 100.",
+    "After a purchase the balance is >= 100.",
+    "After a purchase the balance is \u2265 100.",
+    "After a purchase the balance is < 100.",
+    "The balance has a max of 100.",
+    "The balance is 100+ after a purchase.",
+    "The balance does exceed 100.",
+    "The balance stays within 100.",
+  ]) {
+    assert.match(oneLine(sentence), /words a bound/, JSON.stringify(sentence));
+  }
+  // A negation, with every kind of apostrophe and in emphasis.
+  for (const sentence of [
+    "After a purchase the balance isn\u2019t 100.",
+    "After a purchase the balance isn't 100.",
+    "After a purchase the balance won't be 100.",
+    "After a purchase the balance doesn\u02bct reach 100.",
+    "After a purchase the balance is _not_ 100.",
+    "After a purchase the balance is __never__ 100.",
+    "After a purchase the balance is NOT 100.",
+    "Neither balance is 100.",
+    "Nothing but 100 is shown.",
+    "The balance is 100 unless a refund was made.",
+    "The balance is non-zero, namely 100.",
+  ]) {
+    assert.match(oneLine(sentence), /words a negation/, JSON.stringify(sentence));
+  }
+  // Part of a sentence that runs over several lines: the words left out may be the bound.
+  const wrapped = "# Refunds\n\nAfter a purchase the balance is 100 and\nit is never more than 150.\n\n- The balance after two is 200\n  or more.\n- A refund gives 100\n";
+  assert.match(said(wrapped, "After a purchase the balance is 100 and", "100"), /ends in the middle of a sentence/);
+  assert.match(said(wrapped, "it is never more than 150.", "150"), /begins in the middle of a sentence/);
+  assert.match(said(wrapped, "- The balance after two is 200", "200"), /ends in the middle of a sentence/);
+  // An item of a list, with another item after it, is whole.
+  assert.equal(said("- The balance is 100\n- A refund gives 50\n", "- The balance is 100", "100"), "");
+  assert.equal(said(wrapped, "- A refund gives 100", "100"), "");
+
+  // Line ends. A carriage return ends a line only before a line feed.
+  const windows = "The balance is 100.\r\nA refund gives 50.\r\n";
+  assert.equal(said(windows, "The balance is 100.", "100"), "");
+  assert.match(said(windows, "The balance is 100.\r", "100"), /not whole lines/);
+  assert.match(said("The balance is 100\r or more.\n", "The balance is 100", "100"), /not whole lines/);
+  // A quote of nothing but space.
+  assert.match(said("One.\n   \nTwo is 2.\n", "   ", " ", "2"), /holds no text/);
+
+  // A sign the text does not state plainly.
+  for (const [sentence, number, value] of [
+    ["The balance is -$5.00 after.", "5.00", "5.00"],
+    ["The balance is -\u00a35 after.", "5", "5"],
+    ["The balance is (5.00) after.", "5.00", "5.00"],
+    ["Balance:-5 after.", "5", "5"],
+    ["There are \u21925 items.", "\u21925", "-5"],
+    ["The balance is \u20265 after.", "\u20265", "-5"],
+    ["The balance is 100 - 5 after.", "5", "5"],
+  ] as const) {
+    assert.match(oneLine(sentence, number, value), /sign that the text does not state plainly/, sentence);
+  }
+  assert.equal(oneLine("The balance is -5 after.", "-5"), "");
+  assert.equal(oneLine("The balance is \u22125 after.", "\u22125", "-5"), "");
+  assert.equal(oneLine("The balance is $5.00 after.", "5.00"), "");
+
+  // What the second review found. A sign in the forms accounts are written in.
+  for (const [sentence, number] of [
+    ["The balance is ($5.00) now.", "5.00"],
+    ["The balance is ( 5.00 ) now.", "5.00"],
+    ["The balance is (5.00 USD) now.", "5.00"],
+    ["The balance is (USD 5.00) now.", "5.00"],
+    ["The balance is -USD 5.00 now.", "5.00"],
+    ["The balance is - R$ 5.00 now.", "5.00"],
+    ["The balance is -\u20aa5.00 now.", "5.00"],
+    ["The balance is 5.00- now.", "5.00"],
+    ["The balance is 5.00 CR now.", "5.00"],
+  ] as const) {
+    assert.match(oneLine(sentence, number), /sign that the text does not state plainly/, sentence);
+  }
+  for (const sentence of ["The balance is minus 5 now.", "The balance is negative 5 now.", "The account is overdrawn at 5."]) assert.match(oneLine(sentence, "5"), /words a negation/, sentence);
+  // A dash that marks an item of a list is not a sign.
+  assert.equal(said("Rewards:\n\n- 100 is the balance of a new member.\n", "- 100 is the balance of a new member.", "100"), "");
+
+  // But a minus at the start of a line is one: with a currency sign after it, or after a line that runs on into it.
+  assert.match(oneLine("-$5 is the balance after one purchase.", "5"), /sign that the text does not state plainly/);
+  assert.match(oneLine("-USD 5.00 is the balance after one purchase.", "5.00"), /sign that the text does not state plainly/);
+  assert.match(said("The balance after a refund is\n- 100 as it was.\n", "The balance after a refund is\n- 100 as it was.", "100"), /sign that the text does not state plainly/);
+  assert.equal(said("The balance is shown.\n- 100 is what it shows.\n", "The balance is shown.\n- 100 is what it shows.", "100"), "");
+  assert.equal(said("Rewards:\n\n- [ ] 100 is the balance of a new member.\n", "- [ ] 100 is the balance of a new member.", "100"), "");
+
+  // What is above the quote is read only as far as this: the nearest heading; the lines that end with a colon in
+  // the block directly above, with no empty line between; the rows above a row of a table.
+  assert.equal(said("# Maximum limits\n\n## Basic plan\n\nThe balance is 100.\n", "The balance is 100.", "100"), "");
+  assert.equal(said("Balance after one purchase (maximum):\n\n- Basic: 100\n", "- Basic: 100", "100"), "");
+  assert.equal(said("| Plan | Max |\n|---|---|\n| Basic | 100 |\n\nThe balance is 100.\n", "The balance is 100.", "100"), "");
+  assert.match(oneLine("The balance is &#8805; 100."), /markup that stands for a character/);
+  assert.match(oneLine("The balance is \ue000 100."), /characters that are not seen/);
+  assert.match(oneLine("The balance is\u2028100."), /characters that are not seen/);
+
+  // Words listed before, slightly varied; and wordings that were not listed.
+  for (const sentence of [
+    "After a purchase the balance is at the most 100.",
+    "After a purchase the balance is at the very least 100.",
+    "After a purchase the balance is at\u2011least 100.",
+    "After a purchase the balance tops out at 100.",
+    "After a purchase the balance is as much as 100.",
+    "After a purchase the balance is 100 or so.",
+    "After a purchase the balance is 100 to 200.",
+    "After a purchase the balance is 100 \u2013 200.",
+    "After a purchase the balance is 100 or 200.",
+    "The balance goes from 1.50 to 100.",
+    "After a purchase the balance is 100 +/- 5.",
+    "After a purchase the balance is longer than 100.",
+    "The threshold is 100.",
+  ]) {
+    assert.match(oneLine(sentence), /words a bound/, JSON.stringify(sentence));
+  }
+  for (const sentence of ["After a purchase the balance isnt 100.", "After a purchase the balance isn\u2032t 100.", "The balance is anything but 100.", "The balance is 100 instead of 50.", "The balance is nonzero, 100."]) {
+    assert.match(oneLine(sentence), /words a negation/, JSON.stringify(sentence));
+  }
+  // A change, a rate or a share is not what a page shows as one number; nor is what holds only sometimes.
+  for (const sentence of ["A purchase increases the balance by 100.", "A purchase adds 100.", "The member gets 100 per purchase.", "The member gets another 100.", "The discount is 100%.", "The balance is usually 100.", "If premium, the balance is 100.", "The balance may be 100."]) {
+    assert.match(oneLine(sentence), /words a change, a rate or a condition/, JSON.stringify(sentence));
+  }
+  assert.match(oneLine("The balance is &ge; 100."), /markup that stands for a character/);
+  assert.match(oneLine("The balance is at&nbsp;least 100."), /markup that stands for a character/);
+
+  // What is said above the quote counts: its heading, the line that introduces its list, the header of its table.
+  const context = /above its quote words something other than an equality/;
+  assert.match(said("Balance after one purchase (maximum):\n- Basic: 100\n- Premium: 500\n", "- Basic: 100", "100"), context);
+  assert.match(said("| Plan | Max |\n|---|---|\n| Basic | 100 |\n", "| Basic | 100 |", "100"), context);
+  assert.match(said("## Minimum balances\n\nAfter a purchase the balance is 100.\n", "After a purchase the balance is 100.", "100"), context);
+  assert.match(said("The balance must never be:\n- Basic: 100\n", "- Basic: 100", "100"), context);
+  assert.equal(said("## Balances\n\nBalance after one purchase:\n- Basic: 100\n- Premium: 500\n", "- Basic: 100", "100"), "");
+  assert.equal(said("| Plan | Balance |\n|---|---|\n| Basic | 100 |\n", "| Basic | 100 |", "100"), "");
+  // A full stop after an abbreviation, a colon and a semicolon do not end a sentence.
+  assert.match(said("After a purchase the balance is max.\n100 for a basic account.\n", "100 for a basic account.", "100"), /begins in the middle of a sentence/);
+  assert.match(said("The balance is 100;\nmore for a premium account.\n", "The balance is 100;", "100"), /ends in the middle of a sentence/);
+  assert.match(said("Note the following:\nthe balance is 100.\n", "the balance is 100.", "100"), /begins in the middle of a sentence/);
+  // What does end one: a question mark, an exclamation mark, a full stop inside quotes or emphasis; and a heading.
+  for (const prior of ["Is it shown?", "It is shown!", "He said \"shown.\"", "It is **shown.**", "# Balance"]) assert.equal(said(`${prior}\nThe balance is 100.\n`, "The balance is 100.", "100"), "", prior);
+  // An item of a list is whole even after a line that does not end a sentence.
+  assert.equal(said("Balances\n- Basic: 100\n", "- Basic: 100", "100"), "");
+  assert.match(said("Balances\nBasic: 100\n", "Basic: 100", "100"), /begins in the middle of a sentence/);
+
+  // Characters that are not seen, in any plane; a blank that is not space.
+  assert.match(oneLine("After a purchase the balance is n\u{e0061}ot 100."), /characters that are not seen/);
+  assert.match(oneLine("After a purchase the balance is at\u2800least 100."), /characters that are not seen/);
+  // A picture with its selector is not a letter of another alphabet; a mark that does not compose is.
+  assert.equal(oneLine("The balance is 100 \u2714\ufe0f."), "");
+  assert.match(oneLine("The balance is 100 x\u0336."), /outside the English alphabet/);
+
+  // Characters that are not seen, a mark on a letter that is its own character, text that is not well formed.
+  assert.match(oneLine("After a purchase the balance is n\u200bot 100."), /characters that are not seen/);
+  assert.match(oneLine("The balance is \u00ad5 after.", "\u00ad5", "-5"), /characters that are not seen/);
+  assert.match(oneLine("\ufeffThe balance is 100."), /characters that are not seen/);
+  assert.match(oneLine("Le solde est de 100 apre\u0300s un achat."), /outside the English alphabet/);
+  assert.match(criteriaProblems(binding({}), "The balance is 100\ud800.\n").join("\n"), /not well-formed/);
+
+  // A refused binding is not carried out: nothing is asked of the application.
+  const { baseUrl, server, ledger } = await app({});
+  try {
+    const record = await carryOutCheck({ browser, baseUrl, runId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", binding: bound({ expected: within(purchase, "100", "200") }), criteria });
+    unverified(record, "binding-refused");
+    assert.match((record.refused ?? []).join("\n"), /not the number written/);
+    // With no criteria text at all, nothing is carried out either.
+    unverified(await carryOutCheck({ browser, baseUrl, runId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", binding: bound() } as unknown as Parameters<typeof carryOutCheck>[0]), "binding-refused");
+    assert.deepEqual(ledger.requests, []);
+    // The binding that is for its text is carried out, and verifies against the stand-in application.
+    assert.equal((await carryOutCheck({ browser, baseUrl, runId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", binding: bound(), criteria })).outcome, "verified");
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 // ---- carried out ---------------------------------------------------------------
 
 // The limit is for a run that hangs: it then fails, where it would otherwise never end.
@@ -300,12 +589,12 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     const { record, ledger } = await check(routes, bound, { runId });
     assert.equal(record.outcome, "verified");
     assert.equal(record.writesCounted, 2);
-    const key = fixtureKey(runId, bound);
+    const key = fixtureKey(runId, forText(bound).binding);
     assert.match(key, /^rp-[0-9a-f]{24}$/);
     assert.deepEqual(ledger.bodies, [`{"key":"${key}"}`, `user-${key}`]);
     // Another run, or another binding, has another key.
     assert.notEqual(fixtureKey("22222222-2222-4222-8222-222222222222", bound), key);
-    assert.notEqual(fixtureKey(runId, binding({ ...bound, id: "another" })), key);
+    assert.notEqual(fixtureKey(runId, forText(binding({ ...bound, id: "another" })).binding), key);
     // The value taken from the fixture's answer is nowhere in the record.
     assert.ok(!JSON.stringify(record).includes(key));
   });
@@ -537,7 +826,7 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
           }
         });
         try {
-          const record = await carryOutCheck({ browser, baseUrl, runId: `bbbbbbbb-bbbb-4bbb-8bbb-${String(after).padStart(12, "0")}`, binding: binding({ steps: [see("count", "0")] }) });
+          const record = await carry({ browser, baseUrl, runId: `bbbbbbbb-bbbb-4bbb-8bbb-${String(after).padStart(12, "0")}`, binding: binding({ steps: [see("count", "0")] }) });
           return { after, asked: ledger.requests.includes("GET /cut"), outcome: record.outcome };
         } finally {
           server.closeAllConnections();
@@ -581,9 +870,9 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     const { baseUrl, server, ledger } = await app({ "POST /fixture": () => json({ username: "shared" }) });
     try {
       const bound = binding({ setup: { kind: "fixture", method: "POST", path: "/fixture", body: '{"key":"{{key}}"}' } });
-      const first = await carryOutCheck({ browser, baseUrl, runId: "33333333-3333-4333-8333-333333333333", binding: bound });
+      const first = await carry({ browser, baseUrl, runId: "33333333-3333-4333-8333-333333333333", binding: bound });
       assert.equal(first.outcome, "verified");
-      const second = await carryOutCheck({ browser, baseUrl, runId: "44444444-4444-4444-8444-444444444444", binding: bound });
+      const second = await carry({ browser, baseUrl, runId: "44444444-4444-4444-8444-444444444444", binding: bound });
       unverified(second, "condition-not-met");
       assert.equal(ledger.count, 1, "the second run made no purchase");
     } finally {
@@ -619,12 +908,12 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     try {
       // Twice against one application: the second check begins with nothing stored, as the first did.
       for (const runId of ["77777777-7777-4777-8777-777777777777", "88888888-8888-4888-8888-888888888888"]) {
-        assert.equal((await carryOutCheck({ browser, baseUrl, runId, binding: fresh })).outcome, "verified");
+        assert.equal((await carry({ browser, baseUrl, runId, binding: fresh })).outcome, "verified");
       }
       // Within one check, what the application stores stays: the second page of a check is its second visit.
-      unverified(await carryOutCheck({ browser, baseUrl, runId: "99999999-9999-4999-8999-999999999999", binding: binding({ ...fresh, steps: [see("visits", "0"), see("visits", "0")] }) }), "condition-not-met");
+      unverified(await carry({ browser, baseUrl, runId: "99999999-9999-4999-8999-999999999999", binding: binding({ ...fresh, steps: [see("visits", "0"), see("visits", "0")] }) }), "condition-not-met");
       // In another time zone the hour is another.
-      assert.equal((await carryOutCheck({ browser, baseUrl, runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", binding: binding({ ...fresh, timezone: "Europe/London" }) })).outcome, "failed");
+      assert.equal((await carry({ browser, baseUrl, runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", binding: binding({ ...fresh, timezone: "Europe/London" }) })).outcome, "failed");
     } finally {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
@@ -886,12 +1175,12 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     try {
       const withFixture = binding({ setup: { kind: "fixture", method: "POST", path: "/fixture", body: '{"key":"{{key}}"}' } });
       const started = Date.now();
-      unverified(await carryOutCheck({ browser, baseUrl, runId: "55555555-5555-4555-8555-555555555555", binding: withFixture }), "setup-failed");
+      unverified(await carry({ browser, baseUrl, runId: "55555555-5555-4555-8555-555555555555", binding: withFixture }), "setup-failed");
       assert.ok(Date.now() - started < 5_000, "the answer was given up as soon as it was too long");
       assert.ok(sent < 20_000_000, `${sent} bytes were taken`);
       // A time zone that is not one: refused before the fixture is called.
       ledger.requests.length = 0;
-      unverified(await carryOutCheck({ browser, baseUrl, runId: "66666666-6666-4666-8666-666666666666", binding: binding({ ...withFixture, timezone: "Nowhere/Never" }) }), "setup-failed");
+      unverified(await carry({ browser, baseUrl, runId: "66666666-6666-4666-8666-666666666666", binding: binding({ ...withFixture, timezone: "Nowhere/Never" }) }), "setup-failed");
       assert.deepEqual(ledger.requests, []);
     } finally {
       server.closeAllConnections();
@@ -913,7 +1202,7 @@ test("the runner is used by no run, and no source writes a trusted result", asyn
   // What the runner hands out, by name. A new name is a new way in: it is added here, on purpose, or not at all.
   const exported = [...(await readFile(runner, "utf8")).matchAll(/^export\s+(?:async\s+)?[a-z]+\s+([A-Za-z_$][\w$]*)/gm)].map((match) => match[1]!).sort();
   assert.equal(exported.length, [...(await readFile(runner, "utf8")).matchAll(/^export\b/gm)].length, "every export of the runner is one this test can name");
-  assert.deepEqual(exported, ["CHECK_LIMITS", "CheckOptions", "CheckRecord", "FinalReading", "UNVERIFIED_REASONS", "UnverifiedReason", "carryOutCheck", "checkProblems", "defaultLimitMs", "expectedInUnit", "fixtureKey", "readStrictNumber"]);
+  assert.deepEqual(exported, ["CHECK_LIMITS", "CheckOptions", "CheckRecord", "FinalReading", "UNVERIFIED_REASONS", "UnverifiedReason", "carryOutCheck", "checkProblems", "criteriaProblems", "defaultLimitMs", "expectedInUnit", "fixtureKey", "readStrictNumber"]);
   assert.doesNotMatch(await readFile(runner, "utf8"), /^export \{|^export \*|^export default/m, "the runner hands nothing out under another name");
   const refers = new RegExp(`/check(\\.[cm]?[jt]s)?["'\`]|\\b(?:${exported.join("|")})\\b`);
   // Every place code lives, not only the engine's own source: nothing anywhere calls the runner but its tests.

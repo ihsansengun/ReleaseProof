@@ -12,8 +12,51 @@ the runner, and no source file writes a trusted result.
 
 ## What it does
 
-Given a browser, the target's address, a run id and a binding:
+Given a browser, the target's address, a run id, a binding and the text of
+the criteria snapshot the binding is for:
 
+0. Refuses the binding if it is not for that text (`criteriaProblems`):
+   - the text is another revision than the binding names, or is not
+     well-formed text;
+   - the quote is not whole lines of it (a line ends at a line feed, or at a
+     carriage return a line feed follows), holds no text, or holds
+     characters that are not seen;
+   - the quote begins or ends in the middle of a sentence that runs over
+     several lines, as far as lines can tell: the line before it must end a
+     sentence (with a full stop, a question mark or an exclamation mark, not
+     after an abbreviation), be empty or be a heading, or the quote must
+     begin an item of a list, a heading or a row of a table; the same at
+     its end;
+   - an expected value taken from the quote is not at exactly one whole
+     number, as the engine's own reader of quoted numbers finds numbers, or
+     is not the number written there, or has a sign the text does not state
+     plainly (a minus read from another mark; a minus, brackets, a trailing
+     minus or "CR" with a currency sign or code between it and the digits);
+   - the quote holds markup that stands for a character (`&ge;`);
+   - the quote words anything but an equality with what is shown: a bound,
+     a comparison, a range, an approximation, a symbol such as `<` or `+`;
+     a negation, or a sign written as a word; a change, a rate, a share or a
+     condition ("increases by", "per", "%", "if", "usually"). The words are
+     looked for as the quote reads: in one case, with one space wherever
+     there is space or a line break, without marks of emphasis, with every
+     kind of apostrophe and of dash as one. The list is the validator's and
+     a wider one of the runner's own (`NOT_EQUALITY`);
+   - something directly above the quote words any of those: the nearest
+     heading above it (a line that begins with `#`, of any level); a line
+     that ends with a colon in the block of lines right above it, with no
+     empty line between; or, for a row of a table, the rows above it in
+     that block;
+   - the quote holds letters outside the English alphabet, or with marks on
+     them, since those words are known in English only.
+
+   **These wording rules are a second check, not what says a requirement
+   is an equality.** No list of words can tell what a sentence means. By
+   the owner's decision of 23 November 2026 the next version of the binding
+   format carries the comparison as an explicit, signed field, shown to the
+   approver in words beside the quote before signing; it starts with exact
+   equality only, and anything unsupported, contradictory or ambiguous
+   stays unverified. Until that exists, what the quote means rests on this
+   list, and that is one more reason nothing here is used by a run.
 1. Refuses the binding if it breaks a rule that can be told without the
    criteria text (`checkProblems`): a write with no before-and-after witness
    (the observation's own element is no witness); writes that all come
@@ -127,10 +170,13 @@ the browser, of every frame, whether anything is registered for leaving
 cannot ask (one the browser keeps apart) as having something; no test
 reaches that last rule yet. If so
 the check ends `leave-script-suppressed`, whatever it read. Many
-applications register such a listener for statistics; until a binding can
-say that an application's leave-time script may be ignored (a signed field,
-with the format change that adds the drawing time), such applications
-cannot be checked.
+applications register such a listener for statistics; today such
+applications cannot be checked.
+
+The owner's rule for any later relaxation (23 November 2026): it must not
+be a general way to ignore application activity that may matter. It has to
+be explicitly approved, narrowly scoped, and fail closed whenever ignoring
+the activity could invalidate the check. No such setting exists yet.
 
 ## Gates before activation
 
@@ -159,12 +205,6 @@ Set by the owner on 23 November 2026. None is met by this code.
 
 ## What it does not do yet
 
-- **The rules that need the criteria text**: that the quote lies on whole
-  lines, that the expected value is the number written at its position, that
-  the quote holds no bound or negation. Until they exist, an outcome says
-  what the application showed against the value in the binding, and nothing
-  about the criteria. They come in the next pull request of this stage,
-  before anything is wired into a run.
 - **Being part of a run.** Checks are not yet carried out before a plan's
   steps, and nothing is written to a run's working record.
 - **Pictures.** The runner keeps none.
@@ -231,6 +271,67 @@ Set by the owner on 23 November 2026. None is met by this code.
   is also tried again while its element is missing or not yet a number; a
   minus sign only at the very start of a number; exactly two decimals for an
   amount in units.
+- **The quote's language is told only by its letters.** A quote in another
+  language that is written with the plain alphabet is not refused, and its
+  words for a bound or a negation are not known.
+- **A reading in hundredths cannot be bound to a quote that writes the amount
+  in units** ("21.60" in the text, 2160 on the page): the expected value is
+  the number written in the quote, and it must be one the reading's unit can
+  spell.
+- **The words that refuse a quote are common ones.** A sentence with "no",
+  "not", "never", "over", "under", "about", "around", "some", "within",
+  "between", "limit", "empty", "missing", "zero", "by", "per", "each",
+  "every", "if", "may", "more", "less" or "from … to" anywhere in it cannot
+  be bound, whatever the word is about; nor can one with an accented letter
+  in a name, with `>` in it (a block quote, an arrow), or struck through.
+- **Common ways of writing criteria cannot be bound.** One requirement to a
+  line without full stops, and lines of "Given … When … Then …", are
+  refused as the middle of a sentence; so is a line after a bold label or
+  after a line that ends with a bracket; so are lists marked with letters
+  or bullets other than `-`, `*`, `+` and numbers, and tables written
+  without spaces. These are refused because a line break alone does not say
+  where a sentence ends.
+- **The list is still a list.** A bound or a negation worded in a way that
+  is not on it ("no fewer" is, "peaks at" is not) is taken for an
+  equality. What the sentence means is the approver's judgement, and the
+  approval screen is to show the quote with the lines around it.
+- **A sentence that goes on after a full stop** is not seen to go on: "The
+  balance is 100. It may be more after a refund." can be bound by its first
+  line. Neither is a line that carries on a sentence and happens to begin
+  like an item of a list, or what a paragraph further up says about the
+  quote.
+- **What is above a quote is read only so far.** A line that introduces a
+  list and is followed by an empty line, an introducing sentence that ends
+  with a full stop, a heading above the nearest one, a heading written by
+  underlining or in bold, and rows of a table below the quote are not read.
+  A bound stated there is not seen.
+- **A whole section can be unbindable.** Under a heading with a listed word
+  in it ("Add to cart", "Sort by price", "Limits and balances", "Default
+  settings", "Pricing per seat", "About the account"), or with a date or a
+  range of versions in it, nothing can be bound. A line of a code block
+  that begins with `#` is taken for a heading. A row of a table with a
+  listed word in it refuses every row below it.
+- **Dates, telephone numbers and the like refuse a quote** (a digit, a
+  dash, a digit reads as a range), and so do "min" for minutes, "May" for
+  the month and `R&D;`.
+- **A number's sign: what is refused though it is harmless**, and what is
+  not seen. Refused: a number right after an opening bracket ("(100
+  items)"), a number with a dash after it ("100 – always", "a 100-point
+  scale"), a number after a dash that is not a plain list marker (a list
+  marked with a longer dash, "- $100 off"). Not seen as a sign: a currency
+  code that is not three capitals before the number ("-usd 5", "-kr 5",
+  "-Rs. 5"), and "5 (CR)".
+- **Characters.** The first line of a file that begins with a byte-order
+  mark cannot be bound. Neither can a quote with a picture made of several
+  joined ones, a flag of a region, or a number in a keycap. Which
+  characters count as unassigned depends on the version of Unicode the
+  engine's runtime knows.
+- A line that ends "… is no." or "…, etc." or with a full stop inside curly
+  quotes is not taken to end a sentence.
+- A word broken over a line with a hyphen ("at le-" and "ast") is not put
+  together again.
+- A number that begins a line and is followed by a full stop and a space is
+  read as the number of a list item, and cannot be bound.
 - The engine's own limits (`CHECK_LIMITS`) only ever end a check as
   unverified. A check is given up five seconds past its limit even if a page
   keeps the browser busy.
