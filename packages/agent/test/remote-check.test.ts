@@ -972,6 +972,64 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     }
   });
 
+  test("the node the engine acts on is the one it looked at, wherever the page's script would have the act go", async () => {
+    // A frame of the page holds a field of the same name and takes the focus as the engine's field gets it. Typed
+    // by the keyboard, the value would go where the focus is. It goes into the field that was looked at.
+    const inner = (what: string): Routes => ({ "GET /inner": () => html(what), "GET /taken": () => json({}) });
+    const stolen = await check(
+      { ...fixture, ...inner(`<input aria-label="Name" oninput="fetch('/taken?typed=' + this.value)">`), "GET /enter": () => html(`<input aria-label="Name" onfocus="frames[0].document.querySelector('input').focus()"><iframe src="/inner" style="width:200px;height:40px;border:0"></iframe>`) },
+      typesLast(),
+    );
+    assert.deepEqual(taken(stolen.ledger), [], "the value was typed where the focus had been taken");
+    assert.equal(stolen.record.outcome, "verified");
+
+    // The page takes the very node out of its document as the engine acts on it: into a frame's document, on
+    // focus or before the text goes in; into another window's. Nothing is typed into it there, and no verdict.
+    for (const on of ["onfocus", "onbeforeinput"]) {
+      const moved = await check(
+        { ...fixture, ...inner(`<p>inner</p><script>document.addEventListener("input", (event) => fetch("/taken?typed=" + event.target.value)); document.addEventListener("change", (event) => fetch("/taken?changed=" + event.target.value))</script>`), "GET /enter": () => html(`<iframe src="/inner" style="width:200px;height:40px;border:0"></iframe><input aria-label="Name" ${on}="frames[0].document.body.appendChild(this)">`) },
+        typesLast(),
+      );
+      unverified(moved.record, "address-not-bound");
+      assert.deepEqual(taken(moved.ledger), [], `typed into a frame's document, moved ${on}`);
+    }
+    // Moved as the text arrives: what was typed is taken back before the other document is told of anything.
+    const late = await check(
+      { ...fixture, ...inner(`<p>inner</p><script>document.addEventListener("change", (event) => fetch("/taken?changed=" + event.target.value))</script>`), "GET /enter": () => html(`<iframe src="/inner" style="width:200px;height:40px;border:0"></iframe><input aria-label="Name" oninput="frames[0].document.body.appendChild(this)">`) },
+      typesLast(),
+    );
+    unverified(late.record, "address-not-bound");
+    assert.deepEqual(taken(late.ledger), []);
+    // The same of a press: the button is taken into the frame's document as it is pressed, and is not clicked there.
+    const pressedElsewhere = await check(
+      { ...inner(`<p>inner</p><script>document.addEventListener("click", () => fetch("/taken?pressed"))</script>`), "GET /prep": () => html(`<iframe src="/inner" style="width:200px;height:40px;border:0"></iframe><button onpointerdown="frames[0].document.body.appendChild(this)">Prep</button>`) },
+      pressesLast,
+    );
+    unverified(pressedElsewhere.record, "address-not-bound");
+    assert.deepEqual(taken(pressedElsewhere.ledger), [], "the engine clicked in a frame's document");
+
+    // A document put in the page's place through a script address, as the engine acts: on focus, and on the press.
+    const swap = `location.href = 'javascript:&quot;<input aria-label=Name><button>Prep</button>&quot;'`;
+    unverified((await check({ ...fixture, "GET /enter": () => html(`<input aria-label="Name" onfocus="${swap}">`) }, typesLast())).record, "address-not-bound");
+    unverified((await check({ "GET /prep": () => html(`<button onclick="${swap}">Prep</button>`) }, pressesLast)).record, "address-not-bound");
+  });
+
+  test("the engine does not do what a person could not", async () => {
+    // A button a person cannot press: disabled by what it stands in, or taking no clicks.
+    unverified((await check({ "GET /prep": () => html(`<fieldset disabled><button>Prep</button></fieldset>`) }, pressesLast)).record, "step-not-done");
+    unverified((await check({ "GET /prep": () => html(`<button style="pointer-events:none">Prep</button>`) }, pressesLast)).record, "step-not-done");
+    unverified((await check({ "GET /prep": () => html(`<button onpointerdown="this.disabled = true">Prep</button>`) }, pressesLast)).record, "step-not-done");
+    // A field that takes fewer letters than the text has.
+    unverified((await check({ ...fixture, "GET /enter": () => html(`<input aria-label="Name" maxlength="3">`) }, typesLast())).record, "step-not-done");
+    // A field that turns into one that holds a secret as it is typed into: a literal is not typed into it.
+    const literal = binding({ steps: [see("count", "0"), see("balance", "0"), { kind: "open", path: "/buy" }, { kind: "fill", path: "/buy", locator: testid("field"), value: { from: "literal", text: "hunter2" } }, BUY[1], see("count", "1")] });
+    const turning = await check({ "GET /buy": () => html(`<input data-testid="field" onfocus="this.type = 'password'" oninput="fetch('/taken?typed=' + this.value)"><button onclick="fetch('/purchase', { method: 'POST' })">Buy</button>`), "GET /taken": () => json({}) }, literal);
+    unverified(turning.record, "secret-field-literal");
+    assert.deepEqual(taken(turning.ledger), []);
+    // An act that sends nothing and opens another window: the page has not stayed by itself.
+    unverified((await check({ "GET /prep": () => html(`<a href="/more" target="_blank" role="button">Prep</a>`), "GET /more": () => html(`<p>More</p>`) }, pressesLast)).record, "address-not-bound");
+  });
+
   test("a write is the page's own by what the browser says of it, not by when it was heard of", async () => {
     const buys = (onclick: string, extra = ""): Routes => ({ "GET /buy": () => html(`<button onclick="${onclick}">Buy</button>${extra}`) });
     const post = `fetch('/purchase', { method: 'POST' })`;
@@ -987,10 +1045,18 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
       ["sent from a frame", { ...buys(`frames[0].postMessage('send', '*')`, `<iframe src="/inner" style="width:10px;height:10px;border:0"></iframe>`), "GET /inner": () => html(`<script>addEventListener("message", () => ${post})</script>`) }],
       ["sent from a worker", { ...buys(`new Worker('/worker.js')`), "GET /worker.js": () => ({ headers: { "content-type": "text/javascript" }, body: `fetch("/purchase", { method: "POST" })` }) }],
     ];
+    notThePages.push(
+      // A form is sent into the page by a frame of it, or after the page has been elsewhere, there and back included.
+      ["a form sent into the page by a frame", { ...buys(`frames[0].postMessage('send', '*')`, `<iframe src="/inner" style="width:10px;height:10px;border:0"></iframe>`), "GET /inner": () => html(`<form method="post" action="/purchase" target="_top"></form><script>addEventListener("message", () => document.forms[0].submit())</script>`), "POST /purchase": (ledger) => ((ledger.balance += 100), (ledger.count += 1), { status: 303, headers: { location: "/account" } }) }],
+      ["moved, then a form sent", { ...buys(`history.pushState(null, '', '/other'); document.forms[0].submit()`, `<form method="post" action="/purchase"></form>`), "POST /purchase": (ledger) => ((ledger.balance += 100), (ledger.count += 1), { status: 303, headers: { location: "/account" } }) }],
+      ["moved and back, then sent", buys(`history.pushState(null, '', '/other'); history.replaceState(null, '', '/buy'); ${post}`)],
+      ["its document opened anew, then sent", buys(`document.open(); document.write('<p>new</p>'); document.close(); ${post}`)],
+    );
     for (const [name, routes] of notThePages) {
       const { record } = await check(routes);
       assert.equal(record.outcome, "unverified", name);
-      assert.equal(record.reason, "write-not-attributed", name);
+      // Not attributed; or, where the page's own act took its element away with the document, not the bound page.
+      assert.ok(record.reason === "write-not-attributed" || (name === "its document opened anew, then sent" && record.reason === "address-not-bound"), `${name}: ${record.reason}`);
     }
     // A document put in the page's place through a script address, which the browser tells of in no other way.
     const swapped = await check(buys(`location.href = 'javascript:&quot;<script>${post.replaceAll("'", "\\'")}<\\/script>&quot;'`));
