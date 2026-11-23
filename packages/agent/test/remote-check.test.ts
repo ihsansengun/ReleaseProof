@@ -410,6 +410,22 @@ test("a binding is for its criteria text: whole lines, the number written at its
   // A dash that marks an item of a list is not a sign.
   assert.equal(said("Rewards:\n\n- 100 is the balance of a new member.\n", "- 100 is the balance of a new member.", "100"), "");
 
+  // But a minus at the start of a line is one: with a currency sign after it, or after a line that runs on into it.
+  assert.match(oneLine("-$5 is the balance after one purchase.", "5"), /sign that the text does not state plainly/);
+  assert.match(oneLine("-USD 5.00 is the balance after one purchase.", "5.00"), /sign that the text does not state plainly/);
+  assert.match(said("The balance after a refund is\n- 100 as it was.\n", "The balance after a refund is\n- 100 as it was.", "100"), /sign that the text does not state plainly/);
+  assert.equal(said("The balance is shown.\n- 100 is what it shows.\n", "The balance is shown.\n- 100 is what it shows.", "100"), "");
+  assert.equal(said("Rewards:\n\n- [ ] 100 is the balance of a new member.\n", "- [ ] 100 is the balance of a new member.", "100"), "");
+
+  // What is above the quote is read only as far as this: the nearest heading; the lines that end with a colon in
+  // the block directly above, with no empty line between; the rows above a row of a table.
+  assert.equal(said("# Maximum limits\n\n## Basic plan\n\nThe balance is 100.\n", "The balance is 100.", "100"), "");
+  assert.equal(said("Balance after one purchase (maximum):\n\n- Basic: 100\n", "- Basic: 100", "100"), "");
+  assert.equal(said("| Plan | Max |\n|---|---|\n| Basic | 100 |\n\nThe balance is 100.\n", "The balance is 100.", "100"), "");
+  assert.match(oneLine("The balance is &#8805; 100."), /markup that stands for a character/);
+  assert.match(oneLine("The balance is \ue000 100."), /characters that are not seen/);
+  assert.match(oneLine("The balance is\u2028100."), /characters that are not seen/);
+
   // Words listed before, slightly varied; and wordings that were not listed.
   for (const sentence of [
     "After a purchase the balance is at the most 100.",

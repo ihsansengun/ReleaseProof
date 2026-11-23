@@ -41,9 +41,11 @@ the criteria snapshot the binding is for:
      there is space or a line break, without marks of emphasis, with every
      kind of apostrophe and of dash as one. The list is the validator's and
      a wider one of the runner's own (`NOT_EQUALITY`);
-   - the heading the quote stands under, the line that introduces the list
-     it is an item of, or the header of the table it is a row of words any
-     of those;
+   - something directly above the quote words any of those: the nearest
+     heading above it (a line that begins with `#`, of any level); a line
+     that ends with a colon in the block of lines right above it, with no
+     empty line between; or, for a row of a table, the rows above it in
+     that block;
    - the quote holds letters outside the English alphabet, or with marks on
      them, since those words are known in English only.
 
@@ -290,7 +292,7 @@ Set by the owner on 23 November 2026. None is met by this code.
   without spaces. These are refused because a line break alone does not say
   where a sentence ends.
 - **The list is still a list.** A bound or a negation worded in a way that
-  is not on it ("no fewer" is, "tops out at" is not) is taken for an
+  is not on it ("no fewer" is, "peaks at" is not) is taken for an
   equality. What the sentence means is the approver's judgement, and the
   approval screen is to show the quote with the lines around it.
 - **A sentence that goes on after a full stop** is not seen to go on: "The
@@ -298,6 +300,34 @@ Set by the owner on 23 November 2026. None is met by this code.
   line. Neither is a line that carries on a sentence and happens to begin
   like an item of a list, or what a paragraph further up says about the
   quote.
+- **What is above a quote is read only so far.** A line that introduces a
+  list and is followed by an empty line, an introducing sentence that ends
+  with a full stop, a heading above the nearest one, a heading written by
+  underlining or in bold, and rows of a table below the quote are not read.
+  A bound stated there is not seen.
+- **A whole section can be unbindable.** Under a heading with a listed word
+  in it ("Add to cart", "Sort by price", "Limits and balances", "Default
+  settings", "Pricing per seat", "About the account"), or with a date or a
+  range of versions in it, nothing can be bound. A line of a code block
+  that begins with `#` is taken for a heading. A row of a table with a
+  listed word in it refuses every row below it.
+- **Dates, telephone numbers and the like refuse a quote** (a digit, a
+  dash, a digit reads as a range), and so do "min" for minutes, "May" for
+  the month and `R&D;`.
+- **A number's sign: what is refused though it is harmless**, and what is
+  not seen. Refused: a number right after an opening bracket ("(100
+  items)"), a number with a dash after it ("100 – always", "a 100-point
+  scale"), a number after a dash that is not a plain list marker (a list
+  marked with a longer dash, "- $100 off"). Not seen as a sign: a currency
+  code that is not three capitals before the number ("-usd 5", "-kr 5",
+  "-Rs. 5"), and "5 (CR)".
+- **Characters.** The first line of a file that begins with a byte-order
+  mark cannot be bound. Neither can a quote with a picture made of several
+  joined ones, a flag of a region, or a number in a keycap. Which
+  characters count as unassigned depends on the version of Unicode the
+  engine's runtime knows.
+- A line that ends "… is no." or "…, etc." or with a full stop inside curly
+  quotes is not taken to end a sentence.
 - A word broken over a line with a hyphen ("at le-" and "ast") is not put
   together again.
 - A number that begins a line and is followed by a full stop and a space is

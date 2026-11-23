@@ -357,8 +357,13 @@ export function criteriaProblems(binding: Binding, criteria: string): string[] {
     const before = quote.slice(0, span.start).replace(new RegExp(`${money}$`, "u"), "");
     const after = quote.slice(span.end).replace(new RegExp(`^${money}`, "u"), "");
     const signRead = found.text.startsWith("-") && quote[span.start] !== "-" && quote[span.start] !== "\u2212";
-    // A dash that only marks an item of a list, at the start of its line, is not a sign.
-    const marksItem = /(?:^|\n)[ \t]*-$/.test(before);
+    // A dash that only marks an item of a list is not a sign: at the start of its line, with space after it and
+    // then the number itself, on the quote's first line or after a line that ends a sentence. With a currency sign
+    // between ("-$5"), or after a line that runs on into it, it may be a minus.
+    const upTo = quote.slice(0, span.start);
+    const marker = /(?:^|\n)([ \t]*-[ \t]+(?:\[[ xX]\][ \t]+)?)$/.exec(upTo);
+    const lineBefore = marker ? upTo.slice(0, upTo.length - marker[1]!.length).replace(/\r?\n$/, "").split("\n").pop()! : "";
+    const marksItem = marker !== null && (marker.index === 0 || closes(lineBefore.replace(/\r$/, "")));
     const signLeft = (DASH.test(before.slice(-1)) && !marksItem) || before.endsWith("(") || DASH.test(after.slice(0, 1)) || /^(?:cr|dr)(?![a-z])/i.test(after);
     if (signRead || signLeft) problems.push(`${what} has a sign that the text does not state plainly`);
   };
