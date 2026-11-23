@@ -55,6 +55,32 @@ These are fixed; the design below implements them.
   activity.
 - **Backward compatibility** is preserved.
 
+And, on the first draft of this note (23 November 2026):
+
+- **Clarification, not override.** The customer may clarify wording that is
+  genuinely harmless. An actual contradiction in meaning cannot be
+  overridden: a requirement that states a bound or a negation is never
+  treated as an equality because someone confirmed a warning. If the
+  intended meaning changes, that takes a **new approved revision of the
+  criteria**. The engine validates every permitted clarification
+  independently; a general approval checkbox is not enough.
+- **The page-rendering time** may be up to 60 seconds, set and explicitly
+  approved per binding, with a separate limit for the run as a whole. Running
+  out of it is Unverified, unless a separately supported and approved
+  requirement about a deadline can be verified (none is supported here).
+- **Leave-time setting: deferred.** The investigation stays documented. No
+  unreliable mechanism is introduced; where reliable verification is not
+  possible the outcome is Unverified.
+- **The synthetic shop** may have a separate exact-equality demonstration
+  fixture. Its complete requirement and expected outcome are shown to the
+  owner for approval before it is used as an authoritative example. The
+  original business requirements are not modified to suit the engine.
+- **The pre-run Review & Confirm Requirements workflow is preserved.** The
+  AI identifies material uncertainty before execution and groups the
+  clarification questions for the customer.
+- The priority is one complete approved requirement demonstrated correctly,
+  not more kinds of verification.
+
 ## What changes in a binding
 
 ```
@@ -65,7 +91,7 @@ Binding (version 2): every field of version 1, and
   confirmations          what the approver was asked and confirmed (see Confirmations)
   safeguardVersion       which list of wordings the questions came from
   drawing                within: how long a page may take to show a value
-                         after it has loaded, in whole seconds, 1 to 10
+                         after it has loaded, in whole seconds, 1 to 60
   interpretationSha256   the hash of the exact text shown to the approver
 ```
 
@@ -185,9 +211,12 @@ from the criteria text and the binding.
 
 **Unsupported.** The unit cannot spell the value. Refused, as today.
 
-**Contradictory: refused, and nothing overrides it.** The approver's remedy
-is to change the criteria text, or to wait for a format version whose
-operator says what the text says.
+**Contradictory: refused, and nothing overrides it.** No confirmation, no
+affirmation and no setting makes a requirement that states a bound, a
+negation, a change or a possibility into an equality. If what was meant is
+an equality, the remedy is a **new approved revision of the criteria text**
+that says so; the binding is then for that revision. Otherwise it waits for
+a format version whose operator says what the text says.
 
 **Ambiguous: a question the approver is asked**, singly, in fixed words,
 with the text that raised it shown and the consequence of a wrong answer
@@ -247,6 +276,13 @@ Rules:
   never changes what is compared, and never turns an outcome into another.
 - The codes and the table are part of the format version.
 
+**This is clarification, not a checkbox.** Each permitted clarification is
+one named question about one marked place in the text, and the engine
+checks, independently and from the text, that exactly those questions arose
+at exactly those places. The affirmation above is asked as well, on every
+binding; it is not what lets a binding with a warning through, and it
+overrides nothing.
+
 A wrong answer to a question gives a check that compares the wrong thing.
 That is a person's judgement recorded and signed, which is where the owner's
 decisions put it; it is listed under the residual risks.
@@ -299,13 +335,20 @@ What follows, and what does not:
 - **There is no default and no fallback.** A version 1 binding has no
   drawing time; see "Backward compatibility".
 
-Bounds and cost. The drawing time is 1 to 10 seconds. Every reading takes at
-least that long, so a check with three conditions and three final readings
-and a drawing time of two seconds takes about fourteen seconds longer than
-today, plus the longer hold. The engine's time limit for a check includes
-the drawing time of every reading; a binding whose worst case exceeds what a
-run allows is refused when it is approved, not left to run out of time. The
-approval screen warns when a drafted drawing time is the minimum.
+Bounds and cost. The drawing time is 1 to 60 seconds, set and approved per
+binding. Every reading takes at least that long, so a check with three
+conditions and three final readings and a drawing time of two seconds takes
+about fourteen seconds longer than today, plus the longer hold; with sixty
+seconds, most of ten minutes. **The run has its own limit, separate from
+any binding's times.** The engine's time limit for a check includes the
+drawing time of every reading, and a binding whose worst case exceeds what
+the run allows is refused when it is approved, not left to run out of time.
+The approval screen warns when a drafted drawing time is the minimum.
+
+A requirement that itself states a deadline ("the balance is shown within 2
+seconds") is not what the drawing time is for. That is another kind of
+comparison, which version 2 does not have: such a requirement cannot be
+bound, and stays Unverified.
 
 ## Leaving: not part of version 2
 
@@ -337,9 +380,13 @@ that it is not tried again without cause:
   encrypted connection for an `https` target, and does not know which page
   sent what.
 
+By the owner's decision the setting is **deferred**: it does not hold up
+the main work, and no unreliable mechanism is introduced.
+
 Consequences:
 
-- Applications with a leave-time listener stay uncheckable under version 2.
+- Applications with a leave-time listener stay uncheckable under version 2:
+  they end Unverified.
   That is a cost, stated here and in `docs/check-runner.md`.
 - If the owner wants this pursued, it is **a separate design for a later
   format version**, starting from the proxy, and it needs at least: requests
@@ -370,6 +417,20 @@ Consequences:
 
 These bind the control plane and the dashboard (stage 5 of RPAI-33). None of
 it exists.
+
+**It is part of the pre-run Review & Confirm Requirements workflow**, which
+this design preserves: before anything is executed, the AI identifies what
+is materially uncertain about the requirements and puts the clarification
+questions to the customer in groups. For bindings that means:
+
+- The AI may **raise** uncertainty and may **group** questions (by
+  requirement, by kind) so that they can be reviewed together. Grouping is
+  how they are presented; each question is still answered by itself.
+- The engine's own questions (the table above) are always among them. The
+  AI can add questions and can hold a binding back; it can never remove,
+  merge or pre-answer one of the engine's.
+- Nothing is executed for a binding until its questions are answered. An
+  unanswered question leaves the requirement Unverified.
 
 1. **The interpretation is shown in full before signing**, as rendered: the
    requirement, what is checked, every step, the setup, what is not counted
@@ -471,7 +532,7 @@ today.
 | 7 | An operator other than `equals` is signed before its meaning exists, or carried out as an equality | Any other name is malformed in version 2 |
 | 8 | A drawing time set short, so that a placeholder is read as the value | Not prevented: a stable number at the end of the approved time is taken as the value. Stated to the approver in words; minimum of one second; a warning on a drafted minimum. Residual risk 3 |
 | 9 | A drawing time set long, so that a value that comes and goes is missed | The reading is the value at the end, stable over the engine's moment; every reading and both ends of the held reading must agree |
-| 10 | A long drawing time used to run every check out of time | The limit includes it, and a binding that cannot finish is refused at approval. Upper bound of ten seconds |
+| 10 | A long drawing time used to run every check out of time | The check's limit includes it, the run has its own limit, and a binding that cannot finish within it is refused at approval |
 | 11 | A version 1 binding is used for a trusted verdict | Three places, above |
 | 12 | Two bindings that differ only in a new field hash alike | The field sequence covers every field; vectors and a test |
 | 13 | Text shown to the approver passes for something else (a quote that imitates the end of the sentence; look-alike letters in a locator; unseen characters in the lines around a quote) | Blocks, not inline; escaped form beside anything outside printable ASCII; lines of context with unseen characters refuse the binding as the quote does |
@@ -531,6 +592,9 @@ By the owner's instruction: the shop's original business requirements are
 **not rewritten to fit the parser**, and what the engine cannot support
 stays Unverified.
 
+- **Before the fixture is used as an authoritative example, its complete
+  requirement text and the expected outcome of each statement are shown to
+  the owner for approval.**
 - The demonstration uses a **fixture of exact-equality statements** about
   the shop. It is **its own criteria snapshot**, named as a demonstration
   fixture in its id and wherever it is shown, and approved separately. It is
@@ -549,18 +613,12 @@ stays Unverified.
 
 ## Open questions for the owner
 
-1. **The table of what refuses and what is asked.** It is the judgement in
-   this design. Stricter: every hit refuses, as today. Looser is not
-   proposed.
-2. **The drawing time**: one to ten seconds, per binding. Whether a project
-   should also set a ceiling.
-3. **Leaving**: whether to open a separate design that starts from an
-   engine-owned proxy, or to accept that such applications cannot be
-   checked.
-4. **The fixture for the synthetic shop**: who writes it and who approves
-   it. And, in general, whether the person who drafts a binding may be the
-   one who approves it.
-5. **How long a confirmation stands**: whether the maximum age of an
+1. **The cells of the table.** The owner has decided the principle
+   (clarification of harmless wording, no override of a contradiction).
+   Which wordings are harmless enough to be a question is the judgement in
+   this design, cell by cell; each is for the owner to confirm or tighten.
+2. Whether the person who drafts a binding may be the one who approves it.
+3. **How long a confirmation stands**: whether the maximum age of an
    approval (an open question of TRUSTED-BINDING.md) should be shorter for a
    binding that rests on confirmations.
 
