@@ -1171,7 +1171,14 @@ async function atRest(page: Page, watch: Watch, deadline: number): Promise<void>
 
 // ---- pages and elements --------------------------------------------------------
 
-type OpenedPage = Page & { [NAVIGATIONS]?: { count: number; atOpen: number } };
+/**
+ * What a page has done to its own address since the engine opened it.
+ * `documents`: how many documents the main frame has loaded. `elsewhere`: the
+ * page changed its address, without loading a document, to anything but the
+ * bound address. `unknown`: the browser could not be asked.
+ */
+type Navigations = { documents: number; atOpen: number; elsewhere: boolean; unknown: boolean };
+type OpenedPage = Page & { [NAVIGATIONS]?: Navigations };
 const NAVIGATIONS = Symbol("navigations");
 
 /**
@@ -1179,29 +1186,51 @@ const NAVIGATIONS = Symbol("navigations");
  * The answer is 2xx with no redirect, and the main frame's address is then
  * exactly that path on the target, byte for byte, with no query and no
  * fragment.
+ *
+ * One document is loaded: the engine's. A page that loads another, itself
+ * again included, is not the page the engine opened. A page may change its
+ * address without loading a document (the history interface) only to the
+ * very address it is bound to: frameworks do that as they start, and it
+ * takes the page nowhere. To any other address, a query or a fragment
+ * included, it is not the bound page any more. Both are told by the browser,
+ * not by the page.
  */
 async function openPage(context: BrowserContext, watch: Watch, origin: string, path: string, deadline: number): Promise<Page> {
   const page: OpenedPage = await context.newPage();
-  const navigations = { count: 0, atOpen: 0 };
-  page[NAVIGATIONS] = navigations;
-  page.on("framenavigated", (frame) => void (frame === page.mainFrame() && (navigations.count += 1)));
   const address = `${origin}${path}`;
-  const before = navigations.count;
+  const navigations: Navigations = { documents: 0, atOpen: 0, elsewhere: false, unknown: false };
+  page[NAVIGATIONS] = navigations;
+  try {
+    const session = await context.newCDPSession(page);
+    let main = (await session.send("Page.getFrameTree")).frameTree.frame.id;
+    session.on("Page.frameNavigated", (event) => {
+      if (event.frame.parentId !== undefined) return;
+      main = event.frame.id;
+      navigations.documents += 1;
+    });
+    session.on("Page.navigatedWithinDocument", (event) => {
+      if (event.frameId === main && event.url !== address) navigations.elsewhere = true;
+    });
+    await session.send("Page.enable");
+  } catch {
+    navigations.unknown = true;
+  }
+  const before = navigations.documents;
   const answer = await page.goto(address, { waitUntil: "load", timeout: Math.max(1, Math.min(CHECK_LIMITS.actionMs, deadline - now())) }).catch(() => null);
   if (watch.wrong !== undefined) throw new Stop(watch.wrong);
   if (!answer || answer.status() < 200 || answer.status() > 299 || answer.request().redirectedFrom() !== null) throw new Stop("address-not-bound");
   await atRest(page, watch, deadline);
-  // One navigation: the engine's. A page that then takes itself elsewhere, or rewrites its address, is not the bound page.
-  if (navigations.count !== before + 1 || page.url() !== address) throw new Stop("address-not-bound");
-  navigations.atOpen = navigations.count;
+  if (navigations.unknown || navigations.documents !== before + 1 || navigations.elsewhere || page.url() !== address) throw new Stop("address-not-bound");
+  navigations.atOpen = navigations.documents;
   return page;
 }
 
-/** The page a fill or an act works in: the one opened before it, still at exactly its path. */
+/** The page a fill or an act works in: the one opened before it, still that document and still at exactly its path. */
 function pageAt(current: Page | undefined, origin: string, path: string): Page {
   if (!current || current.isClosed()) throw new Stop("step-not-done");
   const opened: OpenedPage = current;
-  if (current.url() !== `${origin}${path}` || opened[NAVIGATIONS]!.count !== opened[NAVIGATIONS]!.atOpen) throw new Stop("address-not-bound");
+  const navigations = opened[NAVIGATIONS]!;
+  if (current.url() !== `${origin}${path}` || navigations.unknown || navigations.elsewhere || navigations.documents !== navigations.atOpen) throw new Stop("address-not-bound");
   return current;
 }
 

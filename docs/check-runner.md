@@ -109,6 +109,16 @@ Not from script the page can replace.
   target that is not a GET or a HEAD is a write: counted for the `act` under
   way, something gone wrong if there is none, passed over only if the binding
   lists it as background.
+- **Whether a page is still the page the engine opened:** the browser says
+  how many documents the page has loaded and every change it has made to its
+  address without loading one. **One document is loaded, the engine's**; a
+  page that loads another, itself again included, is `address-not-bound`.
+  **A page may change its address through the history interface only to the
+  very address it is bound to**, which frameworks do as they start (the
+  owner's decision of 23 November 2026: harmless same-address history
+  operations, under strict confinement to the route and origin, and nothing
+  broader). To any other address, a query or a fragment or another spelling
+  included, even if it comes back afterwards, it is `address-not-bound`.
 - **Elements and their text:** one node, asked in an isolated world of the
   engine's own making. A page that replaces `getComputedStyle`,
   `getBoundingClientRect` or `innerText` changes nothing there (tested).

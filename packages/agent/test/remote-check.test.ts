@@ -657,12 +657,46 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     // A trailing slash and another letter case are other paths: this application does not serve them.
     unverified((await check({}, binding({ observation: reading("/account/", "balance"), steps: [see("count", "0"), { kind: "see", reading: reading("/account/", "balance"), expected: { from: "literal", value: "0" } }, ...BUY, see("count", "1")] }))).record, "error-answer");
     unverified((await check({}, binding({ steps: [see("count", "0", "/Account"), see("balance", "0"), ...BUY, see("count", "1", "/Account")] }))).record, "error-answer");
-    for (const rewrite of [`history.replaceState(null, "", "/account?shown=1")`, `location.hash = "#top"`, `history.pushState(null, "", "/account")`, `history.replaceState(null, "", "/other")`]) {
+    // A page may change its address without loading a document only to the very address it is bound to.
+    for (const rewrite of [
+      `history.replaceState(null, "", "/account?shown=1")`,
+      `history.pushState(null, "", "/account?")`,
+      `location.hash = "#top"`,
+      `history.replaceState(null, "", "/account#")`,
+      `history.replaceState(null, "", "/account/")`,
+      `history.replaceState(null, "", "/Account")`,
+      `history.replaceState(null, "", "/other")`,
+      `history.pushState(null, "", "/other"); history.replaceState(null, "", "/account")`,
+      `history.pushState(null, "", "/other"); history.back()`,
+      // There and back again, by a query or a fragment only: it was elsewhere.
+      `history.replaceState(null, "", "/account?shown=1"); history.replaceState(null, "", "/account")`,
+      `history.replaceState(null, "", "/account#top"); history.replaceState(null, "", "/account")`,
+    ]) {
       unverified((await check({ "GET /account": (ledger) => account(ledger, `<script>${rewrite}</script>`) })).record, "address-not-bound");
     }
     // A path the browser spells another way than the binding does: one navigation, and not the bound address.
     const braces = binding({ steps: [see("count", "0", "/acc{ount}"), see("balance", "0"), ...BUY, see("count", "1", "/acc{ount}")] });
     unverified((await check({ "GET /acc%7Bount%7D": (ledger) => account(ledger) }, braces)).record, "address-not-bound");
+    // To that very address it may: frameworks do it as they start, and it takes the page nowhere.
+    for (const harmless of [`history.replaceState(history.state, "", "/account")`, `history.replaceState({ started: true }, "", location.href)`, `history.pushState(null, "", "/account")`, `history.replaceState(null, "", location.pathname); history.replaceState(null, "", location.pathname)`]) {
+      const { record } = await check({ "GET /account": (ledger) => account(ledger, `<script>${harmless}</script>`) });
+      assert.equal(record.outcome, "verified", harmless);
+    }
+    // A page that loads itself again is another document than the one the engine opened, at the same address or not.
+    const again = `<script>if (!sessionStorage.getItem("again")) { sessionStorage.setItem("again", "1"); location.reload(); }</script>`;
+    unverified((await check({ "GET /account": (ledger) => account(ledger, again) })).record, "address-not-bound");
+    unverified((await check({ "GET /account": (ledger) => account(ledger, again.replace("location.reload()", `location.assign("/account")`)) })).record, "address-not-bound");
+    // The same holds of the page a step works in, between its opening and the step.
+    const worked = (script: string) =>
+      check({ "GET /buy": () => html(`<button onclick="fetch('/purchase', { method: 'POST' })">Buy</button><script>${script}</script>`) });
+    assert.equal((await worked(`history.replaceState(null, "", "/buy")`)).record.outcome, "verified");
+    unverified((await worked(`history.replaceState(null, "", "/buy?step=2")`)).record, "address-not-bound");
+    unverified((await worked(`setTimeout(() => history.replaceState(null, "", "/buy#late"), 50)`)).record, "address-not-bound");
+    // And between two steps in one page: elsewhere and back again as the check types is seen at the next step.
+    const typedInto = binding({ steps: [see("count", "0"), see("balance", "0"), { kind: "open", path: "/buy" }, { kind: "fill", path: "/buy", locator: testid("field"), value: { from: "literal", text: "blue" } }, BUY[1], see("count", "1")] });
+    const onInput = (script: string): Routes => ({ "GET /buy": () => html(`<input data-testid="field" oninput='${script}'><button onclick="fetch(&quot;/purchase&quot;, { method: &quot;POST&quot; })">Buy</button>`) });
+    assert.equal((await check(onInput(`history.replaceState(null, "", "/buy")`), typedInto)).record.outcome, "verified");
+    unverified((await check(onInput(`history.pushState(null, "", "/other"); history.replaceState(null, "", "/buy")`), typedInto)).record, "address-not-bound");
     // A page that takes itself to another page of the application.
     unverified((await check({ "GET /account": () => html(`<script>location.replace("/real")</script>`), "GET /real": (ledger) => account(ledger) })).record, "address-not-bound");
   });

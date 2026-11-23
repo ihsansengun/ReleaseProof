@@ -744,9 +744,11 @@ Third review (sound; corrections made):
 
 ## Open questions
 
-The next version of the binding format (an explicit comparison, a separate
-drawing time, what a page may send when it is left) is designed in
-[BINDING-FORMAT-V2.md](BINDING-FORMAT-V2.md). It is a design only.
+The next version of the binding format (an explicit comparison and a
+separate drawing time) is designed in
+[BINDING-FORMAT-V2.md](BINDING-FORMAT-V2.md). It is a design only. What a
+page may send when it is left is not designed there: it was investigated,
+the result is recorded in that note, and the setting is deferred.
 
 The owner has answered the questions of the earlier drafts; the answers are
 in the list of decisions above. Still to be settled, with the stage that
