@@ -248,15 +248,22 @@ Which is which, by the kind of wording and where it stands:
 
 | What the safeguard finds | In the quote | In a line that introduces the quote's list, or in any row above it in its table | In the heading above |
 | --- | --- | --- | --- |
-| A bound, a comparison, a range, an approximation, a symbol | **refused** | **refused** | question `heading-not-about-value` |
-| A negation, or a sign written as a word | **refused** | **refused** | question `heading-not-about-value` |
+| A bound, a comparison, a range, an approximation, a symbol | **refused** | **refused** | **refused** |
+| A negation, or a sign written as a word | **refused** | **refused** | **refused** |
 | A verb of change or a share ("increases", "adds", "doubles", "reduced", a percentage) | **refused** | **refused** | question `heading-not-about-value` |
 | A hedge ("may", "might", "could", "usually", "typically", "sometimes", "optionally", "default") | **refused** | **refused** | question `heading-not-about-value` |
-| "by", "plus", "another", "extra", "additional" directly before the expected number (only space or a currency sign between), or "plus" directly after it | **refused** | n/a | n/a |
+| "by", "plus", "another", "extra", "additional" directly before a number taken from the quote (the expected value, or a `see` value; only space or a currency sign between), or "plus" directly after it | **refused** | n/a | n/a |
 | Otherwise a bare "by", "per", "each", "every", "plus", "times", "another", "extra", "additional" | question `not-a-rate` | question `not-a-rate` | question `not-a-rate` |
 | "otherwise" (its condition is in another sentence) | **refused** | **refused** | question `heading-not-about-value` |
 | "if" | question `condition-established` | question `condition-established` | question `condition-established` |
 
+- **A bound or a negation in the heading refuses**, although the engine
+  cannot tell "Maximum balances" from "Limits and balances". Under the
+  first, a line "Gold: 100" states a bound, and the owner's decision is that
+  no confirmation makes a bound into an equality. Until the owner says
+  otherwise this cell is the strict one: nothing under such a heading can be
+  bound, and the remedy is a new revision of the criteria with another
+  heading. (Open question 1 names the cells that could be loosened.)
 - **A refusal anywhere wins.** Otherwise every question at every place is
   asked: a word in the quote and another in the heading are two questions.
 - The rows name kinds, with examples. **The stage that implements this
@@ -378,7 +385,8 @@ What follows, and what does not:
   until the later of (its load, plus the drawing time, plus the settling
   time) and (the last write, plus the settling time). It is sampled
   throughout, and its end is read as a reading is: stable over the engine's
-  moment. A verdict needs the same number at its first clean reading and at
+  moment. A sample in the hold that is another number, or not a number,
+  gives no verdict. A verdict needs the same number at its first clean reading and at
   its end. This is longer than today's hold, never shorter.
 - A `failed` needs everything it needs today, on readings that are all
   clean.
@@ -395,6 +403,8 @@ seconds, most of ten minutes. **The run has its own limit, separate from
 any binding's times.** The engine's time limit for a check includes the
 drawing time of every reading, and a binding whose worst case exceeds what
 the run allows is refused when it is approved, not left to run out of time.
+That is per binding: a set whose checks together exceed the run's limit
+ends its later checks as `time-ran-out`, which is unverified.
 The approval screen warns when a drafted drawing time is the minimum.
 
 A requirement that itself states a deadline ("the balance is shown within 2
@@ -486,6 +496,11 @@ questions to the customer in groups. For bindings that means:
 - The engine's own questions (the table above) are always among them. The
   AI can add questions and can hold a binding back; it can never remove,
   merge or pre-answer one of the engine's.
+- **A question the AI raises is marked as the AI's.** It is shown apart
+  from the engine's questions and never beside the interpretation; it is not
+  part of the rendered text or of the signed binding; and its answer is
+  never a confirmation. It can lead only to a binding being held back or to
+  a new revision of the criteria, never to an approval.
 - Nothing is executed for a binding until its questions are answered. An
   unanswered question leaves the requirement Unverified.
 
@@ -694,6 +709,12 @@ stays Unverified.
    (clarification of harmless wording, no override of a contradiction).
    Which wordings are harmless enough to be a question is the judgement in
    this design, cell by cell; each is for the owner to confirm or tighten.
+   Two in particular: a bound or a negation **in a heading** refuses here,
+   which makes whole sections unbindable under headings such as "Limits and
+   balances" (loosening it to a question would need the owner's explicit
+   decision, and an answer "it is a bound" that ends in a new revision); and
+   **`condition-established`**, where the engine can check least, since
+   whether the steps make a condition true is the approver's judgement.
 2. Whether the person who drafts a binding may be the one who approves it.
 3. **Re-approval.** Whether a binding that is unchanged but for the
    revision may still be approved again with one act (the earlier decision),
