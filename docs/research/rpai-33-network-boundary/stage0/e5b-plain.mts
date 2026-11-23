@@ -1,0 +1,14 @@
+import { launch, sleep } from "./lib.mts";
+const origin = "http://localhost:4311";
+const key = "plain" + Date.now();
+const fx = await (await fetch(origin + "/api/test/customers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key }) })).json() as { email: string; password: string };
+const browser = await launch();
+const context = await browser.newContext();
+const page = await context.newPage();
+page.on("response", (r) => { if (r.request().method() !== "GET") console.log("  ", r.request().method(), r.url().replace(origin, ""), r.status(), JSON.stringify(r.headers()["set-cookie"] ?? "").slice(0, 120), r.headers()["x-action-redirect"] ?? ""); });
+await page.goto(origin + "/login"); await page.fill("#email", fx.email); await page.fill("#password", fx.password); await page.click("form button[type=submit]"); await sleep(1200); console.log("after login:", page.url());
+await page.goto(origin + "/"); await page.locator("button[aria-label^=Add]").first().click(); await sleep(1200); console.log("after add:", page.url());
+await page.goto(origin + "/checkout"); await page.fill("#card", "4242424242424242"); await page.click("text=Pay now"); await sleep(1500); console.log("after pay:", page.url());
+await page.goto(origin + "/account"); console.log("account:", page.url(), await page.locator("[data-testid=loyalty-balance]").textContent().catch(() => "?"));
+console.log(JSON.stringify(await context.cookies()).slice(0, 300));
+await browser.close();
