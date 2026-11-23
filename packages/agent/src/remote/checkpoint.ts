@@ -109,7 +109,7 @@ export type Checkpoint = {
   readonly mark: string;
   /** The key the browser is to accept: the SHA-256 of the checkpoint's public key, in base64. */
   readonly keyPin: string;
-  /** Requests dealt with so far, in the order they were dealt with, up to the limit of notes. */
+  /** Requests dealt with so far, first to last as they were dealt with, up to the limit of notes. */
   notes(): readonly CheckpointNote[];
   /** How many times each outcome has come about. These go on when the notes are full. */
   counts(): Readonly<Record<CheckpointOutcome, number>>;
