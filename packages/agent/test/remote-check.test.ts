@@ -452,6 +452,18 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
       unverified(record, "final-readings-disagree");
       assert.equal(record.contradictionSeen, true, "contradiction seen, preconditions not established");
     }
+    // Right on every reading, and on the page that is held wrong at first and right at the end: not verified.
+    let loads = 0;
+    const heldWrongFirst: Routes = {
+      "GET /account": (ledger) =>
+        ++loads === 7
+          ? html(`<p data-testid="balance">50</p><p data-testid="count">${ledger.count}</p><script>setTimeout(() => { document.querySelector("[data-testid=balance]").textContent = "100" }, 1500)</script>`)
+          : account(ledger),
+    };
+    const held = await check(heldWrongFirst, binding({ settling: { within: 3, readings: 3 } }));
+    assert.equal(held.record.outcome, "unverified");
+    assert.equal(loads, 7, "the seventh page of the account was the held one");
+    assert.deepEqual(held.record.finalReadings.slice(0, 3).map((entry) => entry.value), ["100", "100", "100"]);
     // Wrong once and then right for good, at least twice: verified.
     assert.equal((await check(sequence([0, 50, 100, 100]))).record.outcome, "verified");
   });
@@ -720,7 +732,9 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     const deferred = await check({ "GET /account": (ledger) => account(ledger, `<script>if (window.fetchLater) fetchLater("/hit", { method: "POST", activateAfter: 600000 })</script>`), "POST /hit": () => json({}) });
     assert.equal(deferred.record.outcome, "verified");
     assert.deepEqual(deferred.ledger.requests.filter((line) => line.startsWith("POST /hit")), []);
-    // A frame the browser keeps apart cannot be asked what it has registered: no verdict.
+    // A page with a sandboxed frame gets no verdict. Today that is for a reason of the engine's own (with service
+    // workers blocked, the browser library's script fails in such a frame, and that counts as an error of the
+    // page), so this does not reach the rule for a frame that cannot be asked: no test does yet.
     assert.equal((await check({ "GET /account": (ledger) => account(ledger, `<iframe sandbox="allow-scripts" srcdoc="<script>addEventListener('pagehide', () => {})</script>"></iframe>`) })).record.outcome, "unverified");
     // A page the application opened itself is closed by the engine like its own, and asked the same.
     const opener = await check({ "GET /buy": () => html(`<button onclick="window.open('/receipt'); fetch('/purchase', { method: 'POST' })">Buy</button>`), "GET /receipt": () => html(`<p>Thank you</p><script>addEventListener("pagehide", () => navigator.sendBeacon("/hit", "x"))</script>`), "POST /hit": () => json({}) });
@@ -742,6 +756,9 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     // Typed in two steps and put together by the application.
     const inTwo = binding({ steps: [see("count", "0"), see("balance", "0"), { kind: "open", path: "/buy" }, { kind: "fill", path: "/buy", locator: testid("a"), value: { from: "literal", text: "10" } }, { kind: "fill", path: "/buy", locator: testid("b"), value: { from: "literal", text: "0" } }, BUY[1], see("count", "1")] });
     assert.match(checkProblems(inTwo).join("\n"), /types a value that the check expects to read/);
+    // A value that only a later condition expects, and the final value could not be a spelling of.
+    const laterOnly = binding({ steps: [see("count", "0"), see("balance", "0"), { kind: "open", path: "/buy" }, { kind: "fill", path: "/buy", locator: testid("field"), value: { from: "literal", text: "7" } }, BUY[1], see("count", "7")], expected: { start: 0, end: 3, value: "250" } });
+    assert.match(checkProblems(laterOnly).join("\n"), /types a value that the check expects to read/);
     // A starting state that was read before the value was typed is not read after it: nought may be typed.
     assert.deepEqual(checkProblems(typing("0")), []);
     // 24.99 expected: typed as hundredths, or with a sign, it is the same amount.

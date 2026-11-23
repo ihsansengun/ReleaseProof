@@ -48,7 +48,7 @@ The outcome is one of:
 
 | Outcome | When |
 | --- | --- |
-| `verified` | Everything done under the rules, nothing wrong anywhere, and from some final reading on, through the last, the expected value, at least twice. |
+| `verified` | Everything done under the rules, nothing wrong anywhere, from some final reading on, through the last, the expected value, at least twice, and the held reading the expected value at its start and its end. |
 | `failed` | Everything done under the rules, nothing wrong anywhere, no request of the page blocked by the engine, and every final reading, the held one at its start and its end included, the same value, which is not the expected one. |
 | `unverified` | Everything else, with one reason from a fixed list (`UNVERIFIED_REASONS`). A condition that is not met is a precondition unmet, never a failure. |
 
@@ -106,14 +106,16 @@ can satisfy those and not be legible. A reading is unverified unless:
 The value is then read twice, a moment apart, and must be the same. This
 refuses some ordinary pages (gradient text, an icon added by a style sheet,
 a card with a drop-shadow filter, an ancestor that is slightly transparent,
-a value under a banner fixed to the bottom of the window): they end
-unverified, never wrong.
+text in a colour less than nine tenths opaque (a common grey is 87% black),
+a value of more than forty letters, a value under a banner fixed to the
+bottom of the window): they end unverified, never wrong.
 
 A reading costs about a second and a half (two reads, and the waits for
 rest). With a settling time shorter than the journey after the last write,
 the final readings follow one another and are not spread. The record's
-`finalReadings` holds two more entries than the binding's count when a
-verdict was reached: the held reading at its start and its end.
+`finalReadings` holds two more entries than the binding's count whenever
+the held reading was made, whether or not a verdict followed: its start and
+its end.
 
 ## Closing a page
 
@@ -122,7 +124,8 @@ switches a page's script off before closing it, and nothing is sent. But
 then the page has not done what it meant to do. The engine therefore asks
 the browser, of every frame, whether anything is registered for leaving
 (`pagehide`, `unload`, `visibilitychange`, `freeze`), and takes a frame it
-cannot ask (one the browser keeps apart) as having something. If so
+cannot ask (one the browser keeps apart) as having something; no test
+reaches that last rule yet. If so
 the check ends `leave-script-suppressed`, whatever it read. Many
 applications register such a listener for statistics; until a binding can
 say that an application's leave-time script may be ignored (a signed field,
@@ -138,7 +141,8 @@ Set by the owner on 23 November 2026. None is met by this code.
    detected; neither is text drawn by an image or a font of other shapes;
    neither is anything the text's own element paints over or beside its
    letters (a struck-through line as thick as the text in the colour of the
-   page, a stroke wide enough to swallow the letters, a shadow copy set on
+   page, a stroke wide enough to swallow the letters, an outline drawn
+   inwards over them, a shadow copy set on
    the first line, a strip narrower than the gap between two places the
    engine looks at). Trusted Passed for a requirement about what is
    displayed stays off until this is resolved (a picture compared with the

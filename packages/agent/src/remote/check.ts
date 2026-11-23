@@ -338,7 +338,8 @@ const NODE_AT = `function (path) {
  * that is not transparent, a size that can be read, no generated text beside
  * it and no override of the direction it is read in. `places` are where the
  * engine then asks the browser what is drawn on top: the centre of the box
- * and, for a reading, the centre of every box of text.
+ * and, for a reading, three places across every letter, each with the place
+ * of the element that holds the letter.
  */
 const FACTS_OF = `function (wantText) {
   ${PATH_OF}
