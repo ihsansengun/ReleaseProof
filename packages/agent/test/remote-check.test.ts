@@ -987,7 +987,7 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     // focus or before the text goes in; into another window's. Nothing is typed into it there, and no verdict.
     for (const on of ["onfocus", "onbeforeinput"]) {
       const moved = await check(
-        { ...fixture, ...inner(`<p>inner</p><script>document.addEventListener("input", (event) => fetch("/taken?typed=" + event.target.value)); document.addEventListener("change", (event) => fetch("/taken?changed=" + event.target.value))</script>`), "GET /enter": () => html(`<iframe src="/inner" style="width:200px;height:40px;border:0"></iframe><input aria-label="Name" ${on}="frames[0].document.body.appendChild(this)">`) },
+        { ...fixture, ...inner(`<p>inner</p><script>document.addEventListener("beforeinput", (event) => fetch("/taken?about=" + event.data)); document.addEventListener("input", (event) => fetch("/taken?typed=" + event.target.value)); document.addEventListener("change", (event) => fetch("/taken?changed=" + event.target.value))</script>`), "GET /enter": () => html(`<iframe src="/inner" style="width:200px;height:40px;border:0"></iframe><input aria-label="Name" ${on}="frames[0].document.body.appendChild(this)">`) },
         typesLast(),
       );
       unverified(moved.record, "address-not-bound");
