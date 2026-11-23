@@ -216,7 +216,8 @@ test("a binding that breaks a rule of the journey is refused, and its check is n
 
 // ---- carried out ---------------------------------------------------------------
 
-describe("an approved check, carried out by the engine", { concurrency: 6 }, () => {
+// The limit is for a run that hangs: it then fails, where it would otherwise never end.
+describe("an approved check, carried out by the engine", { concurrency: 6, timeout: 1_500_000 }, () => {
   // ---- the positive cases ----
 
   test("verifies: starting state seen, write witnessed, the expected value on every final reading", async () => {
@@ -393,6 +394,7 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
       ["in a frame", (ledger) => `<iframe srcdoc="<p data-testid='balance'>${ledger.balance}</p>"></iframe><p data-testid="count">${ledger.count}</p>`, "element-missing"],
       ["a heading", (ledger) => `<h2 data-testid="balance">${ledger.balance}</h2><p data-testid="count">${ledger.count}</p>`, "element-not-a-value"],
       ["inside a label", (ledger) => `<label><span data-testid="balance">${ledger.balance}</span></label><p data-testid="count">${ledger.count}</p>`, "element-not-a-value"],
+      ["inside a button", (ledger) => `<button><span data-testid="balance">${ledger.balance}</span></button><p data-testid="count">${ledger.count}</p>`, "element-not-a-value"],
     ];
     for (const [name, body, reason] of cases) {
       const { record } = await check({ "GET /account": (ledger) => html(body(ledger)) });
@@ -720,6 +722,10 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
     assert.deepEqual(deferred.ledger.requests.filter((line) => line.startsWith("POST /hit")), []);
     // A frame the browser keeps apart cannot be asked what it has registered: no verdict.
     assert.equal((await check({ "GET /account": (ledger) => account(ledger, `<iframe sandbox="allow-scripts" srcdoc="<script>addEventListener('pagehide', () => {})</script>"></iframe>`) })).record.outcome, "unverified");
+    // A page the application opened itself is closed by the engine like its own, and asked the same.
+    const opener = await check({ "GET /buy": () => html(`<button onclick="window.open('/receipt'); fetch('/purchase', { method: 'POST' })">Buy</button>`), "GET /receipt": () => html(`<p>Thank you</p><script>addEventListener("pagehide", () => navigator.sendBeacon("/hit", "x"))</script>`), "POST /hit": () => json({}) });
+    unverified(opener.record, "leave-script-suppressed");
+    assert.deepEqual(opener.ledger.requests.filter((line) => line.startsWith("POST /hit")), []);
     // Listeners for other things are nobody's business.
     assert.equal((await check({ "GET /account": (ledger) => account(ledger, `<script>addEventListener("click", () => {}); addEventListener("pageshow", () => {}); addEventListener("beforeunload", () => {})</script>`) })).record.outcome, "verified");
     const shared = await check(leaving(`new SharedWorker(URL.createObjectURL(new Blob(['fetch("' + location.origin + '/hit", { method: "POST" })'], { type: "text/javascript" })))`));
@@ -754,15 +760,17 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
   });
 
   test("the settling time is the binding's: readings run to its end, counted from the last write, and conditions wait only after a write", async () => {
-    // A journey far shorter than the approved time: the last reading still waits for all of it.
-    const slow = binding({ settling: { within: 5, readings: 3 } });
+    // A journey far shorter than the approved time: the last reading still waits for all of it. Twelve seconds,
+    // so that readings made one after the other, with no waiting, would be done long before.
+    const slow = binding({ settling: { within: 12, readings: 3 } });
     const { record } = await check({}, slow);
     assert.equal(record.outcome, "verified");
     const [first, middle, last] = record.finalReadings;
     assert.ok(record.lastWriteAfterMs !== undefined);
-    assert.ok(last!.afterMs - record.lastWriteAfterMs! >= 5_000, `the last reading came ${last!.afterMs - record.lastWriteAfterMs!} ms after the write`);
-    assert.ok(first!.afterMs - record.lastWriteAfterMs! < 3_000, "the first reading is made at once");
-    assert.ok(middle!.afterMs - first!.afterMs >= 1_000 && last!.afterMs - middle!.afterMs >= 1_000, "the others are spread between");
+    assert.ok(last!.afterMs - record.lastWriteAfterMs! >= 12_000, `the last reading came ${last!.afterMs - record.lastWriteAfterMs!} ms after the write`);
+    assert.ok(first!.afterMs - record.lastWriteAfterMs! < 5_000, "the first reading is made at once");
+    const midway = (first!.afterMs + last!.afterMs) / 2;
+    assert.ok(Math.abs(middle!.afterMs - midway) < 1_500, `the middle reading came ${middle!.afterMs - midway} ms from midway`);
     // With no write, the time is counted from the first step.
     const still = await check({ "GET /account": (ledger) => html(`<p data-testid="balance">100</p><p data-testid="count">${ledger.count}</p>`) }, binding({ steps: [see("count", "0")], settling: { within: 4, readings: 3 } }));
     assert.equal(still.record.outcome, "verified");
@@ -848,16 +856,16 @@ test("the runner is used by no run, and no source writes a trusted result", asyn
   const src = path.join(root, "packages", "agent", "src");
   const runner = path.join(src, "remote", "check.ts");
   // What the runner hands out, by name. A new name is a new way in: it is added here, on purpose, or not at all.
-  const exported = [...(await readFile(runner, "utf8")).matchAll(/^export (?:async )?(?:const|function|type|class) ([A-Za-z_]+)/gm)].map((match) => match[1]!).sort();
+  const exported = [...(await readFile(runner, "utf8")).matchAll(/^export\s+(?:async\s+)?[a-z]+\s+([A-Za-z_$][\w$]*)/gm)].map((match) => match[1]!).sort();
+  assert.equal(exported.length, [...(await readFile(runner, "utf8")).matchAll(/^export\b/gm)].length, "every export of the runner is one this test can name");
   assert.deepEqual(exported, ["CHECK_LIMITS", "CheckOptions", "CheckRecord", "FinalReading", "UNVERIFIED_REASONS", "UnverifiedReason", "carryOutCheck", "checkProblems", "defaultLimitMs", "expectedInUnit", "fixtureKey", "readStrictNumber"]);
   assert.doesNotMatch(await readFile(runner, "utf8"), /^export \{|^export \*|^export default/m, "the runner hands nothing out under another name");
   const refers = new RegExp(`/check(\\.[cm]?[jt]s)?["'\`]|\\b(?:${exported.join("|")})\\b`);
   // Every place code lives, not only the engine's own source: nothing anywhere calls the runner but its tests.
   const files: string[] = [];
-  for (const top of ["packages", "apps", "ci", "eval"]) {
-    for (const file of await readdir(path.join(root, top), { recursive: true }).catch(() => [] as string[])) {
-      if (/\.(?:[cm]?[jt]sx?)$/.test(file) && !file.split(path.sep).includes("node_modules")) files.push(path.join(root, top, file));
-    }
+  for (const file of await readdir(root, { recursive: true })) {
+    const parts = file.split(path.sep);
+    if (/\.(?:[cm]?[jt]sx?)$/.test(file) && !parts.includes("node_modules") && !parts.some((part) => part.startsWith("."))) files.push(path.join(root, file));
   }
   assert.ok(files.length > 20);
   for (const file of files) {

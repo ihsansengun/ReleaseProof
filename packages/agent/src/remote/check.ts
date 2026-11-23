@@ -622,7 +622,7 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
           if (written.length !== 1 || written[0]!.method !== method || written[0]!.path !== path || written[0]!.status === undefined || written[0]!.status >= 400) throw new Stop("write-not-as-expected");
           progress.writesCounted += 1;
           lastWriteAt = written[0]!.answeredAt ?? now();
-          progress.lastWriteAfterMs = Math.round(lastWriteAt - began);
+          progress.lastWriteAfterMs = Math.ceil(lastWriteAt - began);
           // After a write the page may have gone anywhere on the target: it is not worked in again.
           await closeByEngine(watch, page);
           current = undefined;
@@ -668,7 +668,7 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
       if (due > deadline) throw new Stop("time-ran-out");
       await sleepUntil(due);
       sound();
-      const afterMs = Math.round(now() - began);
+      const afterMs = Math.floor(now() - began);
       try {
         const value = await readOnce(context, watch, origin, binding.observation, deadline);
         progress.finalReadings.push({ afterMs, value });
@@ -695,9 +695,9 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
     if (verified || contradicted) {
       // And it may be what a page shows before it has drawn its value, or before it corrects it. One more reading
       // is held on its page for the whole approved time: a verdict is the same value there at the start and the end.
-      const afterMs = Math.round(now() - began);
+      const afterMs = Math.floor(now() - began);
       const held = await readHeld(context, watch, origin, binding.observation, binding.settling.within * 1_000, deadline);
-      progress.finalReadings.push({ afterMs, value: held[0] }, { afterMs: Math.round(now() - began), value: held[1] });
+      progress.finalReadings.push({ afterMs, value: held[0] }, { afterMs: Math.floor(now() - began), value: held[1] });
       if (held[0] !== expected || held[1] !== expected) progress.contradictionSeen = true;
       const stood = verified ? expected : values[0];
       if (held[0] !== stood || held[1] !== stood) throw new Stop("final-readings-disagree");

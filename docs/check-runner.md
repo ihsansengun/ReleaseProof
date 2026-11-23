@@ -87,15 +87,27 @@ can satisfy those and not be legible. A reading is unverified unless:
   high, wholly in the viewport, and to the right of the letter before it or
   on a line below: text drawn in another sequence than it is written is not
   what is read;
+- the text is drawn near the size it is set in (not scaled below half, nor
+  below eight pixels), with no shadow and no reflection that would draw it
+  a second time;
 - the colour of the text, of its first letter and of its first line is one
   the engine can read the transparency of, and is not transparent;
 - nothing overrides the direction the text is read in;
-- at the centre of every letter, what the browser finds there is the
-  element or inside it.
+- at three places across every letter, what the browser finds there is
+  the text's own element: not something else, inside the element or
+  outside it, drawn over the letter.
 
 The value is then read twice, a moment apart, and must be the same. This
 refuses some ordinary pages (gradient text, an icon added by a style sheet,
-a card with a drop-shadow filter): they end unverified, never wrong.
+a card with a drop-shadow filter, an ancestor that is slightly transparent,
+a value under a banner fixed to the bottom of the window): they end
+unverified, never wrong.
+
+A reading costs about a second and a half (two reads, and the waits for
+rest). With a settling time shorter than the journey after the last write,
+the final readings follow one another and are not spread. The record's
+`finalReadings` holds two more entries than the binding's count when a
+verdict was reached: the held reading at its start and its end.
 
 ## Closing a page
 
@@ -103,7 +115,8 @@ The browser shows nobody what a page sends as it is left, so the engine
 switches a page's script off before closing it, and nothing is sent. But
 then the page has not done what it meant to do. The engine therefore asks
 the browser, of every frame, whether anything is registered for leaving
-(`pagehide`, `unload`, `beforeunload`, `visibilitychange`, `freeze`). If so
+(`pagehide`, `unload`, `visibilitychange`, `freeze`), and takes a frame it
+cannot ask (one the browser keeps apart) as having something. If so
 the check ends `leave-script-suppressed`, whatever it read. Many
 applications register such a listener for statistics; until a binding can
 say that an application's leave-time script may be ignored (a signed field,
@@ -160,6 +173,15 @@ Set by the owner on 23 November 2026. None is met by this code.
   check, but the request to that host has then been sent. Keeping a worker
   from other hosts is a matter for the network it runs in, not for this
   code.
+- **A number drawn beside the element** (by a sibling, or by generated text
+  of a parent) is not part of what is read: "9" before an element that
+  holds "100" is seen as 9100 and read as 100. Which element holds the whole
+  value is the approver's choice of locator.
+- **The typed-value rule knows numbers written as numbers.** A `fill` of
+  `1e2`, `0x64` or `50+50` is not taken for 100, and an application that
+  works such a text out and shows the result would have it read as its own.
+- **Requests put by for later** (`fetchLater`) are taken away from pages, as
+  shared workers are.
 - **Shared workers** are taken away from pages (their requests are not seen
   either) and service workers are blocked. An application that needs one
   and quietly does without could be judged on what it then shows.
@@ -183,6 +205,10 @@ Set by the owner on 23 November 2026. None is met by this code.
 - The engine's own limits (`CHECK_LIMITS`) only ever end a check as
   unverified. A check is given up five seconds past its limit even if a page
   keeps the browser busy.
+- Once, on this machine and once on a reviewer's, the browser the tests
+  share stopped in the middle of a run; every check after it ended
+  `engine-error` or `setup-failed`, none with a verdict. It did not happen
+  again and the cause is not known.
 - The tests that hold the runner unused read source text. They list what the
   runner exports and look for those names everywhere code lives; they are
   not a proof.
