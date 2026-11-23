@@ -21,8 +21,11 @@ Given a browser, the target's address, a run id and a binding:
    journey's first write is missing or already shows the final value; a
    `fill` or an `act` that does not follow an `open` of its own page; a
    locator that contains its expected value in any of its spellings; a value
-   its unit cannot spell. A refused binding sends nothing to the
-   application.
+   its unit cannot spell; a `fill` that types a value the check expects to
+   read, in any obvious spelling (with or without sign, grouping or
+   noughts, in units or in hundredths). A refused binding sends nothing to
+   the application. A value typed from a fixture's answer is held to the
+   same rule when the check runs.
 2. Applies the setup. A fixture is called from outside any browser context,
    with a key made from the run id and the binding's hash.
 3. Opens a browser context with nothing stored, in the binding's language
@@ -31,10 +34,11 @@ Given a browser, the target's address, a run id and a binding:
    once, the last not before the approved settling time has passed since the
    last write (with no write, since the first step), the others between. If
    the journey itself took longer than that time, they follow one another.
-5. Before a contradiction counts as a failure, makes one more reading and
-   holds it: read, and read again on the same page once the whole approved
-   time has passed there. A page that shows a placeholder first and its
-   value later shows itself here.
+5. Before either verdict, makes one more reading and holds it: read, and
+   read again on the same page once the whole approved time has passed
+   there. A page that shows a placeholder first and its value later, or a
+   value it then corrects, shows itself here.
+6. Closes every page with its script switched off (see below).
 
 The outcome is one of:
 
@@ -42,6 +46,11 @@ The outcome is one of:
 | --- | --- |
 | `verified` | Everything done under the rules, nothing wrong anywhere, and from some final reading on, through the last, the expected value, at least twice. |
 | `failed` | Everything done under the rules, nothing wrong anywhere, no request of the page blocked by the engine, and every final reading, the held one at its start and its end included, the same value, which is not the expected one. |
+
+Neither verdict is given if a page the engine closed had something
+registered to do on being left (`leave-script-suppressed`), or if an answer
+of the application sent the browser on to another host
+(`redirect-to-other-host`).
 | `unverified` | Everything else, with one reason from a fixed list (`UNVERIFIED_REASONS`). A condition that is not met is a precondition unmet, never a failure. |
 
 ## Where facts about a page come from
@@ -65,15 +74,60 @@ Not from script the page can replace.
 
 ## What "displayed" means for a reading
 
-More than the design's four conditions, because the first review showed a
-number can satisfy those and not be legible. A reading is unverified unless:
-the element and every ancestor, in the tree as drawn (slots included), has
-no filter, mask or clip path and a combined opacity of at least 0.9; every
-piece of text in it has a colour that is not transparent, is at least six
-pixels high, lies wholly in the viewport, has no override of its reading
-direction and no generated text (`::before`, `::after`) beside it; and
-nothing lies over any of it. The value is then read twice, a moment apart,
-and must be the same.
+More than the design's four conditions, because the reviews showed a number
+can satisfy those and not be legible. A reading is unverified unless:
+
+- the element and every ancestor, in the tree as drawn (slots included),
+  has no filter, mask, clip path or blend mode and a combined opacity of at
+  least 0.9;
+- the element holds nothing that draws something of its own beside the
+  text: no generated text (`::before`, `::after`), no field, picture or
+  marker, and no tree of its own, a closed one included;
+- every letter of its text has one box, at least two pixels wide and six
+  high, wholly in the viewport, and to the right of the letter before it or
+  on a line below: text drawn in another sequence than it is written is not
+  what is read;
+- the colour of the text, of its first letter and of its first line is one
+  the engine can read the transparency of, and is not transparent;
+- nothing overrides the direction the text is read in;
+- at the centre of every letter, what the browser finds there is the
+  element or inside it.
+
+The value is then read twice, a moment apart, and must be the same. This
+refuses some ordinary pages (gradient text, an icon added by a style sheet,
+a card with a drop-shadow filter): they end unverified, never wrong.
+
+## Closing a page
+
+The browser shows nobody what a page sends as it is left, so the engine
+switches a page's script off before closing it, and nothing is sent. But
+then the page has not done what it meant to do. The engine therefore asks
+the browser, of every frame, whether anything is registered for leaving
+(`pagehide`, `unload`, `beforeunload`, `visibilitychange`, `freeze`). If so
+the check ends `leave-script-suppressed`, whatever it read. Many
+applications register such a listener for statistics; until a binding can
+say that an application's leave-time script may be ignored (a signed field,
+with the format change that adds the drawing time), such applications
+cannot be checked.
+
+## Gates before activation
+
+Set by the owner on 23 November 2026. None is met by this code.
+
+1. **Legibility.** Text the same colour as what is behind it is not
+   detected, and neither is text drawn by an image or a font of other
+   shapes. Trusted Passed for a requirement about what is displayed stays
+   off until this is resolved (a picture compared with the text read) or
+   the requirement kind is explicitly kept out.
+2. **A separate, approved drawing time**, distinct from the settling time
+   after a write, in a new version of the signed binding format. Until
+   then the held reading uses the settling time. Running out of time alone
+   never makes a failure: a failure is the same value at the start and the
+   end of the held reading, after every other condition.
+3. **The time limit** is enforced by the engine's own timer, not by the
+   browser: a check is given up five seconds past its limit, as
+   `time-ran-out`, and does nothing more to the application (tested with a
+   page that keeps the browser busy for ever).
 
 ## What it does not do yet
 
@@ -91,29 +145,29 @@ and must be the same.
 
 - **Text the same colour as what is behind it** (white on white) is not
   detected. Neither is text drawn by an image or by a font that draws other
-  shapes than its characters. A picture compared with the text read would
-  close this; the runner keeps no pictures yet.
+  shapes than its characters. See the first gate above.
 - **How long a page takes to draw its value is covered by the approved
   settling time and by nothing else.** A page that shows a placeholder for
-  longer than that time, and the real value afterwards, would be read as the
-  placeholder throughout, and a check could end `failed`. The settling time
-  an approver gives must cover the page's own drawing, not only the server.
+  longer than that time and the real value afterwards could end `failed`;
+  a page that shows a value for longer than that time and corrects it
+  afterwards could end `verified`. See the second gate above.
   The engine's own quiet rule (no request in flight for 300 ms, and the same
   text twice) is not a statement about the application.
-- **Requests a page sends as it is left are shown to nobody by the browser.**
-  The engine switches a page's script off before closing it, so none is sent
-  from a page the engine closes (tested). A page that leaves by its own
-  navigation during an `act` can still send one unseen: the witness rules
-  are what stands against that.
+- A page that leaves by its own navigation during an `act` can still send a
+  request as it goes that nobody sees: the witness rules are what stands
+  against that.
+- An answer that sends the browser to another host is seen, and stops the
+  check, but the request to that host has then been sent. Keeping a worker
+  from other hosts is a matter for the network it runs in, not for this
+  code.
 - **Shared workers** are taken away from pages (their requests are not seen
-  either). An application that needs one cannot be checked.
+  either) and service workers are blocked. An application that needs one
+  and quietly does without could be judged on what it then shows.
 - **A page that needs another host** (a script or data from elsewhere) is
   kept from it. Such a check can end `verified` if the value is shown all
   the same, and never `failed`: its reason is `other-host-blocked`.
-- A value the check typed that the application keeps in the browser without
-  a write, and shows on a freshly opened page, would be read as the
-  application's. It is an open question for the owner whether a `fill` may
-  type a text that contains an expected value at all.
+- An error the page catches and only writes to its console is not counted
+  as something gone wrong.
 - What an application does through a GET or a socket is not seen as a write
   (residual risk 11 of the design). A socket that fails is not counted as
   something gone wrong.

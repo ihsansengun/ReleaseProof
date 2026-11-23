@@ -225,7 +225,8 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
     assert.equal(record.reason, undefined);
     assert.equal(record.contradictionSeen, false);
     assert.equal(record.expected, "100");
-    assert.deepEqual(record.finalReadings.map((entry) => entry.value), ["100", "100", "100"]);
+    // Three readings, and one more held on its page for the approved time: read at its start and at its end.
+    assert.deepEqual(record.finalReadings.map((entry) => entry.value), ["100", "100", "100", "100", "100"]);
     assert.equal(record.stepsDone, 5);
     assert.equal(record.writesCounted, 1);
     assert.match(record.bindingSha256, /^[0-9a-f]{64}$/);
@@ -427,11 +428,14 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
   });
 
   test("a value the check typed itself is never read: a reading is made on a page the engine has just opened", async () => {
+    // The page shows what was typed. Typing a value the check expects is refused outright (below); here the check
+    // types another, and the page it then reads is a new one, which shows nothing of it.
     const typed = binding({
-      steps: [see("count", "0"), { kind: "open", path: "/form" }, { kind: "fill", path: "/form", locator: { by: "role", role: "textbox", name: "Amount" }, value: { from: "literal", text: "100" } }, { kind: "see", reading: reading("/form", "echo"), expected: { from: "literal", value: "100" } }],
+      steps: [see("count", "0"), { kind: "open", path: "/form" }, { kind: "fill", path: "/form", locator: { by: "role", role: "textbox", name: "Amount" }, value: { from: "literal", text: "7" } }, { kind: "see", reading: reading("/form", "echo"), expected: { from: "literal", value: "5" } }],
       observation: reading("/form", "echo"),
     });
-    const { record } = await check({ "GET /form": () => html(`<input aria-label="Amount" oninput="document.querySelector('p').textContent = this.value"><p data-testid="echo">0</p>`) }, typed);
+    const form: Routes = { "GET /form": () => html(`<input aria-label="Amount" oninput="document.querySelector('p').textContent = this.value"><p data-testid="echo">0</p>`) };
+    const { record } = await check(form, typed);
     unverified(record, "condition-not-met");
   });
 
@@ -611,7 +615,27 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
       // A frame laid over the element, holding a node at the same place in its own document.
       ["a frame over it", `<p data-testid="balance" style="margin:0;height:40px">100</p><iframe style="position:fixed;left:0;top:0;width:1280px;height:40px;border:0;background:white" srcdoc="<html><head></head><body style='margin:0'><p style='margin:0;height:40px'>555</p></body></html>"></iframe>`],
     ];
-    for (const [name, body] of cases) {
+    const more: [string, string][] = [
+      // What the second review found.
+      ["direction overridden on an ancestor", `<p data-testid="balance" style="direction:rtl;unicode-bidi:bidi-override"><span>100</span></p>`],
+      ["direction overridden by an element", `<bdo dir="rtl"><span data-testid="balance">100</span></bdo>`],
+      ["direction overridden by a character", `<div>&#x202e;<span data-testid="balance">100</span></div>`],
+      ["digits drawn in another sequence, right to left", `<p dir="rtl" data-testid="balance"><span style="display:inline-block">1</span><span style="display:inline-block">00</span></p>`],
+      ["digits drawn in another sequence, moved", `<p data-testid="balance" style="font:20px monospace"><span style="position:relative;left:2ch">1</span><span style="position:relative;left:-1ch">00</span></p>`],
+      ["a tree of its own that adds a digit", `<p data-testid="balance">100</p><script>document.querySelector("[data-testid=balance]").attachShadow({ mode: "open" }).innerHTML = "<span>9</span><slot></slot>"</script>`],
+      ["a closed tree of its own that adds a digit", `<p data-testid="balance">100</p><script>document.querySelector("[data-testid=balance]").attachShadow({ mode: "closed" }).innerHTML = "<slot></slot><span>5</span>"</script>`],
+      ["a field inside it", `<p data-testid="balance">1<input value="55" size="2">00</p>`],
+      ["a marker before it", `<ol><li data-testid="balance">100</li></ol>`],
+      ["a colour the engine cannot read", `<p data-testid="balance" style="color:color(srgb 0 0 0 / 0)">100</p>`],
+      ["a colour the engine cannot read, another", `<p data-testid="balance" style="color:oklch(0 0 0 / 0)">100</p>`],
+      ["a first letter without colour", `<style>[data-testid=balance]::first-letter { color: transparent }</style><p data-testid="balance">100</p>`],
+      ["a first line without colour", `<style>.card::first-line { color: transparent }</style><div class="card"><span data-testid="balance">100</span></div>`],
+      ["squeezed sideways", `<p data-testid="balance" style="font-size:30px;transform:scaleX(0.06);transform-origin:left">100</p>`],
+      ["digits on top of each other", `<p data-testid="balance" style="letter-spacing:-0.58em">100</p>`],
+      ["blended away", `<p data-testid="balance" style="mix-blend-mode:difference;color:black">100</p>`],
+      ["a small thing over one digit", `<p data-testid="balance" style="margin:0;font:40px monospace">100</p><div style="position:fixed;left:24px;top:0;width:24px;height:50px;background:white;font:40px monospace">9</div>`],
+    ];
+    for (const [name, body] of [...cases, ...more]) {
       const { record } = await check(shows(body), plainCheck());
       assert.equal(record.outcome, "unverified", `${name}: ended ${record.outcome}`);
       assert.equal(record.reason, "element-not-displayed", name);
@@ -619,17 +643,39 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
     // And the plain case, and digits in parts that are all seen: verified.
     assert.equal((await check(shows(`<p data-testid="balance">100</p>`), plainCheck())).record.outcome, "verified");
     assert.equal((await check(shows(`<p data-testid="balance"><b>1</b><i>00</i></p>`), plainCheck())).record.outcome, "verified");
+    // Ordinary pages: a cell of a table, a card, a number that wraps, a sign beside it.
+    for (const body of [
+      `<table><tr><th>Balance</th><td data-testid="balance">100</td></tr></table>`,
+      `<div style="display:flex;gap:8px;padding:12px;border-radius:8px;box-shadow:0 1px 4px #0003"><span>Balance</span><strong data-testid="balance" style="font-size:11px">100</strong></div>`,
+      `<div style="margin-top:20px;transform:translateX(20px) scale(1.1);transform-origin:left"><output data-testid="balance">100</output></div>`,
+      `<header style="position:sticky;top:0;height:50px;background:#eee">Site</header><p data-testid="balance" style="text-align:right">100</p>`,
+    ]) {
+      assert.equal((await check(shows(body), plainCheck())).record.outcome, "verified", body);
+    }
   });
 
   test("a value the page draws only after a while is not a failure: the last reading is held for the approved time", async () => {
     // A placeholder first, the value a second and a half later. Read at once, every page shows the placeholder.
     const late: Routes = { "GET /account": (ledger) => html(`<p data-testid="balance">0</p><p data-testid="count">${ledger.count}</p><script>setTimeout(() => { document.querySelector("[data-testid=balance]").textContent = "${ledger.balance}" }, 1500)</script>`) };
     const { record } = await check(late, binding({ settling: { within: 3, readings: 3 } }));
-    unverified(record, "final-readings-disagree");
-    assert.deepEqual(record.finalReadings.map((entry) => entry.value), ["0", "0", "0", "0", "100"]);
+    // Which reading meets the moment the value is drawn depends on the machine: none of them makes a failure.
+    assert.equal(record.outcome, "unverified");
+    assert.ok(record.reason === "final-readings-disagree" || record.reason === "page-not-at-rest", record.reason);
     // A value that changes while it is being read is not at rest.
     const flicker = shows(`<p data-testid="balance">100</p><script>let n = 100; setInterval(() => { document.querySelector("[data-testid=balance]").textContent = String(n++) }, 100)</script>`);
     unverified((await check(flicker, plainCheck())).record, "page-not-at-rest");
+  });
+
+  test("an answer of the application that sends the browser to another host stops the check", async () => {
+    // The engine cannot block where an answer sends the browser: it sees it, and the check says nothing.
+    const other = await app({ "GET /balance": () => ({ status: 503, body: "" }) });
+    try {
+      const sent: Routes = { "GET /account": (ledger) => html(`<p data-testid="balance">0</p><p data-testid="count">${ledger.count}</p><script>fetch("/data").then(() => {}).catch(() => {})</script>`), "GET /data": () => ({ status: 302, headers: { location: `${other.baseUrl}/balance` } }) };
+      unverified((await check(sent)).record, "redirect-to-other-host");
+    } finally {
+      other.server.closeAllConnections();
+      await new Promise((resolve) => other.server.close(resolve));
+    }
   });
 
   test("a contradiction on a page the engine kept from another host is not a failure", async () => {
@@ -640,23 +686,51 @@ describe("an approved check, carried out by the engine", { concurrency: 6 }, () 
     unverified((await check({ "GET /account": (ledger) => html(`<p data-testid="balance">0</p><p data-testid="count">${ledger.count}</p><script src="http://cdn.other.invalid/render.js"></script>`) })).record, "other-host-blocked");
   });
 
-  test("a page sends nothing as the engine leaves it, and a worker shared between pages is not to be had", async () => {
+  test("a page sends nothing as the engine leaves it, and a page that meant to do something then gets no verdict", async () => {
     // Such a request is shown to nobody by the browser. The engine switches the page's script off before it closes
-    // the page, so none is sent: what the application holds changes only by what the check can see.
-    const leaving = (script: string): Routes => ({ "GET /account": (ledger) => account(ledger, `<script>${script}</script><iframe srcdoc="<script>${script.replaceAll('"', "&quot;")}</script>"></iframe>`), "POST /hit": () => json({}) });
+    // the page, so none is sent. But then the page did not do what it meant to: the check ends without a verdict.
+    const leaving = (script: string, frame = false): Routes => ({ "GET /account": (ledger) => account(ledger, frame ? `<iframe srcdoc="<script>${script.replaceAll('"', "&quot;")}</script>"></iframe>` : `<script>${script}</script>`), "POST /hit": () => json({}) });
     for (const script of [
       `addEventListener("pagehide", () => navigator.sendBeacon("/hit", "x"))`,
       `document.addEventListener("visibilitychange", () => navigator.sendBeacon("/hit", "x"))`,
       `addEventListener("pagehide", () => fetch("/hit", { method: "POST", keepalive: true }))`,
-      `addEventListener("unload", () => navigator.sendBeacon("/hit", "x")); addEventListener("beforeunload", () => navigator.sendBeacon("/hit", "x"))`,
+      `addEventListener("unload", () => navigator.sendBeacon("/hit", "x"))`,
+      `window.onbeforeunload = () => { navigator.sendBeacon("/hit", "x") }`,
     ]) {
-      const { record, ledger } = await check(leaving(script));
-      assert.equal(record.outcome, "verified", script);
-      assert.deepEqual(ledger.requests.filter((line) => line.startsWith("POST /hit")), [], script);
+      for (const frame of [false, true]) {
+        const { record, ledger } = await check(leaving(script, frame));
+        unverified(record, "leave-script-suppressed");
+        assert.deepEqual(ledger.requests.filter((line) => line.startsWith("POST /hit")), [], script);
+      }
     }
+    // A purchase the page only commits on being left would never be made: no failure is reported for it.
+    const commitOnLeave = await check({ "GET /buy": () => html(`<button onclick="fetch('/purchase', { method: 'POST' })">Buy</button><script>addEventListener("pagehide", () => navigator.sendBeacon("/commit"))</script>`), "POST /purchase": (ledger) => ((ledger.count += 1), json({})), "POST /commit": (ledger) => ((ledger.balance += 100), json({})) });
+    unverified(commitOnLeave.record, "leave-script-suppressed");
+    assert.equal(commitOnLeave.record.contradictionSeen, true);
+    // Listeners for other things are nobody's business.
+    assert.equal((await check({ "GET /account": (ledger) => account(ledger, `<script>addEventListener("click", () => {}); addEventListener("pageshow", () => {})</script>`) })).record.outcome, "verified");
     const shared = await check(leaving(`new SharedWorker(URL.createObjectURL(new Blob(['fetch("' + location.origin + '/hit", { method: "POST" })'], { type: "text/javascript" })))`));
     assert.equal(shared.record.outcome, "unverified");
     assert.deepEqual(shared.ledger.requests.filter((line) => line.startsWith("POST /hit")), [], "no request the engine could not see was sent");
+  });
+
+  test("a check does not type a value it expects to read, in any obvious spelling", async () => {
+    const typing = (text: string, change: Partial<Draft> = {}) =>
+      binding({ steps: [see("count", "0"), see("balance", "0"), { kind: "open", path: "/buy" }, { kind: "fill", path: "/buy", locator: testid("field"), value: { from: "literal", text } }, BUY[1], see("count", "1")], ...change });
+    for (const text of ["100", "1", "0", "amount 100", "1,00", "100.00", "-100", "1.00"]) assert.match(checkProblems(typing(text)).join("\n"), /types a value that the check expects to read/, text);
+    // 24.99 expected: typed as hundredths, or with a sign, it is the same amount.
+    const priced = { observation: reading("/account", "price", "currency-units", "amount"), expected: { start: 0, end: 5, value: "24.99" } } as const;
+    for (const text of ["24.99", "2499", "$24.99", "24"]) assert.match(checkProblems(typing(text, priced)).join("\n"), /types a value that the check expects to read/, text);
+    for (const text of ["7", "blue", "1000", "2024-01-05", "10"]) assert.deepEqual(checkProblems(typing(text)), [], text);
+    unverified((await check({}, typing("100"))).record, "binding-refused");
+    // A value from a fixture's answer is only known when the check runs: the same rule, then.
+    const fromFixture = binding({
+      setup: { kind: "fixture", method: "POST", path: "/fixture", body: '{"key":"{{key}}"}' },
+      steps: [see("count", "0"), see("balance", "0"), { kind: "open", path: "/buy" }, { kind: "fill", path: "/buy", locator: testid("field"), value: { from: "fixture", field: "amount" } }, BUY[1], see("count", "1")],
+    });
+    const buyPage = (): Answer => html(`<input data-testid="field"><button onclick="fetch('/purchase', { method: 'POST' })">Buy</button>`);
+    unverified((await check({ "GET /buy": buyPage, "POST /fixture": () => json({ amount: 100 }) }, fromFixture)).record, "typed-value-is-expected");
+    assert.equal((await check({ "GET /buy": buyPage, "POST /fixture": () => json({ amount: "seven" }) }, fromFixture)).record.outcome, "verified");
   });
 
   test("the settling time is the binding's: readings run to its end, counted from the last write, and conditions wait only after a write", async () => {

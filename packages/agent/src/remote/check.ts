@@ -53,6 +53,12 @@ export const UNVERIFIED_REASONS = [
   "final-readings-disagree",
   /** The engine blocked a request of the page to another host. What the page then showed may be the engine's doing: never a failure. */
   "other-host-blocked",
+  /** The application sent the browser on to another host from a request to itself. The engine sees that too late to stop it. */
+  "redirect-to-other-host",
+  /** A value the check typed is one it expects to read: what is read could be what was typed. */
+  "typed-value-is-expected",
+  /** A page had something to do on being left, and the engine kept it from doing it. What that was is not known: no verdict. */
+  "leave-script-suppressed",
   "error-answer",
   "request-failed",
   "page-error",
@@ -137,6 +143,30 @@ export function expectedInUnit(value: string, unit: Reading["unit"]): string | u
   return /^-[0.]*$/.test(spelled) ? undefined : spelled;
 }
 
+/**
+ * Whether a text holds a value in any of its obvious spellings: as written, as
+ * its unit spells it, without its sign, its whole part alone, and the same
+ * amount counted in hundredths or in units.
+ */
+function holdsValue(text: string, value: string, spelled: string | undefined, apart = false): boolean {
+  const spellings = new Set<string>();
+  for (const one of [value, spelled ?? value]) {
+    const plain = one.replace(/^-/, "");
+    const [whole = "", part = ""] = plain.split(".");
+    for (const form of [one, plain, whole]) spellings.add(form);
+    // 24.99 in hundredths is 2499; 2499 in units is 24.99.
+    if (part.length > 0 && part.length <= 2) spellings.add(`${whole}${part.padEnd(2, "0")}`.replace(/^0+(?=[0-9])/, ""));
+    if (part.length === 0 && whole.length > 0) spellings.add(`${whole.length > 2 ? whole.slice(0, -2) : "0"}.${whole.slice(-2).padStart(2, "0")}`);
+  }
+  spellings.delete("");
+  if (!apart) return [...spellings].some((form) => mentions(text, form));
+  // In a text that is typed, every number in it is taken for itself, however many noughts are written after it:
+  // "100.00" is 100. A digit inside a word is part of the word.
+  const bare = (number: string) => (number.includes(".") ? number.replace(/0+$/, "").replace(/\.$/, "") : number);
+  const typed = new Set((text.replaceAll(",", "").match(/(?<![A-Za-z0-9.])[0-9]+(?:\.[0-9]+)?(?![A-Za-z0-9])/g) ?? []).map(bare));
+  return [...spellings].some((form) => typed.has(bare(form)));
+}
+
 /** Whether a text holds a number as a whole: not as part of a longer one. */
 function mentions(text: string, value: string): boolean {
   const escaped = value.replace(/[.\\-]/g, "\\$&");
@@ -166,14 +196,15 @@ export function checkProblems(binding: Binding): string[] {
   if (steps.some((step, index) => step.kind === "see" && seen[index] === undefined)) problems.push("a condition's expected value cannot be written in the unit of its reading");
 
   // A locator that holds the value would find it wherever it is.
-  // The value as written, as its unit spells it, without its sign, and its whole part alone.
-  const named = (locator: BoundLocator, value: string, spelled: string | undefined) => {
-    const spellings = new Set<string>();
-    for (const one of [value, spelled ?? value]) for (const form of [one, one.replace(/^-/, ""), one.replace(/^-/, "").replace(/\..*$/, "")]) spellings.add(form);
-    return [...spellings].some((form) => mentions(locatorText(locator), form));
-  };
+  const named = (locator: BoundLocator, value: string, spelled: string | undefined) => holdsValue(locatorText(locator), value, spelled);
   if (named(binding.observation.locator, binding.expected.value, finalExpected)) problems.push("the observation's locator contains its expected value");
   if (steps.some((step, index) => step.kind === "see" && named(step.reading.locator, step.expected.value, seen[index]))) problems.push("a condition's locator contains its expected value");
+
+  // A check may not type a value it expects to read: what it read could be what it typed, kept by the page.
+  const expectedOnes: [string, string | undefined][] = [[binding.expected.value, finalExpected], ...steps.flatMap((step, index): [string, string | undefined][] => (step.kind === "see" ? [[step.expected.value, seen[index]]] : []))];
+  if (steps.some((step) => step.kind === "fill" && step.value.from === "literal" && expectedOnes.some(([value, spelled]) => holdsValue((step.value as { text: string }).text, value, spelled, true)))) {
+    problems.push("a step types a value that the check expects to read");
+  }
 
   // What follows what. A fill and an act work in the page of the open before them.
   let openAt: string | undefined;
@@ -269,7 +300,7 @@ function registerEngine(): Promise<void> {
 }
 
 /** The smallest text the engine takes as legible, and the least opacity, with all ancestors. */
-const LEGIBLE = { glyphHeightPx: 6, opacity: 0.9, mostRects: 60 } as const;
+const LEGIBLE = { glyphHeightPx: 6, glyphWidthPx: 2, opacity: 0.9, mostLetters: 40 } as const;
 
 /**
  * Finds a node of the main document by its place. Runs in an isolated world of
@@ -303,13 +334,14 @@ const FACTS_OF = `function (wantText) {
   const el = this;
   if (!(el instanceof Element)) return out;
   const up = (node) => node.assignedSlot || node.parentElement || (node.parentNode && node.parentNode.host) || null;
-  const alpha = (colour) => { const m = /^rgba?\\(([^)]*)\\)$/.exec(colour); if (!m) return colour === "transparent" ? 0 : 1; const parts = m[1].split(/[,\\/ ]+/).filter(Boolean); return parts.length > 3 ? parseFloat(parts[3]) : 1; };
+  // A colour the engine cannot read the transparency of is taken as transparent.
+  const alpha = (colour) => { const m = /^rgba?\\(([^)]*)\\)$/.exec(colour); if (!m) return 0; const parts = m[1].split(/[,\\/ ]+/).filter(Boolean); return parts.length > 3 ? parseFloat(parts[3]) : 1; };
   const unseen = (start) => {
     let opacity = 1;
     for (let at = start; at; at = up(at)) {
       const style = getComputedStyle(at);
       if (style.display === "none" || style.contentVisibility === "hidden") return true;
-      if (style.filter !== "none" || style.clipPath !== "none") return true;
+      if (style.filter !== "none" || style.clipPath !== "none" || style.mixBlendMode !== "normal") return true;
       if ((style.maskImage || style.webkitMaskImage || "none") !== "none") return true;
       opacity *= Number(style.opacity);
     }
@@ -330,9 +362,14 @@ const FACTS_OF = `function (wantText) {
         const content = getComputedStyle(part, pseudo).content;
         if (content !== "none" && content !== "normal") return out;
       }
+      // Nothing in it that draws something of its own beside the text: a field, a picture, a marker, a tree of its own.
+      if (part !== el && part.matches("input, textarea, select, button, img, svg, canvas, video, audio, iframe, object, embed, meter, progress")) return out;
+      if (getComputedStyle(part).display.includes("list-item") || part.shadowRoot) return out;
     }
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
     let drawn = 0;
+    let last = null;
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       if (node.data.trim() === "") continue;
       const holder = node.parentElement;
@@ -342,20 +379,35 @@ const FACTS_OF = `function (wantText) {
       for (let at = holder; at && !gone; at = up(at)) gone = getComputedStyle(at).display === "none";
       if (gone) continue;
       if (unseen(holder)) return out;
-      if (alpha(style.color) < ${LEGIBLE.opacity} || alpha(style.webkitTextFillColor || style.color) < ${LEGIBLE.opacity}) return out;
-      if (style.unicodeBidi.includes("override") || (style.webkitTextSecurity || "none") !== "none") return out;
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      const rects = range.getClientRects();
-      if (rects.length === 0) return out;
-      for (const rect of rects) {
-        if (!(rect.width >= 1 && rect.height >= ${LEGIBLE.glyphHeightPx})) return out;
-        const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
-        if (!inView(x, y) || !inView(rect.left, rect.top) || !inView(rect.right, rect.bottom)) return out;
-        out.places.push([x, y], [rect.left + 1, y], [rect.right - 1, y]);
-        if (out.places.length > ${LEGIBLE.mostRects * 3}) return out;
+      for (let at = holder; at; at = up(at)) {
+        if (getComputedStyle(at).unicodeBidi.includes("override") || at.localName === "bdo") return out;
+        // The colour of the text, of its first letter and of its first line, wherever a rule for them may sit.
+        for (const pseudo of [null, "::first-letter", "::first-line"]) {
+          if (pseudo === null && at !== holder) continue;
+          const shown = getComputedStyle(at, pseudo);
+          if (alpha(shown.color) < ${LEGIBLE.opacity} || alpha(shown.webkitTextFillColor || shown.color) < ${LEGIBLE.opacity}) return out;
+        }
       }
-      drawn += 1;
+      if ((style.webkitTextSecurity || "none") !== "none") return out;
+      // Letter by letter: each has one box, wide and high enough to be read, in the viewport, and to the right of
+      // the one before it or on a line below. Text drawn in another sequence than it is written is not what is read.
+      for (let index = 0; index < node.data.length; index++) {
+        if (/\\s/.test(node.data[index])) continue;
+        if (++drawn > ${LEGIBLE.mostLetters}) return out;
+        range.setStart(node, index);
+        range.setEnd(node, index + 1);
+        const rects = range.getClientRects();
+        if (rects.length !== 1) return out;
+        const rect = rects[0];
+        if (!(rect.width >= ${LEGIBLE.glyphWidthPx} && rect.height >= ${LEGIBLE.glyphHeightPx})) return out;
+        if (!inView(rect.left, rect.top) || !inView(rect.right, rect.bottom)) return out;
+        if (last) {
+          const sameLine = Math.abs(rect.top - last.top) < Math.min(rect.height, last.height) / 2;
+          if (sameLine ? rect.left < last.right - 1 : rect.top < last.bottom - 1) return out;
+        }
+        last = rect;
+        out.places.push([rect.left + rect.width / 2, rect.top + rect.height / 2]);
+      }
     }
     if (drawn === 0) return out;
     out.text = el.innerText;
@@ -411,6 +463,10 @@ class Stop extends Error {
 
 /** Time that only goes forward: a clock that is set while a check runs neither shortens nor lengthens what it waits. */
 const now = () => performance.now();
+/** Waits until a moment has come. A timer may ring a little early: this does not return before the moment. */
+async function sleepUntil(moment: number): Promise<void> {
+  while (now() < moment) await sleep(Math.max(1, moment - now()));
+}
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, ms)));
 
 /** The key the engine puts into a fixture's body: its own for the run and the exact binding. */
@@ -452,14 +508,16 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
   }
 
   const deadline = began + (options.limitMs ?? defaultLimitMs(binding));
+  let givenUp = false;
   const inTime = () => {
-    if (now() >= deadline) throw new Stop("time-ran-out");
+    // A check that has been given up does nothing more to the application.
+    if (givenUp || now() >= deadline) throw new Stop("time-ran-out");
   };
 
   // What the check has come to so far. Kept outside the try so that a stop can report it.
   const progress: { stepsDone: number; writesCounted: number; lastWriteAfterMs?: number; contradictionSeen: boolean; finalReadings: FinalReading[] } = { stepsDone: 0, writesCounted: 0, contradictionSeen: false, finalReadings: [] };
   let context: BrowserContext | undefined;
-  let givenUp = false;
+  let watching: Watch | undefined;
   const body = async (): Promise<CheckRecord> => {
   try {
     // A language or a time zone that is not one: found before anything is asked of the application.
@@ -480,8 +538,14 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
     } catch {
       throw new Stop("setup-failed");
     }
-    if (givenUp) throw new Stop("time-ran-out");
+    if (givenUp) {
+      // Given up while the browser was still making the context: it is closed here, since nobody else will.
+      await context.close().catch(() => {});
+      context = undefined;
+      throw new Stop("time-ran-out");
+    }
     const watch = await watchRequests(context, origin, binding);
+    watching = watch;
 
     /** Stops the check if anything has gone wrong anywhere in it so far. */
     const sound = () => {
@@ -508,6 +572,10 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
           text = step.value.text;
         } else {
           text = fixtureValue(fixtureAnswer, step.value.field);
+          // The same rule as for a literal, for a value only known now.
+          const typed = text;
+          const expectedOnes = [[binding.expected.value, expected] as const, ...binding.steps.flatMap((other) => (other.kind === "see" ? [[other.expected.value, expectedInUnit(other.expected.value, other.reading.unit)] as const] : []))];
+          if (expectedOnes.some(([value, spelled]) => holdsValue(typed, value, spelled, true))) throw new Stop("typed-value-is-expected");
         }
         await field.fill(text, { timeout: CHECK_LIMITS.actionMs }).catch(() => {
           throw new Stop("step-not-done");
@@ -573,7 +641,7 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
     for (let index = 0; index < count; index++) {
       const due = from + ((to - from) * index) / (count - 1);
       if (due > deadline) throw new Stop("time-ran-out");
-      await sleep(due - now());
+      await sleepUntil(due);
       sound();
       const afterMs = Math.round(now() - began);
       try {
@@ -597,15 +665,17 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
     const verified = tail >= 2;
     // Failed: every reading, from the first to the last after the whole approved time, the same other value.
     const contradicted = !verified && values.every((value) => value === values[0]) && values[0] !== expected;
-    if (contradicted) {
-      // What the page showed may be the engine's own doing, if the engine kept the page from another host.
-      if (watch.blockedOtherHost) throw new Stop("other-host-blocked");
-      // And it may be what a page shows before it has drawn its value. One more reading is held on its page for
-      // the whole approved time: a failure is the same value there at the start and at the end.
+    // What the page showed may be the engine's own doing, if the engine kept the page from another host.
+    if (contradicted && watch.blockedOtherHost) throw new Stop("other-host-blocked");
+    if (verified || contradicted) {
+      // And it may be what a page shows before it has drawn its value, or before it corrects it. One more reading
+      // is held on its page for the whole approved time: a verdict is the same value there at the start and the end.
       const afterMs = Math.round(now() - began);
       const held = await readHeld(context, watch, origin, binding.observation, binding.settling.within * 1_000, deadline);
       progress.finalReadings.push({ afterMs, value: held[0] }, { afterMs: Math.round(now() - began), value: held[1] });
-      if (held[0] !== values[0] || held[1] !== values[0]) throw new Stop("final-readings-disagree");
+      if (held[0] !== expected || held[1] !== expected) progress.contradictionSeen = true;
+      const stood = verified ? expected : values[0];
+      if (held[0] !== stood || held[1] !== stood) throw new Stop("final-readings-disagree");
     }
     // Every page still open, one the application opened itself included, is closed as the engine closes its own.
     for (const page of context.pages()) await closeByEngine(watch, page);
@@ -613,11 +683,15 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
     await context.close();
     context = undefined;
     if (watch.wrong !== undefined) throw new Stop(watch.wrong);
+    // The engine kept a page from what it had registered to do on being left. Whatever that was, it was not done.
+    if (watch.leaveSuppressed) throw new Stop("leave-script-suppressed");
     if (verified) return record({ outcome: "verified", expected, ...progress });
     if (contradicted) return record({ outcome: "failed", expected, ...progress });
     throw new Stop("final-readings-disagree");
   } catch (error) {
     // Past its time limit, whatever stopped a check may only have been the limit: an action of the browser cut short.
+    // Pages left open by a check that stopped early are closed as any other: with their script off.
+    if (context && watching && !givenUp) for (const page of context.pages()) await closeByEngine(watching, page).catch(() => {});
     const reason: UnverifiedReason = !(error instanceof Stop) ? "engine-error" : now() >= deadline ? "time-ran-out" : error.reason;
     return record({ outcome: "unverified", reason, expected, ...progress });
   }
@@ -696,6 +770,8 @@ type Watch = {
   wrong: UnverifiedReason | undefined;
   /** The engine kept the page from another host at least once. */
   blockedOtherHost: boolean;
+  /** A page the engine closed had something registered to do on being left, which the engine kept it from. */
+  leaveSuppressed: boolean;
   readonly inFlight: Set<Request>;
   readonly closing: Set<Page>;
   openWindow(page: Page): ActWindow;
@@ -715,6 +791,7 @@ async function watchRequests(context: BrowserContext, origin: string, binding: B
   const watch: Watch = {
     wrong: undefined,
     blockedOtherHost: false,
+    leaveSuppressed: false,
     inFlight: new Set(),
     closing: new Set(),
     openWindow(page) {
@@ -769,6 +846,8 @@ async function watchRequests(context: BrowserContext, origin: string, binding: B
   context.on("request", (request) => {
     watch.inFlight.add(request);
     const url = toTarget(request);
+    // A request to another host that the browser was sent to by an answer: not one the engine could block.
+    if (!url && request.redirectedFrom() && /^https?:/i.test(request.url())) watch.wrong ??= "redirect-to-other-host";
     const method = request.method();
     if (!url || method === "GET" || method === "HEAD" || listed(binding.background, method, url)) return;
     // With a query, a write is not the write that was named: it is recorded with one, and matches nothing.
@@ -782,6 +861,13 @@ async function watchRequests(context: BrowserContext, origin: string, binding: B
     const url = toTarget(request);
     if (!url) return;
     const status = response.status();
+    if (status >= 300 && status < 400) {
+      try {
+        if (new URL(response.headers()["location"] ?? "", request.url()).origin !== origin) watch.wrong ??= "redirect-to-other-host";
+      } catch {
+        watch.wrong ??= "redirect-to-other-host";
+      }
+    }
     const written = writes.get(request);
     if (written) {
       written.status = status;
@@ -811,11 +897,29 @@ async function watchRequests(context: BrowserContext, origin: string, binding: B
  * is switched off first, and nothing is sent. If that cannot be done, the
  * check says nothing.
  */
+const LEAVING = new Set(["pagehide", "unload", "beforeunload", "visibilitychange", "freeze"]);
+
 async function closeByEngine(watch: Watch, page: Page): Promise<void> {
   if (page.isClosed()) return;
   watch.closing.add(page);
   const off = (async () => {
     const session = await page.context().newCDPSession(page);
+    // What the page meant to do on being left is not done. If it meant to do anything, the check must not go on
+    // as if it had: the browser is asked, of every frame, what is registered for leaving.
+    // Listeners are the page's own, so they are asked for where the page's script lives: in each frame's own
+    // world, of its window and its document, which script cannot put anything in the place of.
+    const worlds: number[] = [];
+    session.on("Runtime.executionContextCreated", (event) => void ((event.context.auxData as { isDefault?: boolean } | undefined)?.isDefault === true && worlds.push(event.context.id)));
+    await session.send("Runtime.enable");
+    if (worlds.length === 0) throw new Error("no world of the page was shown");
+    for (const contextId of worlds) {
+      for (const expression of ["window", "document"]) {
+        const { result } = await session.send("Runtime.evaluate", { expression, contextId });
+        if (!result.objectId) throw new Error("no such object");
+        const { listeners } = await session.send("DOMDebugger.getEventListeners", { objectId: result.objectId });
+        if (listeners.some((listener) => LEAVING.has(listener.type))) watch.leaveSuppressed = true;
+      }
+    }
     await session.send("Emulation.setScriptExecutionDisabled", { value: true });
     return true;
   })().catch(() => false);
@@ -952,7 +1056,16 @@ async function displayed(page: Page, watch: Watch, locator: BoundLocator, deadli
     const element = node.result.objectId;
     if (!element) throw new Stop("element-not-displayed");
 
+    if (wantText) {
+      // A tree of its own inside the element, a closed one too, or a document: it could draw beside the text.
+      type Described = { shadowRoots?: unknown[]; contentDocument?: unknown; children?: Described[] };
+      const { node: described } = (await cdp.send("DOM.describeNode", { objectId: element, depth: -1, pierce: true })) as { node: Described };
+      const own = (at: Described): boolean => (at.shadowRoots?.length ?? 0) > 0 || at.contentDocument !== undefined || (at.children ?? []).some(own);
+      if (own(described)) throw new Stop("element-not-displayed");
+    }
     const facts = (await call(element, FACTS_OF, [{ value: wantText }])) as Facts;
+    // Still the node the locator finds, and still at its place.
+    if ((await found.count()) !== 1 || (await found.locator(`${ENGINE}=is:${place}`).count()) !== 1) throw new Stop("element-not-displayed");
     if (!facts || facts.displayed !== true || !Array.isArray(facts.places) || facts.places.length === 0) throw new Stop("element-not-displayed");
     // At every place: what the browser finds there is the element or inside it. Nothing lies over the text.
     for (const [x, y] of facts.places) {
@@ -1012,7 +1125,7 @@ async function readHeld(context: BrowserContext, watch: Watch, origin: string, r
     const opened = now();
     const first = await readShown(page, watch, origin, reading, deadline);
     if (opened + holdMs > deadline) throw new Stop("time-ran-out");
-    await sleep(opened + holdMs - now());
+    await sleepUntil(opened + holdMs);
     if (watch.wrong !== undefined) throw new Stop(watch.wrong);
     return [first, await readShown(page, watch, origin, reading, deadline)];
   } finally {
