@@ -745,8 +745,10 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
         if (current) await closeByEngine(watch, current);
         current = await openPage(context, watch, origin, step.path, deadline);
       } else if (step.kind === "fill") {
-        const page = pageAt(current, origin, step.path);
+        const page = await pageAt(current, origin, step.path);
         const { found: field, facts } = await displayed(page, watch, step.locator, deadline);
+        // Finding the field took a moment: it is still the page that was opened when it is typed into.
+        await pageAt(page, origin, step.path);
         let text: string;
         if (step.value.from === "literal") {
           // No credentials in a binding: a secret is never written out to be signed and shown.
@@ -764,8 +766,10 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
         });
         await atRest(page, watch, deadline);
       } else if (step.kind === "act") {
-        const page = pageAt(current, origin, step.path);
+        const page = await pageAt(current, origin, step.path);
         const { found: control } = await displayed(page, watch, step.locator, deadline);
+        // Finding the control took a moment: it is still the page that was opened when it is acted on.
+        await pageAt(page, origin, step.path);
         const window = watch.openWindow(page);
         await control.click({ timeout: CHECK_LIMITS.actionMs }).catch(() => {
           throw new Stop("step-not-done");
@@ -777,6 +781,10 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
         } else {
           const { method, path } = step.expects;
           if (written.length !== 1 || written[0]!.method !== method || written[0]!.path !== path || written[0]!.status === undefined || written[0]!.status >= 400) throw new Stop("write-not-as-expected");
+          // The write was sent from the page the engine opened: not from one the page had turned into, in the
+          // moment between the last look at it and the act, before it sent anything.
+          const left = leftAt(page);
+          if (left !== undefined && left <= written[0]!.requestedAt) throw new Stop("address-not-bound");
           progress.writesCounted += 1;
           lastWriteAt = written[0]!.answeredAt ?? now();
           progress.lastWriteAfterMs = Math.ceil(lastWriteAt - began);
@@ -950,7 +958,7 @@ function fixtureValue(answer: Record<string, unknown> | undefined, field: string
 
 // ---- requests, seen from the browser -------------------------------------------
 
-type Written = { method: string; path: string; status?: number; answeredAt?: number };
+type Written = { method: string; path: string; requestedAt: number; status?: number; answeredAt?: number };
 type ActWindow = { page: Page; written: Written[]; aborted: number; navigated: boolean; onNavigated: (frame: unknown) => void };
 
 type Watch = {
@@ -1049,7 +1057,7 @@ async function watchRequests(context: BrowserContext, origin: string, binding: B
     const method = request.method();
     if (!url || method === "GET" || method === "HEAD" || listed(binding.background, method, url)) return;
     // With a query, a write is not the write that was named: it is recorded with one, and matches nothing.
-    const written: Written = { method, path: `${url.pathname}${url.search}` };
+    const written: Written = { method, path: `${url.pathname}${url.search}`, requestedAt: now() };
     writes.set(request, written);
     if (window) window.written.push(written);
     else watch.wrong ??= "uncounted-write";
@@ -1172,12 +1180,16 @@ async function atRest(page: Page, watch: Watch, deadline: number): Promise<void>
 // ---- pages and elements --------------------------------------------------------
 
 /**
- * What a page has done to its own address since the engine opened it.
- * `documents`: how many documents the main frame has loaded. `elsewhere`: the
- * page changed its address, without loading a document, to anything but the
- * bound address. `unknown`: the browser could not be asked.
+ * What a page has done to itself since the engine opened it, as the browser
+ * tells it. `documents`: how many documents the main frame has loaded.
+ * `elsewhere`: the page changed its address without loading a document, to
+ * anything but the bound address or by anything but the history interface,
+ * or opened its document anew. `leftAt`: when the first such thing, or the
+ * first further document, was told of. `unknown`: the browser could not be
+ * asked. `told`: asks the browser something and waits for the answer, so that
+ * everything it had to tell before has arrived.
  */
-type Navigations = { documents: number; atOpen: number; elsewhere: boolean; unknown: boolean };
+type Navigations = { documents: number; atOpen: number; elsewhere: boolean; leftAt: number | undefined; unknown: boolean; told: () => Promise<void> };
 type OpenedPage = Page & { [NAVIGATIONS]?: Navigations };
 const NAVIGATIONS = Symbol("navigations");
 
@@ -1188,51 +1200,78 @@ const NAVIGATIONS = Symbol("navigations");
  * fragment.
  *
  * One document is loaded: the engine's. A page that loads another, itself
- * again included, is not the page the engine opened. A page may change its
- * address without loading a document (the history interface) only to the
- * very address it is bound to: frameworks do that as they start, and it
- * takes the page nowhere. To any other address, a query or a fragment
- * included, it is not the bound page any more. Both are told by the browser,
- * not by the page.
+ * again included, or opens its document anew, is not the page the engine
+ * opened. A page may change its address without loading a document only
+ * through the history interface and only to the very address it is bound to:
+ * frameworks do that as they start, and it takes the page nowhere. To any
+ * other address, a query or a fragment included, it is not the bound page any
+ * more, even if it comes back. All of this is told by the browser, not by the
+ * page. What the browser does not tell of (a document a page writes over
+ * itself through a script address) is not seen.
  */
 async function openPage(context: BrowserContext, watch: Watch, origin: string, path: string, deadline: number): Promise<Page> {
   const page: OpenedPage = await context.newPage();
   const address = `${origin}${path}`;
-  const navigations: Navigations = { documents: 0, atOpen: 0, elsewhere: false, unknown: false };
+  const navigations: Navigations = { documents: 0, atOpen: -1, elsewhere: false, leftAt: undefined, unknown: false, told: async () => {} };
   page[NAVIGATIONS] = navigations;
   try {
     const session = await context.newCDPSession(page);
     let main = (await session.send("Page.getFrameTree")).frameTree.frame.id;
+    const left = () => void (navigations.atOpen >= 0 && (navigations.leftAt ??= now()));
     session.on("Page.frameNavigated", (event) => {
       if (event.frame.parentId !== undefined) return;
       main = event.frame.id;
       navigations.documents += 1;
+      left();
     });
     session.on("Page.navigatedWithinDocument", (event) => {
-      if (event.frameId === main && event.url !== address) navigations.elsewhere = true;
+      if (event.frameId !== main) return;
+      // Only the history interface, and only to the bound address. A fragment, a traversal or anything else is not that.
+      if (event.url === address && (event as { navigationType?: string }).navigationType === "historyApi") return;
+      navigations.elsewhere = true;
+      left();
+    });
+    // A document opened anew by script can take another address with it, and the browser tells of nothing else.
+    session.on("Page.documentOpened", (event) => {
+      if (event.frame.parentId !== undefined) return;
+      navigations.elsewhere = true;
+      left();
     });
     await session.send("Page.enable");
+    navigations.told = async () => {
+      await session.send("Page.getFrameTree").catch(() => void (navigations.unknown = true));
+    };
   } catch {
     navigations.unknown = true;
   }
-  const before = navigations.documents;
   const answer = await page.goto(address, { waitUntil: "load", timeout: Math.max(1, Math.min(CHECK_LIMITS.actionMs, deadline - now())) }).catch(() => null);
   if (watch.wrong !== undefined) throw new Stop(watch.wrong);
   if (!answer || answer.status() < 200 || answer.status() > 299 || answer.request().redirectedFrom() !== null) throw new Stop("address-not-bound");
   await atRest(page, watch, deadline);
-  if (navigations.unknown || navigations.documents !== before + 1 || navigations.elsewhere || page.url() !== address) throw new Stop("address-not-bound");
+  await navigations.told();
+  // One document since the page was made: the one the engine asked for.
+  if (navigations.unknown || navigations.documents !== 1 || navigations.elsewhere || page.url() !== address) throw new Stop("address-not-bound");
   navigations.atOpen = navigations.documents;
   return page;
 }
 
-/** The page a fill or an act works in: the one opened before it, still that document and still at exactly its path. */
-function pageAt(current: Page | undefined, origin: string, path: string): Page {
+/**
+ * The page a step works in or a reading is made on: the one the engine
+ * opened, still that document and still at exactly its path, as far as the
+ * browser has told by the time it answers this.
+ */
+async function pageAt(current: Page | undefined, origin: string, path: string): Promise<Page> {
   if (!current || current.isClosed()) throw new Stop("step-not-done");
   const opened: OpenedPage = current;
   const navigations = opened[NAVIGATIONS]!;
+  await navigations.told();
+  if (current.isClosed()) throw new Stop("step-not-done");
   if (current.url() !== `${origin}${path}` || navigations.unknown || navigations.elsewhere || navigations.documents !== navigations.atOpen) throw new Stop("address-not-bound");
   return current;
 }
+
+/** When a page was first told to have left the document or the address the engine opened it at; undefined if it has not. */
+const leftAt = (page: Page): number | undefined => (page as OpenedPage)[NAVIGATIONS]?.leftAt;
 
 function find(page: Page, locator: BoundLocator): Locator {
   if (locator.by === "testid") return page.getByTestId(locator.value);
@@ -1343,7 +1382,7 @@ async function readShown(page: Page, watch: Watch, origin: string, reading: Read
     const { facts } = await displayed(page, watch, reading.locator, deadline, true);
     if (!facts.value) throw new Stop("element-not-a-value");
     // Still the page that was opened: nothing has taken it elsewhere while it was read.
-    pageAt(page, origin, reading.path);
+    await pageAt(page, origin, reading.path);
     const value = readStrictNumber(String(facts.text).trim(), reading.valueKind, reading.unit);
     if (value === undefined) throw new Stop("reading-not-a-number");
     return value;

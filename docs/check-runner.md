@@ -109,16 +109,20 @@ Not from script the page can replace.
   target that is not a GET or a HEAD is a write: counted for the `act` under
   way, something gone wrong if there is none, passed over only if the binding
   lists it as background.
-- **Whether a page is still the page the engine opened:** the browser says
-  how many documents the page has loaded and every change it has made to its
-  address without loading one. **One document is loaded, the engine's**; a
-  page that loads another, itself again included, is `address-not-bound`.
-  **A page may change its address through the history interface only to the
-  very address it is bound to**, which frameworks do as they start (the
-  owner's decision of 23 November 2026: harmless same-address history
-  operations, under strict confinement to the route and origin, and nothing
-  broader). To any other address, a query or a fragment or another spelling
-  included, even if it comes back afterwards, it is `address-not-bound`.
+- **Whether a page is still the page the engine opened:** the browser's
+  debugging interface tells of a document loaded in the page, of a change of
+  address without loading one, and of a document opened anew by script.
+  **One document is loaded, the engine's**; a page that loads another,
+  itself again included, or opens its document anew, is `address-not-bound`.
+  **A page may change its address only through the history interface and
+  only to the very address it is bound to**, which frameworks do as they
+  start (the owner's decision of 23 November 2026: harmless same-address
+  history operations, under strict confinement to the route and origin, and
+  nothing broader). To any other address, a query or a fragment or another
+  spelling included, even if it comes back afterwards, and by any other
+  means (a fragment, going back and forth in the history), it is
+  `address-not-bound`. The engine looks again right before it types or
+  clicks, and a write counts only if it was sent before the page left.
 - **Elements and their text:** one node, asked in an isolated world of the
   engine's own making. A page that replaces `getComputedStyle`,
   `getBoundingClientRect` or `innerText` changes nothing there (tested).
@@ -276,6 +280,15 @@ Set by the owner on 23 November 2026. None is met by this code.
   A check must also have a write after it, and the observation is compared
   with its last sight before that write, so what is read at the end is
   attributed to the journey after the starting state.
+- **What the browser does not tell of is not seen**: a page that writes a
+  new document over itself through a script address (`javascript:`) is still
+  taken for the document the engine opened. A page can draw anything by
+  script in any case; the rule is about where the page is, not what it
+  draws.
+- **Ordinary pages that are `address-not-bound`:** a router that works by
+  fragment or adds one on starting; one that adds or removes a trailing
+  slash; one that keeps its state in a query; one that restores a scroll
+  position with a fragment; any client-side redirect.
 - Choices the design leaves open, fixed in the code: a viewport of 1280 by
   720; half a second between two tries of a condition after a write, which
   is also tried again while its element is missing or not yet a number; a

@@ -320,6 +320,11 @@ by asking script that the page can replace.
   After an `act` that expects none, a `fill` or an `act` may follow if the
   address has not changed. An application that
   routes by fragment is not supported in this stage.
+  (Decided by the owner on 23 November 2026, and built so: a page may change
+  its address through the history interface to the very address it is bound
+  to, which frameworks do as they start; that is not a change of address.
+  Nothing broader is permitted. One document is loaded, the engine's. The
+  rule as carried out is in `docs/check-runner.md`.)
 - **Settled.** A reading is taken only once the page has no request in
   flight, and again after scrolling to the element. A page that never
   comes to rest (one that keeps a request open) is unverified, with that

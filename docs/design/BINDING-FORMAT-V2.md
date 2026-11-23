@@ -260,13 +260,13 @@ Which is which, by the kind of wording and where it stands:
 - **A bound or a negation in the heading refuses**, although the engine
   cannot tell "Maximum balances" from "Limits and balances". Under the
   first, a line "Gold: 100" states a bound, and the owner's decision is that
-  no confirmation makes a bound into an equality. Until the owner says
-  otherwise this cell is the strict one: nothing under such a heading can be
+  no confirmation makes a bound into an equality. By the owner's answer
+  (below) this cell stays the strict one for the first version: nothing under such a heading can be
   bound, and the remedy is a new revision of the criteria with another
-  heading. (Open question 1 names the cells that could be loosened.) A verb
+  heading. A verb
   of change or a hedge in a heading stays a question: the owner's rule names
   bounds and negations, and a heading such as "Default settings" is seldom
-  about the value. Those two cells are also for the owner to confirm.
+  about the value; it is asked, never passed over in silence.
 - **A refusal anywhere wins.** Otherwise every question at every place is
   asked: a word in the quote and another in the heading are two questions.
 - The rows name kinds, with examples. **The stage that implements this
@@ -519,7 +519,9 @@ questions to the customer in groups. For bindings that means:
 3. **The affirmation is asked on every binding**, and **every question is
    asked singly**, in its fixed words, with the text that raised it marked
    and the consequence stated. Nothing is pre-answered, from a draft or
-   otherwise, and there is no "confirm all".
+   otherwise, and there is no "confirm all". (The one exception is the
+   re-approval of bindings that are genuinely unchanged, item 7: there
+   nothing new is asked, because nothing that was answered has changed.)
 4. **A contradiction cannot be confirmed away.** The screen says why the
    binding cannot be approved and what would change that.
 5. **A draft made by a model is marked as a draft.** Approving it is the
@@ -529,18 +531,23 @@ questions to the customer in groups. For bindings that means:
    binding, one interpretation, one act of signing.
 7. **Re-approval** after a change of the criteria text, of the safeguard
    version or of the template version shows what differs from the binding
-   approved before. Bindings that are genuinely unchanged (the rendered text
-   differs in nothing but the revision) may be approved again together, by
-   one explicit act, with an itemised review and every check of snapshot,
-   template and safeguard version made for each. Where a binding differs in
+   approved before. **Each binding is rendered again, under the template and
+   safeguard versions in force and against the new revision.** It is
+   genuinely unchanged only if that text, its questions and their places
+   included, is the same as what was approved in everything but the
+   revision; a question that a newer safeguard would raise, or a heading
+   that has changed, makes it changed. Bindings that are genuinely unchanged
+   may be approved again together, by one explicit act, with an itemised
+   review (each listed with its interpretation). Where a binding differs in
    anything else, every question is asked again for it.
 8. **What is not covered is shown**: the criteria text with the bound
    sentences marked, and beside each sentence that is not bound, why not, if
    the engine knows.
 9. **A record is kept, and must be**: per approval, who and when; each
    question with the hash of the exact text shown and its answer; the
-   template and safeguard versions; whether the draft came from a model;
-   and, for a re-approval, that it was one. A
+   template and safeguard versions; who drafted the binding, and whether
+   the draft came from a model; for a re-approval, that it was one, and
+   whether it was one of several approved by one act. A
    result carries, per outcome, the operator, the confirmations and the
    times it rested on, and a verdict that rests on confirmations is marked
    as such wherever it is shown.
@@ -729,7 +736,9 @@ The first version of this note ended with four questions. The answers:
 4. **How long a confirmation stands.** A confirmation holds for the exact
    criteria revision, binding and environment it was given for, until one of
    them changes materially, it is revoked, or a policy's time limit ends it.
-   A scheduled run that changes nothing does not need approval again.
+   A scheduled run that changes nothing does not need approval again. The
+   "maximum age of a durable approval" of TRUSTED-BINDING.md is that time
+   limit of the policy, and nothing besides.
 
 Still to be settled, with the stage that implements each: what "environment"
 names exactly (the target's origin at least); the policy's time limit; and
