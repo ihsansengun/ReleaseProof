@@ -1,16 +1,18 @@
 # Design: binding format version 2
 
-Status: **design only. Nothing here is implemented.** It is to be reviewed
-independently for security before any of it is built. Trusted verdicts stay
-disabled, and the check runner stays used by no run.
+Status: **design only. Nothing here is implemented.** It is reviewed
+independently for security before any of it is built (the first review's
+findings are in the last section). Trusted verdicts stay disabled, and the
+check runner stays used by no run.
 
 This note extends [TRUSTED-BINDING.md](TRUSTED-BINDING.md). It changes what a
-binding holds; it does not change who is trusted, how a set is signed, or
-the request format.
+binding holds and, with that, the first member and field sequence of the set
+hash. It does not change who is trusted, the lines of the signed statement,
+or the request format.
 
 ## Why a second version
 
-Three things were learned from building and reviewing the runner
+Two things were learned from building and reviewing the runner
 (`docs/check-runner.md`):
 
 1. **What a sentence means cannot be read off its words.** Version 1 has no
@@ -21,9 +23,9 @@ Three things were learned from building and reviewing the runner
 2. **How long a page takes to draw its value is not how long the application
    takes to show a write.** Version 1 has one time, `settling`, and the runner
    borrows it for both.
-3. **A page may have something to do as it is left**, which the browser shows
-   to nobody. The runner keeps it from happening and then gives no verdict,
-   so an application with a statistics listener cannot be checked at all.
+
+A third matter, what a page does as it is left, was to be part of this
+version and is **not**: see "Leaving".
 
 ## Decisions made by the owner (23 November 2026)
 
@@ -57,12 +59,14 @@ These are fixed; the design below implements them.
 
 ```
 Binding (version 2): every field of version 1, and
-  formatVersion      2
-  comparison         what is asserted of the observation     (see Comparison)
-  confirmations      what the approver was asked and confirmed (see Confirmations)
-  drawing            within: how long a page may take to show a value after
-                     it has loaded, in whole seconds, 1 to 60
-  leaving            what a page may send when it is left     (see Leaving)
+  formatVersion          2
+  comparison             what is asserted of the observation   (see Comparison)
+  affirmed               the approver's own statement of the comparison (see Affirmation)
+  confirmations          what the approver was asked and confirmed (see Confirmations)
+  safeguardVersion       which list of wordings the questions came from
+  drawing                within: how long a page may take to show a value
+                         after it has loaded, in whole seconds, 1 to 10
+  interpretationSha256   the hash of the exact text shown to the approver
 ```
 
 Nothing is optional and nothing has a default. A version 2 binding without
@@ -75,366 +79,508 @@ Comparison
   operator           "equals"
 ```
 
-- The operator is one of a closed list of names. **Only `equals` is in the
-  list in this version.** The names `at-least`, `at-most` and `between` are
-  reserved: a binding that carries one is well-formed, is signed like any
-  other, and is **not carried out**. Its outcome is unverified, with the
-  reason `comparison-unsupported`. A name that is neither is malformed. This
-  is so that an approver's intent can be recorded before the engine can check
-  it, without any engine ever treating it as an equality.
+- **In version 2 the operator is `equals`. Any other name is malformed.**
+  There are no reserved names. A further operator is a new format version,
+  with its own interpretation template, its own rules for what a
+  contradiction is, its own negative suite and its own review. Nothing that
+  is not `equals` can be signed before its meaning exists.
+- An approver's wish for a bound ("this should be at least 100") is recorded
+  by the control plane outside any signed binding. It reaches no engine.
 - The operator stands beside what it compares, all in one signed binding:
   `expected` (the value, by position in the quote), the observation's `unit`
   and `valueKind`, and `snapshotSha256` (the revision of the text).
 - `equals` means what the runner does today: the number read, by the strict
   grammar of its unit, is the expected number in that unit's one spelling.
-  Nothing else: no rounding, no tolerance, no conversion between units.
-- **A reserved operator is not implemented by this design.** Each needs its
-  own design note, with its own rules for what a contradiction is (a page
-  showing 150 against "at most 100" for the whole approved time) and its own
-  negative suite, and its own review.
+  No rounding, no tolerance, no conversion between units. For an amount the
+  currency sign or code shown is **not** compared. Every `see` is the same
+  kind of equality; a `see` that does not match is a condition not met,
+  never a failure.
 
 ### The interpretation
 
-The approver must see, before signing, one sentence that says everything
-the engine will assert. That sentence is **not stored and not written by
-anyone**. It is rendered from the binding's fields by a fixed template, in
-the control plane for the approver and again in the engine for the record.
-For `equals`:
+The approver must see, before signing, everything the engine will do and
+assert. That text is **not written by anyone**. It is rendered from the
+binding's fields by a fixed template. For `equals` it reads, in outline:
 
-> After these steps, the page at `/account` must show **exactly 100**, as a
-> plain number, in the element with test id `balance`. This is read from the
-> approved text: "After one purchase the balance is 100." (criteria revision
-> `3f2a…`). Anything else shown there for the whole approved time is a
-> failure of this requirement.
-
-- Because the sentence is a function of signed fields, signing the fields
-  signs the sentence. No free text is added to a binding, and nothing can be
-  shown to the approver that the engine does not also hold.
-- The template has a version, fixed per binding format version. The exact
-  templates are written out, with test vectors, in the stage that implements
-  them, as the set hash was.
-- The sentence states the **sign** and the **unit** in words ("minus 5", "5
-  in whole currency units, written with two decimals"), so that what is
-  compared is what was read.
-- The steps are rendered the same way, each as one line, with literals that
-  are not from the criteria text marked as such (as version 1 requires).
-
-### Consistency with the requirement, and what an AI may do
-
-The owner's rule is that the operator and the value must be consistent with
-the approved requirement and that an AI may not invent or change them. What
-enforces each part:
-
-| Part | Enforced by |
-| --- | --- |
-| The value is the number written in the approved text | The engine: the value is taken by position from the quote, and the engine reads the number there again (version 1, unchanged) |
-| The text is the approved revision | The engine: `snapshotSha256` against the text, and the criteria approval of that snapshot |
-| The operator is what the sentence means | **The approver**, who is shown the interpretation and signs it. No program can decide this. The wording safeguard (below) catches some contradictions and never substitutes for the approver |
-| Nobody changes it afterwards | The signature: the operator, value, unit and revision are in the binding's hash. Any change is another binding, with no approval |
-| An AI's proposal is not an approval | The control plane: a binding may be drafted by a model, and is then a draft. Only a person with the approving role can approve it, on the screen described below. The engine never sees drafts |
-
-A model that drafts a binding cannot make it mean something the approver did
-not see, because what the approver sees is rendered from the same fields the
-engine acts on. That is the whole of the protection, and it is why the
-interpretation is rendered and not written.
-
-### Confirmations
-
-Some things about a quote are not contradictions and are not certain either:
-the sentence has "by" or "if" in it; the heading above says "Limits"; the
-quote is one line of a list whose introducing line is further up; the line
-before does not end with a full stop. Version 1 refuses all of them. That is
-safe and leaves few real criteria bindable.
-
-Version 2 separates three cases:
-
-- **Unsupported.** The operator is reserved, or the unit cannot spell the
-  value. Unverified (`comparison-unsupported`, or refused as today).
-- **Contradictory.** The wording safeguard finds a bound or a negation in
-  the quote itself and the operator is `equals`. Refused, as today. No
-  confirmation overrides it in this version: the approver's remedy is to
-  change the criteria text, or to wait for the operator that says what the
-  text says.
-- **Ambiguous.** Every other hit of the safeguard: a change, rate or
-  condition word; anything found in a heading, an introducing line or a table
-  header above the quote; a quote that may begin or end in the middle of a
-  sentence. Each is a **question the approver is asked**, in fixed words,
-  with the text that raised it shown.
-
-```
-Confirmations      a list, possibly empty, of
-  code               one of a closed list (below)
-```
-
-| Code | The approver confirmed |
-| --- | --- |
-| `not-a-change` | The text states the value that is shown, not an amount it changes by, a rate or a share |
-| `not-conditional` | The value holds whenever the approved steps have been carried out; the text states no other condition |
-| `context-is-not-a-bound` | What stands above the quote (shown) does not make this value a limit, a minimum or a maximum |
-| `whole-sentence` | The quote is the whole statement; the lines around it (shown) do not change what it says |
+> **Requirement.** "After one purchase the balance is 100." (criteria
+> revision `3f2a…`, shown in full on request)
+>
+> **What is checked.** After the steps below, the page at `/account` must
+> show **exactly 100**, a plain number, in the element with test id
+> `balance`. The value is taken from the requirement here: "…the balance is
+> **[100]**." Any other number shown there on every reading is a failure of
+> this requirement. The currency shown, if any, is not checked.
+>
+> **Steps.** (one line each, with every value; a value that is not from the
+> requirement is marked "not from the criteria text")
+>
+> **Setup.** (the fixture's method, path and body in full, or "a new browser
+> with nothing stored")
+>
+> **What is not counted or is tolerated.** (every `background` request and
+> every `tolerated` answer, or "nothing")
+>
+> **How the browser is set.** (language, time zone)
+>
+> **Times.** "A page may take up to 2 seconds after loading to show its
+> value. A number still shown then is taken as the page's value: a page that
+> shows a number first and corrects it later than that can be reported as
+> failed. The application may take up to 5 seconds to show a write. The
+> value is read 3 times."
+>
+> **What you confirmed.** (each confirmation, with the text that raised it)
 
 Rules:
 
-- The engine works out the safeguard's hits itself, from the criteria text
-  and the binding, exactly as the runner does today. **A hit with no matching
-  confirmation refuses the binding.** So the control plane cannot skip a
-  question, and the engine never guesses.
-- A confirmation with no matching hit also refuses the binding: what was
-  confirmed must be what the engine would have asked. (Otherwise a binding
-  could carry every code and the list would mean nothing.)
-- Confirmations are part of the binding, so they are hashed and signed, and
-  a record can say which questions an outcome rested on.
-- A confirmation changes **only** whether the binding is carried out. It
-  never changes what is compared, and it never turns an outcome into
-  another.
-- The codes are a closed list. A new kind of question is a new format
-  version.
+- **The rendering covers every field of the version 2 hash sequence.** A
+  test takes each field in turn, changes it, and requires the rendered text
+  to change. Nothing is cut short or abbreviated, the revision hash aside,
+  which is available in full. This is what stops a model that drafts a
+  binding from changing how a check is judged through a field nobody looks
+  at (a write listed as `background`, an error listed as `tolerated`).
+- **The hash of the rendered text is in the binding**
+  (`interpretationSha256`), so it is signed. The engine renders the text
+  again from the fields and **refuses the binding if the hash differs**. So
+  the control plane and the engine cannot render differently without it
+  being seen, and a later change of the template cannot change what an old
+  approval means: the old hash no longer matches, and the binding is
+  refused. The control plane's renderer must pass the engine's test vectors.
+- The template belongs to the format version. Its exact text, with vectors,
+  is written out in the stage that implements it.
+- **Numbers are rendered from the signed decimal string**, never through any
+  formatting that depends on a language setting. The **sign** and the
+  **unit** are stated in words ("minus 5"; "5 in whole currency units,
+  written with two decimals").
+- **The place the value was taken from is marked in the quote**, for the
+  final value and for every `see` value taken from the quote, so that "3" in
+  "After 3 purchases the balance is 100" is not approved as the balance.
+- **The quote and what stands around it are shown as separate blocks**,
+  never run into the sentence, so that text inside a quote cannot pass for
+  the end of it. Any character outside printable ASCII in a locator, a typed
+  value or a line of context is also shown in escaped form.
 
-This is the part of the design most in need of review: it moves a class of
-refusals to the approver's judgement. The alternative is the present
-behaviour, which is to refuse.
+### Affirmation
+
+The wording safeguard asks questions only where its list finds something,
+and the list misses wordings. So that the approver is asked about the
+comparison **every time**, and not only when a word happens to be listed:
+
+```
+affirmed           "equals-not-bound-not-change"
+```
+
+One fixed value, which the control plane may store only as the result of
+the approver's own act on a question that is asked on every binding, never
+filled in from a draft: *"The requirement says the value is exactly N. It
+does not say at least N, at most N, about N, or that something changes by
+N. If this is wrong, a page that shows another permitted value will be
+reported as failed."* A binding without it is malformed.
+
+### Confirmations
+
+Some things about a quote are neither contradictions nor certain. Version 1
+refuses all of them, which is safe and leaves few real criteria bindable.
+Version 2 separates three cases. The engine works all of them out itself,
+from the criteria text and the binding.
+
+**Unsupported.** The unit cannot spell the value. Refused, as today.
+
+**Contradictory: refused, and nothing overrides it.** The approver's remedy
+is to change the criteria text, or to wait for a format version whose
+operator says what the text says.
+
+**Ambiguous: a question the approver is asked**, singly, in fixed words,
+with the text that raised it shown and the consequence of a wrong answer
+stated.
+
+Which is which, by the kind of wording and where it stands:
+
+| What the safeguard finds | In the quote | In a line that introduces the quote's list, or in the header of its table | In the heading above |
+| --- | --- | --- | --- |
+| A bound, a comparison, a range, an approximation, a symbol | **refused** | **refused** | question `heading-not-about-value` |
+| A negation, or a sign written as a word | **refused** | **refused** | question `heading-not-about-value` |
+| A verb of change or a share ("increases", "adds", "doubles", "reduced", a percentage) | **refused** | **refused** | question `heading-not-about-value` |
+| A hedge ("may", "might", "could", "usually", "typically", "sometimes", "optionally", "default") | **refused** | **refused** | question `heading-not-about-value` |
+| A bare "by", "per", "each", "every", "plus", "times", "another", "extra", "additional" | question `not-a-rate` | question `not-a-rate` | question `heading-not-about-value` |
+| A condition ("if", "otherwise") | question `condition-established` | question `condition-established` | question `heading-not-about-value` |
+
+And for where the quote begins and ends:
+
+- If the quote may begin or end in the middle of a sentence, the engine
+  applies the same table to **the adjoining lines up to where the sentence
+  ends** (by the runner's own test of where a sentence ends). Anything there
+  that the table refuses, refuses. Otherwise the approver is asked
+  `whole-statement`, with those lines shown.
+
+The questions, in the fixed words the approver sees:
+
+| Code | Question |
+| --- | --- |
+| `not-a-rate` | "The marked word does not make N an amount per something or added to something: N is the value that is shown. If this is wrong, a correct page can be reported as failed." |
+| `condition-established` | "The steps of this check (shown) make the marked condition true. If they do not, a correct page can be reported as failed." |
+| `heading-not-about-value` | "The marked heading does not make N a limit, a minimum, a maximum, a change or something that is not the case. If it does, a correct page can be reported as failed." |
+| `whole-statement` | "The marked lines are the whole statement about N; the lines shown around them do not change what it says." |
+
+```
+Confirmations      a list, sorted by start, end, code; no duplicates
+  code               one of the four above
+  start, end         where the text that raised the question stands, as
+                     offsets into the snapshot's text
+```
+
+Rules:
+
+- **The signed list must equal the engine's own list of questions exactly**:
+  the same codes at the same places, no more and no fewer. A question with
+  no confirmation refuses the binding, so the control plane cannot skip one.
+  A confirmation with no question refuses it too, so a binding cannot carry
+  every code as a blanket. Confirming one "by" does not confirm another.
+- **`safeguardVersion` is signed.** The list of wordings will change. A
+  binding made under another version of the list than the engine's is
+  refused with a fixed reason: its approver was not asked what this engine
+  would ask. Changing the list is therefore a deliberate, versioned act
+  that makes existing approvals need renewal.
+- The runner's safeguard reports one kind today where this table has
+  several. Version 2 needs its hits singly, each with its kind and its
+  place; **which words it knows does not change** in this design.
+- A confirmation changes **only** whether the binding is carried out. It
+  never changes what is compared, and never turns an outcome into another.
+- The codes and the table are part of the format version.
+
+A wrong answer to a question gives a check that compares the wrong thing.
+That is a person's judgement recorded and signed, which is where the owner's
+decisions put it; it is listed under the residual risks.
 
 ### Drawing
 
 `drawing.within` is the approver's statement of how long a page of this
-application may take, after it has loaded, to show the value it is going to
-show. It is not `settling.within`, which is how long the application may
-take to show a write.
+application may take, **after its load event**, to show the value it is
+going to show. It is not `settling.within`, which is how long the
+application may take to show a write.
 
-How the engine uses it, for every reading (a `see`, a final reading, the
-held reading):
+For every reading (a `see`, a final reading, the held reading):
 
 1. The page is opened and brought to rest as today.
-2. The value is read, and read again, until **two readings a fixed moment
-   apart agree**, or the drawing time has passed since the page was opened.
-3. At the end of the drawing time the value is read once more. **The reading
-   is the value then, and is clean only if it is the value that had been
-   agreed.**
+2. From the load event to the end of the drawing time, the value is read at
+   the engine's fixed interval. A reading that is not a number, or whose
+   element is missing or not displayed, is recorded as such.
+3. **The reading is the value at the end of the drawing time. It is clean
+   only if the last readings, covering at least the engine's fixed moment,
+   are all that same number.** Earlier readings that differ are allowed and
+   recorded. Something that is not a number never counts as agreeing.
 
-- If the drawing time passes and no two readings ever agreed, or the element
-  is missing or not a number at its end, the reading is **not clean**
-  (`not-drawn-in-time`). A reading that is not clean never counts towards
-  `verified` or `failed`. **So running out of the drawing time can only ever
-  end a check as unverified.**
-- A `failed` still needs everything it needs today, on readings that are all
-  clean: the same contradicting value on every final reading and at both ends
-  of the held reading, with every precondition seen and nothing gone wrong.
-- A page that shows a placeholder and then its value within the drawing time
-  is read as its value. A page that takes longer than the approved time is
-  unverified, not failed.
-- The engine's own "moment apart" stays a constant of the engine. It decides
-  only when a value counts as agreed, never an outcome by itself.
-- The held reading is then held for `settling.within` after the last write
-  (or `drawing.within` in a check with no write), not for the settling time
-  counted from the page's opening as today.
+What follows, and what does not:
+
+- A reading that is not clean (`not-drawn-in-time`) never counts towards
+  `verified` or `failed`. A `see` after a write treats it as it treats a
+  value that has not arrived: tried again until the settling time has
+  passed.
+- A page that shows a placeholder and then its value within the drawing
+  time is read as its value.
+- **A number that is still shown at the end of the drawing time is taken as
+  the page's value, whatever the page does later.** A placeholder that is a
+  number and stays for longer than the approved time is read as the value on
+  every page, and such a check can end `failed`; if the placeholder happens
+  to be the expected number, `verified`. The drawing time does not remove
+  this limit of the runner; it gives it its own approved number, and the
+  approval screen says so in those words. So the true statement is:
+  **running out of the drawing time without a stable number can only end a
+  check as unverified; a stable number at its end is evidence, as the
+  approver said it would be.**
+- **The held reading stays.** It is one page, kept open from its opening
+  until the later of (its load, plus the drawing time, plus the settling
+  time) and (the last write, plus the settling time). A verdict needs the
+  same number at its first clean reading and at its end. This is longer than
+  today's hold, never shorter.
+- A `failed` needs everything it needs today, on readings that are all
+  clean.
+- The engine's interval and moment are constants of the engine. They decide
+  only when a value counts as stable, never an outcome by themselves.
 - **There is no default and no fallback.** A version 1 binding has no
-  drawing time; see "Backward compatibility" for what that means for it.
+  drawing time; see "Backward compatibility".
 
-Cost: every reading takes at least the drawing time. With a drawing time of
-two seconds, a check with three conditions and three final readings takes
-about fourteen seconds longer than today.
+Bounds and cost. The drawing time is 1 to 10 seconds. Every reading takes at
+least that long, so a check with three conditions and three final readings
+and a drawing time of two seconds takes about fourteen seconds longer than
+today, plus the longer hold. The engine's time limit for a check includes
+the drawing time of every reading; a binding whose worst case exceeds what a
+run allows is refused when it is approved, not left to run out of time. The
+approval screen warns when a drafted drawing time is the minimum.
 
-### Leaving
+## Leaving: not part of version 2
 
 Today: if any frame of a page the engine closes has a listener for
-`pagehide`, `unload`, `visibilitychange` or `freeze`, the check ends
-`leave-script-suppressed`. That stays the rule for every binding that does
-not say otherwise.
+`pagehide`, `unload`, `visibilitychange` or `freeze`, the engine keeps it
+from running and the check ends `leave-script-suppressed`. **That stays the
+rule, for version 2 as for version 1.** Version 2 has no field about it.
 
-What may be approved, and only this:
+The first draft of this note proposed approving exact named requests that a
+page may send when hidden, observed by hiding the page while it is still
+open. The independent review tried it, and the result is recorded here so
+that it is not tried again without cause:
 
-```
-Leaving
-  sends              a list, possibly empty, of { method, path }: the exact
-                     requests to the target that a page of this application
-                     may send when it is hidden or left
-```
+- **No way was found to make a page really hidden** in the engine's browser
+  (headless, the newer headless, and with a window): bringing another page
+  to the front, activating another tab, switching focus emulation off,
+  setting the page's lifecycle state to frozen, minimising or moving the
+  window, idle and screen overrides. `document.visibilityState` stayed
+  `visible` and no listener ran. An event made by script runs the listeners,
+  but the page can tell.
+- **Really leaving a page runs `pagehide` first, while the page is still
+  visible, then `visibilitychange`.** So hiding, even if it worked, would
+  not run a `pagehide` or `freeze` listener, and those are what statistics
+  scripts register.
+- What a page sends as it is really left is seen neither by the browser
+  library nor by the browser's own debugging interface. **It is seen by a
+  forwarding proxy that the engine owns.** That is another mechanism (watch
+  the real leaving, not an imitation of it). It would have to end the
+  encrypted connection for an `https` target, and does not know which page
+  sent what.
 
-An empty list is the present behaviour. A non-empty list does **not** tell
-the engine to ignore anything. It changes how the engine leaves a page:
+Consequences:
 
-1. With the page still open and its script still running, the engine makes
-   the page **hidden** by the browser's own means, so that the page's
-   leave-time listeners run where the engine can see what they do.
-2. Every request to the target sent from then on must be one of `sends`,
-   by exact method and path with no query, answered below 400. Such a
-   request is not counted as a write of the journey.
-3. Anything else then stops the check without a verdict: a request that is
-   not listed, a listed one answered with an error, a request to another
-   host, a page error, a navigation, or the page not coming to rest.
-4. Only then is the page's script switched off and the page closed, as
-   today. What a listener would do at the very moment of destruction, after
-   having been run once, is still not done.
-
-What makes this narrow, and where it fails closed:
-
-- The approval is of **named requests**, not of "leave-time script". A
-  listener that does anything else that can be seen ends the check.
-- The approval screen shows what a page of the application was **observed**
-  to send when hidden, from a dry run, and asks the approver to confirm that
-  those requests carry statistics and change nothing the check reads. The
-  engine cannot know what a request does on the server; that judgement is
-  the approver's, and the interpretation says so.
-- A listener for an event the engine cannot bring about where it can watch
-  (`unload` has no such form) is not covered: the check ends
-  `leave-script-suppressed` as today, whatever `sends` holds.
-- A frame the engine cannot ask is not covered either, as today.
-- **If the browser cannot be made to hide a page in a way the page's own
-  script takes for real** (a listener may ask `document.visibilityState`),
-  **this setting is not offered at all.** That has to be established by
-  experiment in the stage that would implement it, before anything else of
-  it is built. It is possible that the honest result of that stage is that
-  `sends` must stay empty.
-
-Not approved by this design, and not to be added without the owner: a
-setting that lets a check go on although leave-time listeners were kept from
-running.
+- Applications with a leave-time listener stay uncheckable under version 2.
+  That is a cost, stated here and in `docs/check-runner.md`.
+- If the owner wants this pursued, it is **a separate design for a later
+  format version**, starting from the proxy, and it needs at least: requests
+  limited to POST, to a path that no step, fixture or `background` entry of
+  the binding uses; few entries, each sent at most once per leaving; the
+  observed list produced and recorded by the engine and never by a model; a
+  plain statement that what a listener writes to the browser's storage is
+  not seen; and its own security review. Whether a listed request changes
+  what a check reads would still rest on the approver's word, which may not
+  be narrow enough for the owner's rule. That is the question to answer
+  first.
+- **Not approved, and not to be added without the owner:** any setting that
+  lets a check go on although leave-time listeners were kept from running.
 
 ## The wording safeguard in version 2
 
-- It is the runner's present check, unchanged in what it looks for.
-- Its hits no longer decide what a binding means. A bound or a negation in
-  the quote refuses the binding (contradictory with `equals`); every other
-  hit is a question that must have been confirmed.
-- It may be narrowed later (it refuses "add", "by", "if", dates, whole
-  sections under ordinary headings), but only together with the approval
-  screen that asks the questions, and with its own review. Until then it
-  stays as wide as it is.
-- The doc of the runner keeps saying what it does not see.
+- It is the runner's present check. Which words it knows is unchanged here;
+  it reports its hits singly, with kind and place.
+- Its hits no longer decide what a binding means. Per the table above a hit
+  refuses, or is a question that must have been confirmed at that place.
+- It has a version, which is signed.
+- It may be narrowed later (it refuses "add", dates, whole sections under
+  ordinary headings), but only as a new safeguard version, with its own
+  review. Until then it stays as wide as it is.
+- The runner's doc keeps saying what it does not see.
 
 ## The approval experience (requirements, not a design of screens)
 
 These bind the control plane and the dashboard (stage 5 of RPAI-33). None of
 it exists.
 
-1. **The interpretation is shown in full before signing**: the rendered
-   sentence, the steps, the sign and unit in words, the drawing and settling
-   times in words ("a page may take up to 2 seconds to show its value").
-2. **The quote is shown in its place**: with the lines around it, the
-   heading it stands under, and for a row of a table its header.
-3. **Every question is asked singly**, in the fixed words of its code, with
-   the text that raised it marked. No question is pre-answered, and there is
-   no "confirm all".
+1. **The interpretation is shown in full before signing**, as rendered: the
+   requirement, what is checked, every step, the setup, what is not counted
+   or tolerated, how the browser is set, the times in words, the
+   confirmations. It is the text whose hash is signed, and nothing else is
+   shown in its place.
+2. **The quote is shown in its place**: the whole block of lines it stands
+   in, the nearest heading, for a row of a table its header, and a note if
+   the same line occurs elsewhere in the text. Shown as blocks, never
+   inline.
+3. **The affirmation is asked on every binding**, and **every question is
+   asked singly**, in its fixed words, with the text that raised it marked
+   and the consequence stated. Nothing is pre-answered, from a draft or
+   otherwise, and there is no "confirm all".
 4. **A contradiction cannot be confirmed away.** The screen says why the
    binding cannot be approved and what would change that.
-5. **A draft made by a model is marked as a draft**, and approving it is the
+5. **A draft made by a model is marked as a draft.** Approving it is the
    same act as approving one written by hand. Nothing a model wrote is shown
    as explanation beside the interpretation.
-6. **Nothing is approved in bulk.** One binding, one interpretation, one
-   signature act. Re-approval of unchanged bindings after a criteria change
-   (already decided) shows each interpretation again.
-7. **What is not covered is shown**: the criteria text with the bound
-   sentences marked, as version 1 requires, and beside each unbound sentence
-   why it cannot be bound today, if the engine knows.
+6. **Nothing is approved in bulk.** One binding, one interpretation, one act
+   of signing.
+7. **Re-approval** after a change of the criteria text, of the safeguard
+   version or of the template asks every question again and shows what
+   differs from the binding approved before.
+8. **What is not covered is shown**: the criteria text with the bound
+   sentences marked, and beside each sentence that is not bound, why not, if
+   the engine knows.
+9. **A record is kept, and must be**: per approval, who and when; each
+   question with the hash of the exact text shown and its answer; the
+   template and safeguard versions; whether the draft came from a model. A
+   result carries, per outcome, the operator, the confirmations and the
+   times it rested on, and a verdict that rests on confirmations is marked
+   as such wherever it is shown.
+10. Who may approve is as in version 1: the role that may approve criteria.
+    Whether the person who drafted a binding may approve it is an open
+    question below.
 
 ## Backward compatibility
 
 - **The signed statement is unchanged**: the same lines in the same
   sequence, the same first line. `bindingFormatVersion` may now be `2`. A
   set is of one format version; a statement names it.
-- **The set hash** for version 2 has its own first member
-  (`releaseproof-bindings-v2`) and its own field sequence, which covers the
-  new fields. A version 1 set hashes exactly as today. A version 2 binding
-  cannot be presented under a version 1 statement or the reverse: the hashes
-  differ and the engine checks the version of every binding against its
-  statement.
-- **Version 1 bindings stay valid as signed sets** and can still be carried
-  out by the runner as it is, which nothing uses. **They can never take part
-  in a trusted verdict**: they carry no operator, no drawing time and no
-  confirmations, and the gates before activation require all three. The
-  activation stage admits version 2 only.
-- **The request format, the criteria approval and the existing result
-  format are not touched.** A run with no binding statement runs as today.
+- **The hashes.** Version 2 has its own first members
+  (`releaseproof-bindings-v2` for a set, `releaseproof-binding-v2` for one
+  binding) and its own field sequence, which covers every new field.
+  Confirmations are hashed in their one sequence. A version 1 set hashes
+  exactly as today. A version 2 binding cannot be presented under a version
+  1 statement or the reverse: the hashes differ, and the engine checks the
+  version of every binding against its statement.
+- **Vectors**, written with the implementation: two bindings that differ
+  only in one confirmation, only in the drawing time, only in the
+  interpretation hash; the same content as version 1 and as version 2; a set
+  in two input sequences; and the refusals (a duplicate or unsorted
+  confirmation, an unknown code, any operator but `equals`, a missing
+  affirmation, each version under the other's statement).
+- **Version 1 can never take part in a trusted verdict.** Enforced in three
+  places, each of which holds by itself:
+  - *Engine:* the outcome of a version 1 binding is always unverified, with
+    a fixed reason, and it counts among the bindings of the run. A run with
+    a version 1 binding therefore cannot be `passed`.
+  - *Server:* the constraint that will one day allow `verdictsTrusted: true`
+    allows it only if every stored set of the run is version 2.
+  - *Control plane:* no version 1 statement is issued for a project with
+    trust enabled, and a version 2 binding is never derived from a version 1
+    approval: every new field is approved afresh.
+- **The request format and the criteria approval are not touched.** A run
+  with no binding statement runs as today.
+- **The result format** gains the new reasons below only with the result
+  format version that stage 6 of RPAI-33 introduces. Until then nothing
+  writes them.
 - An engine that knows only version 1 refuses a version 2 statement
   (`bindingFormatVersion` is a literal there), which is the right failure.
 
-## What an outcome may rest on (additions to the fixed list of reasons)
+## Reasons
+
+Two are added to the fixed list, both unverified, neither able to become a
+verdict:
 
 | Reason | When |
 | --- | --- |
-| `comparison-unsupported` | The operator is a reserved name |
-| `interpretation-unconfirmed` | A hit of the safeguard has no confirmation, or a confirmation has no hit (reported as `binding-refused` with this sentence) |
-| `not-drawn-in-time` | A reading had no agreed value by the end of the drawing time |
-| `leave-activity-unapproved` | A page that was hidden did something that `leaving.sends` does not name |
+| `not-drawn-in-time` | A reading had no stable number at the end of the drawing time |
+| `binding-version-untrusted` | The binding is of format version 1 |
 
-All four are unverified. None can become a verdict.
+A binding that is refused (a missing or surplus confirmation, another
+safeguard version, an interpretation hash that does not match, a
+contradiction) ends `binding-refused` with a fixed sentence, as refusals do
+today.
 
 ## Threats considered
 
 | # | Threat | Answer |
 | --- | --- | --- |
-| 1 | A model drafts `equals 100` for "at least 100" and the approver signs without reading | The interpretation says "exactly 100" beside the quote; the safeguard refuses the plain cases; the rest is the approver's signature. Stated as a residual risk |
-| 2 | The control plane shows the approver one thing and signs another | Out of scope here as in version 1: the control plane holds the key. The rendered interpretation removes one way to do it by accident |
-| 3 | The control plane skips a question | The engine recomputes the hits and refuses a binding with a hit and no confirmation |
-| 4 | Every code is attached to every binding, so nobody is really asked | A confirmation with no hit refuses the binding; the screen has no "confirm all" |
-| 5 | A reserved operator is carried out as an equality by an older or careless engine | An engine that does not know version 2 refuses the statement; one that does must return `comparison-unsupported`; a test holds it |
-| 6 | The drawing time is set very short to force failures | A reading without an agreed value is not clean, so a short time gives unverified, never failed |
-| 7 | The drawing time is set very long to hide a value that comes and goes | The value must still be the agreed one at its end, and the same on every reading and at both ends of the held reading |
-| 8 | `leaving.sends` lists a request that changes what the check reads | The engine cannot tell. The approver is shown the observed requests and confirms. Stated as a residual risk; the witness rules still apply to the journey |
-| 9 | A page behaves differently when hidden by the engine than when really left | If the page can tell, the setting is not offered. What runs only at destruction is still suppressed |
-| 10 | A version 1 binding is used for a trusted verdict | Activation admits version 2 only |
-| 11 | Two bindings that differ only in a new field hash alike | The version 2 field sequence covers every field; vectors and a test, as for version 1 |
+| 1 | A model drafts `equals 100` for "at least 100" and the approver signs without reading | The safeguard refuses the plain cases; the affirmation is asked every time in words that name the alternative and the consequence; the rest is the approver's signature. Residual risk 1 |
+| 2 | A model drafts a field nobody looks at (`background`, `tolerated`, a fixture body) to change how the check is judged | The rendering covers every hashed field, and a test holds that |
+| 3 | The control plane renders one text and the engine another | The hash of the rendered text is signed; the engine renders again and refuses on a difference |
+| 4 | The control plane shows the approver one thing and signs another on purpose | Out of scope here as in version 1: the control plane holds the key |
+| 5 | The control plane skips a question, or attaches every code | The signed confirmations must equal the engine's questions exactly, by code and place |
+| 6 | The list of wordings changes and old confirmations cover words nobody was asked about | `safeguardVersion` is signed; another version refuses |
+| 7 | An operator other than `equals` is signed before its meaning exists, or carried out as an equality | Any other name is malformed in version 2 |
+| 8 | A drawing time set short, so that a placeholder is read as the value | Not prevented: a stable number at the end of the approved time is taken as the value. Stated to the approver in words; minimum of one second; a warning on a drafted minimum. Residual risk 3 |
+| 9 | A drawing time set long, so that a value that comes and goes is missed | The reading is the value at the end, stable over the engine's moment; every reading and both ends of the held reading must agree |
+| 10 | A long drawing time used to run every check out of time | The limit includes it, and a binding that cannot finish is refused at approval. Upper bound of ten seconds |
+| 11 | A version 1 binding is used for a trusted verdict | Three places, above |
+| 12 | Two bindings that differ only in a new field hash alike | The field sequence covers every field; vectors and a test |
+| 13 | Text shown to the approver passes for something else (a quote that imitates the end of the sentence; look-alike letters in a locator; unseen characters in the lines around a quote) | Blocks, not inline; escaped form beside anything outside printable ASCII; lines of context with unseen characters refuse the binding as the quote does |
+| 14 | The wrong number of the sentence is taken as the value | Its place is marked in the quote |
 
 ## Residual risks, stated plainly
 
 1. Whether `equals` is what the sentence means is the approver's judgement.
-   The engine guarantees the value, the revision and that the approver was
-   shown the interpretation's fields; not that they read it.
+   The engine guarantees the value, the revision, and that the text whose
+   hash is signed says "exactly"; not that it was read.
 2. A confirmation is a person's answer to a question. A wrong answer gives a
-   check that compares the wrong thing, and the engine will report its
-   outcome as trustworthy.
-3. What a listed leave-time request does on the server is not known to the
-   engine.
-4. The wording safeguard still misses wordings; it is no longer what the
-   meaning rests on, and it must not be described as if it were.
-5. Everything in "Residual risks" of TRUSTED-BINDING.md and in "Gates before
+   check that compares the wrong thing, and the engine reports its outcome
+   as trustworthy. A verdict that rests on confirmations is marked as such.
+3. A number that a page shows for longer than the approved drawing time,
+   and then replaces, is taken as its value.
+4. Criteria text may have been written by people other than the approver,
+   or drafted by a model. A drafter chooses which sentence to quote and
+   where to stop. The approver is shown the block and its heading; what a
+   paragraph further up says is theirs to know.
+5. The wording safeguard still misses wordings. It is not what the meaning
+   rests on, and must not be described as if it were.
+6. Applications with leave-time listeners cannot be checked.
+7. Everything in "Residual risks" of TRUSTED-BINDING.md and in "Gates before
    activation" of `docs/check-runner.md` stands. In particular the
-   legibility gate is not touched by this design.
+   legibility gate is not touched by this design. The second gate there
+   (a separate drawing time) is met by this design only once it is built
+   and reviewed, and its wording is corrected then.
 
 ## Stages
 
 Each is a small pull request with independent review. None changes what a
-run reports.
+run reports. The shape and its hash are fixed only after the things they
+must cover are written.
 
 1. This note, reviewed independently. No code.
-2. Engine: the version 2 binding shape, its set hash with vectors, the
-   statement accepting either version. Used by nothing.
-3. Engine: the interpretation templates with vectors; `comparison` in the
-   runner (`equals` as today, reserved names unverified); confirmations
-   against the safeguard's hits.
-4. Engine: the drawing time in every reading, with its negative suite (a
-   placeholder within and beyond the time; a value that never agrees; a time
-   too short; a failure that still needs every clean reading).
-5. Engine: an experiment on hiding a page so that its own script takes it
-   for real. Only if it succeeds: `leaving.sends`, with its negative suite.
-   If it does not: `sends` is fixed to the empty list and this note is
-   corrected.
-6. Dashboard and control plane: the approval experience above (with stage 5
-   of RPAI-33).
+2. Engine: the interpretation template for `equals`, with vectors and the
+   test that every field changes the text; the safeguard reporting its hits
+   singly, with kind, place and a version. Used by nothing.
+3. Engine: the version 2 binding shape, its hashes with vectors, the
+   statement accepting either version, version 1 outcomes fixed to
+   unverified. Negative suite: any operator but `equals`; a missing
+   affirmation; a question without a confirmation and the reverse; wrong
+   offsets; a duplicate; an unknown code; another safeguard version; an
+   interpretation hash that does not match; and each row of the table that
+   refuses.
+4. Engine: the drawing time in every reading and the held reading as
+   defined here, with its negative suite (a placeholder within and beyond
+   the time; a value that never settles; a value that agrees, changes and
+   changes back; something that is not a number; the limit; a failure that
+   still needs every clean reading).
+5. Dashboard and control plane: the approval experience above (with stage 5
+   of RPAI-33), whose renderer passes the engine's vectors.
 
 ## The synthetic shop demonstration
 
 By the owner's instruction: the shop's original business requirements are
-**not rewritten to fit the parser**.
+**not rewritten to fit the parser**, and what the engine cannot support
+stays Unverified.
 
-- The demonstration uses a **separate, separately approved fixture of
-  exact-equality statements** about the shop, written for the purpose and
-  labelled as such, beside the original criteria.
-- Each original criterion is listed with what happens to it: bound through
-  the fixture, or **Unverified**, with the reason the engine gives.
-- The report states the coverage plainly: how many of the original criteria
-  the demonstration says anything about, and that a verified fixture
-  statement is not a verified original requirement unless the two say the
-  same thing, which is a person's judgement recorded in the report.
-- Trusted verdicts stay disabled; the run reports `verdictsTrusted: false`.
+- The demonstration uses a **fixture of exact-equality statements** about
+  the shop. It is **its own criteria snapshot**, named as a demonstration
+  fixture in its id and wherever it is shown, and approved separately. It is
+  written from the shop's requirements, not from what the shop happens to
+  show.
+- **Every original criterion that is not itself bound is listed Unverified**,
+  with the engine's reason. A fixture statement may be noted beside an
+  original criterion as "related, in the judgement of (a named person) on (a
+  date)". It never gives the original criterion another status and never
+  counts towards it.
+- The headline of the report reads, in these terms: "**Fixture: n of N
+  statements verified. Original criteria: 0 of M verified.**" The second
+  number stays nought for as long as no original criterion is bound.
+- Trusted verdicts stay disabled; the run reports `verdictsTrusted: false`,
+  and the demonstration says what it would take for that to change.
 
 ## Open questions for the owner
 
-1. **Confirmations.** Is it right that an ambiguous hit can be confirmed by
-   the approver, and that a contradiction in the quote itself cannot? The
-   stricter alternative is that every hit refuses, as today.
-2. **The upper bound of the drawing time** (60 seconds here), and whether it
-   should be per binding (as here) or per project.
-3. **`leaving.sends`**: whether to pursue stage 5 at all, given that its
-   honest outcome may be that nothing can be offered.
-4. **Who writes the fixture** for the synthetic shop, and who approves it.
+1. **The table of what refuses and what is asked.** It is the judgement in
+   this design. Stricter: every hit refuses, as today. Looser is not
+   proposed.
+2. **The drawing time**: one to ten seconds, per binding. Whether a project
+   should also set a ceiling.
+3. **Leaving**: whether to open a separate design that starts from an
+   engine-owned proxy, or to accept that such applications cannot be
+   checked.
+4. **The fixture for the synthetic shop**: who writes it and who approves
+   it. And, in general, whether the person who drafts a binding may be the
+   one who approves it.
+5. **How long a confirmation stands**: whether the maximum age of an
+   approval (an open question of TRUSTED-BINDING.md) should be shorter for a
+   binding that rests on confirmations.
+
+## What the first review found, and what changed
+
+An independent security review of the first draft (23 November 2026) found
+it fit to implement with changes. Its blockers and what was done:
+
+| Finding | Change |
+| --- | --- |
+| Reserved operators could be signed before their meaning existed | Any operator but `equals` is malformed; a new operator is a new format version |
+| The approver was not shown every field the engine acts on | The rendering covers every hashed field, with a test; the setup, what is not counted or tolerated, the browser's setting and the confirmations are named |
+| Contradictions in the text were classed as ambiguous and could be confirmed away | The table: by kind of wording and by place, with the adjoining lines of a sentence checked by the engine |
+| The held reading was in effect removed, and two claims about the drawing time were false | The held reading is defined and is longer than today's; the limit (a stable number at the end of the time is taken as the value) is stated in the rule, the threats, the risks and the approver's text |
+
+And of its other findings: the hash of the rendered text is signed; a
+confirmation names its place and the safeguard has a signed version; the
+drawing rule is one rule (the value at the end, stable over the engine's
+moment); where version 1 is kept out of trust is named in three places; the
+hashes' first members, sequences and vectors are listed; the affirmation is
+asked on every binding; the audit record is required; the synthetic shop's
+original criteria stay Unverified whatever the fixture shows; leaving is
+taken out of version 2 with the experiment's result recorded.
