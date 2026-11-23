@@ -21,11 +21,15 @@ Given a browser, the target's address, a run id and a binding:
    journey's first write is missing or already shows the final value; a
    `fill` or an `act` that does not follow an `open` of its own page; a
    locator that contains its expected value in any of its spellings; a value
-   its unit cannot spell; a `fill` that types a value the check expects to
-   read, in any obvious spelling (with or without sign, grouping or
-   noughts, in units or in hundredths). A refused binding sends nothing to
-   the application. A value typed from a fixture's answer is held to the
-   same rule when the check runs.
+   its unit cannot spell; a `fill` that types a value the check reads
+   afterwards (the final value, or a condition that comes after the `fill`),
+   in any obvious spelling: with or without sign, grouping or noughts, in
+   units or in hundredths, as any run of digits in the text, alone or
+   together with what earlier steps typed. A refused binding sends nothing
+   to the application. A value typed from a fixture's answer is only known
+   when the check runs; there, a number standing by itself in it is
+   compared with the final value and every condition, and a digit inside a
+   word (a name, a code) is not.
 2. Applies the setup. A fixture is called from outside any browser context,
    with a key made from the run id and the binding's hash.
 3. Opens a browser context with nothing stored, in the binding's language
@@ -46,12 +50,13 @@ The outcome is one of:
 | --- | --- |
 | `verified` | Everything done under the rules, nothing wrong anywhere, and from some final reading on, through the last, the expected value, at least twice. |
 | `failed` | Everything done under the rules, nothing wrong anywhere, no request of the page blocked by the engine, and every final reading, the held one at its start and its end included, the same value, which is not the expected one. |
+| `unverified` | Everything else, with one reason from a fixed list (`UNVERIFIED_REASONS`). A condition that is not met is a precondition unmet, never a failure. |
 
 Neither verdict is given if a page the engine closed had something
 registered to do on being left (`leave-script-suppressed`), or if an answer
 of the application sent the browser on to another host
-(`redirect-to-other-host`).
-| `unverified` | Everything else, with one reason from a fixed list (`UNVERIFIED_REASONS`). A condition that is not met is a precondition unmet, never a failure. |
+(`redirect-to-other-host`). Both verdicts need the held reading, so the
+simplest check takes its journey and twice its settling time.
 
 ## Where facts about a page come from
 
@@ -67,10 +72,11 @@ Not from script the page can replace.
   The node is the one the locator found, and every question and the text
   itself are asked of that same node.
 - **What lies on top:** the browser's own hit test through its debugging
-  interface, at the centre of the element and at the centre and both ends of
-  every box of its text. It counts what is drawn there even if it takes no
-  clicks, and a node of another document (a frame laid over the element) is
-  never taken for the element (tested).
+  interface, at the centre of the element and, for a reading, at three
+  places across every letter of its text, where it must find the text's own
+  element. It counts what is drawn there even if it takes no clicks, and a
+  node of another document (a frame laid over the element) is never taken
+  for the element (tested).
 
 ## What "displayed" means for a reading
 
@@ -127,11 +133,16 @@ cannot be checked.
 
 Set by the owner on 23 November 2026. None is met by this code.
 
-1. **Legibility.** Text the same colour as what is behind it is not
-   detected, and neither is text drawn by an image or a font of other
-   shapes. Trusted Passed for a requirement about what is displayed stays
-   off until this is resolved (a picture compared with the text read) or
-   the requirement kind is explicitly kept out.
+1. **Legibility.** The engine knows where text is and what lies over it,
+   not what is painted. Text the same colour as what is behind it is not
+   detected; neither is text drawn by an image or a font of other shapes;
+   neither is anything the text's own element paints over or beside its
+   letters (a struck-through line as thick as the text in the colour of the
+   page, a stroke wide enough to swallow the letters, a shadow copy set on
+   the first line, a strip narrower than the gap between two places the
+   engine looks at). Trusted Passed for a requirement about what is
+   displayed stays off until this is resolved (a picture compared with the
+   text read) or the requirement kind is explicitly kept out.
 2. **A separate, approved drawing time**, distinct from the settling time
    after a write, in a new version of the signed binding format. Until
    then the held reading uses the settling time. Running out of time alone
@@ -178,8 +189,20 @@ Set by the owner on 23 November 2026. None is met by this code.
   holds "100" is seen as 9100 and read as 100. Which element holds the whole
   value is the approver's choice of locator.
 - **The typed-value rule knows numbers written as numbers.** A `fill` of
-  `1e2`, `0x64` or `50+50` is not taken for 100, and an application that
-  works such a text out and shows the result would have it read as its own.
+  `0x64` or `50+50` is not taken for 100, and an application that works
+  such a text out and shows the result would have it read as its own. Two
+  texts typed in one sequence and put together by the application in
+  another are not covered either.
+- **The typed-value rule refuses much that is harmless.** Any digit in a
+  typed text counts, inside a word too, and an amount counts in units and
+  in hundredths: with a final value of 100, a quantity of `1` cannot be
+  typed, nor `user1@example.com`; and since the witness after a write is
+  often a count of 1, a text with a 1 in it is refused in most checks.
+- **A layer over a value that takes its clicks** (a link stretched over a
+  whole card) makes the value "not displayed", though a person sees it.
+- **A page with a sandboxed frame** ends `page-error` at once. The cause is
+  the engine's own: with service workers blocked, the browser library's
+  script fails in such a frame.
 - **Requests put by for later** (`fetchLater`) are taken away from pages, as
   shared workers are.
 - **Shared workers** are taken away from pages (their requests are not seen
