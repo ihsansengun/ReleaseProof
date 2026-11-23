@@ -320,6 +320,20 @@ by asking script that the page can replace.
   After an `act` that expects none, a `fill` or an `act` may follow if the
   address has not changed. An application that
   routes by fragment is not supported in this stage.
+  (Decided by the owner on 23 November 2026, and built so: a page may change
+  its address through the history interface to the very address it is bound
+  to, which frameworks do as they start; that is not a change of address.
+  Nothing broader is permitted. One document is loaded, the engine's. After
+  an `act` that expects a write the page may go anywhere, but the write must
+  be one the browser names as the opened document's at its bound address,
+  and a form that is sent is taken only from a page with no frame and no
+  other page beside it, then or since the act began (which also refuses a
+  form that leads to a page with a frame in it); after a `fill`, and after an `act` that expects
+  none, the page must still be the one that was opened. This narrows who
+  can have sent a write; it does not prove it: a frame or page of the same
+  origin calling the opened page's own functions is not told apart, and a
+  fixture's value is known to the script of the page it is typed into. The
+  rules as carried out, and their limits, are in `docs/check-runner.md`.)
 - **Settled.** A reading is taken only once the page has no request in
   flight, and again after scrolling to the element. A page that never
   comes to rest (one that keeps a request open) is unverified, with that
@@ -744,9 +758,11 @@ Third review (sound; corrections made):
 
 ## Open questions
 
-The next version of the binding format (an explicit comparison, a separate
-drawing time, what a page may send when it is left) is designed in
-[BINDING-FORMAT-V2.md](BINDING-FORMAT-V2.md). It is a design only.
+The next version of the binding format (an explicit comparison and a
+separate drawing time) is designed in
+[BINDING-FORMAT-V2.md](BINDING-FORMAT-V2.md). It is a design only. What a
+page may send when it is left is not designed there: it was investigated,
+the result is recorded in that note, and the setting is deferred.
 
 The owner has answered the questions of the earlier drafts; the answers are
 in the list of decisions above. Still to be settled, with the stage that

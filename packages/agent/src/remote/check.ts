@@ -45,6 +45,8 @@ export const UNVERIFIED_REASONS = [
   "reading-not-a-number",
   "secret-field-literal",
   "write-not-as-expected",
+  /** A write was sent, and the browser does not say it came from the document the engine opened, at its bound address. */
+  "write-not-attributed",
   "uncounted-write",
   /** A `see` did not show its expected value: a precondition is unmet. Never a failure of the requirement. */
   "condition-not-met",
@@ -745,38 +747,71 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
         if (current) await closeByEngine(watch, current);
         current = await openPage(context, watch, origin, step.path, deadline);
       } else if (step.kind === "fill") {
-        const page = pageAt(current, origin, step.path);
-        const { found: field, facts } = await displayed(page, watch, step.locator, deadline);
-        let text: string;
-        if (step.value.from === "literal") {
-          // No credentials in a binding: a secret is never written out to be signed and shown.
-          if (facts.secret) throw new Stop("secret-field-literal");
-          text = step.value.text;
-        } else {
-          text = fixtureValue(fixtureAnswer, step.value.field);
-          // The same rule as for a literal, for a value only known now.
-          const typed = text;
-          const expectedOnes = [[binding.expected.value, expected] as const, ...binding.steps.flatMap((other) => (other.kind === "see" ? [[other.expected.value, expectedInUnit(other.expected.value, other.reading.unit)] as const] : []))];
-          if (expectedOnes.some(([value, spelled]) => holdsValue(typed, value, spelled, "made"))) throw new Stop("typed-value-is-expected");
+        const page = await pageAt(current, origin, step.path);
+        const { facts, bound } = await displayed(page, watch, step.locator, deadline, false, true);
+        const pagesAtFill = context.pages().length;
+        const windowsAtFill = windowsOf(page);
+        try {
+          let text: string;
+          const literal = step.value.from === "literal";
+          if (step.value.from === "literal") {
+            // No credentials in a binding: a secret is never written out to be signed and shown.
+            if (facts.secret) throw new Stop("secret-field-literal");
+            text = step.value.text;
+          } else {
+            text = fixtureValue(fixtureAnswer, step.value.field);
+            // The same rule as for a literal, for a value only known now.
+            const typed = text;
+            const expectedOnes = [[binding.expected.value, expected] as const, ...binding.steps.flatMap((other) => (other.kind === "see" ? [[other.expected.value, expectedInUnit(other.expected.value, other.reading.unit)] as const] : []))];
+            if (expectedOnes.some(([value, spelled]) => holdsValue(typed, value, spelled, "made"))) throw new Stop("typed-value-is-expected");
+          }
+          await pageAt(page, origin, step.path);
+          // Typed into the very field that was looked at, in the document it was looked at in, and nowhere else:
+          // if that document is gone, nothing is typed.
+          const done = await bound!.act(TYPE_INTO, text, literal ? SECRET_FIELDS : null);
+          if (done !== "done") throw new Stop(done === "gone" ? "address-not-bound" : done === "secret" ? "secret-field-literal" : "step-not-done");
+        } finally {
+          await bound!.release();
         }
-        await field.fill(text, { timeout: CHECK_LIMITS.actionMs }).catch(() => {
-          throw new Stop("step-not-done");
-        });
         await atRest(page, watch, deadline);
+        // Typing takes a page nowhere: one that has gone elsewhere, or is another document, as it was typed into is not the bound page.
+        await pageAt(page, origin, step.path);
+        // Nor does typing open another page.
+        if (context.pages().length !== pagesAtFill || windowsOf(page) !== windowsAtFill) throw new Stop("address-not-bound");
       } else if (step.kind === "act") {
-        const page = pageAt(current, origin, step.path);
-        const { found: control } = await displayed(page, watch, step.locator, deadline);
+        const page = await pageAt(current, origin, step.path);
+        const { bound } = await displayed(page, watch, step.locator, deadline, false, true);
         const window = watch.openWindow(page);
-        await control.click({ timeout: CHECK_LIMITS.actionMs }).catch(() => {
-          throw new Stop("step-not-done");
-        });
+        const since = writesTold(page);
+        // Who else could send into this page: its frames, and the other pages of the context.
+        // Asked when the act begins, and counted again when it is over: a frame or a page made as the engine
+        // presses, and taken away again, has been there all the same.
+        const others = othersOf(page);
+        const alone = page.frames().length === 1 && context.pages().length === 1;
+        const pagesBefore = context.pages().length;
+        const windows = windowsOf(page);
+        try {
+          await pageAt(page, origin, step.path);
+          // Acted on the very element that was looked at, in the document it was looked at in.
+          const done = await bound!.act(ACT_ON);
+          if (done !== "done") throw new Stop(done === "gone" ? "address-not-bound" : "step-not-done");
+        } finally {
+          await bound!.release();
+        }
         await atRest(page, watch, deadline);
         const written = watch.closeWindow(window);
         if (step.expects.write === "none") {
           if (written.length > 0) throw new Stop("write-not-as-expected");
+          // An act that sends nothing takes the page nowhere either: it is still the page that was opened, and it
+          // has opened no other.
+          await pageAt(page, origin, step.path);
+          if (context.pages().length !== pagesBefore || windowsOf(page) !== windows) throw new Stop("address-not-bound");
         } else {
           const { method, path } = step.expects;
           if (written.length !== 1 || written[0]!.method !== method || written[0]!.path !== path || written[0]!.status === undefined || written[0]!.status >= 400) throw new Stop("write-not-as-expected");
+          // The write came from the page the engine opened, at its bound address: by what the browser says of the request.
+          await (page as OpenedPage)[NAVIGATIONS]!.told().catch(() => {});
+          if (!writeAttributed(page, since, origin, step.path, { method, path }, binding.background, alone && othersOf(page) === others && context.pages().length === pagesBefore)) throw new Stop("write-not-attributed");
           progress.writesCounted += 1;
           lastWriteAt = written[0]!.answeredAt ?? now();
           progress.lastWriteAfterMs = Math.ceil(lastWriteAt - began);
@@ -1171,7 +1206,27 @@ async function atRest(page: Page, watch: Watch, deadline: number): Promise<void>
 
 // ---- pages and elements --------------------------------------------------------
 
-type OpenedPage = Page & { [NAVIGATIONS]?: { count: number; atOpen: number } };
+/** A request that is not a plain read, as the browser's debugging interface tells of it: with the document it came from. */
+type ToldWrite = { method: string; url: string; loader: string; documentUrl: string; main: boolean; navigation: boolean; mainLoaderThen: string; worldsThen: number; elsewhereThen: boolean };
+
+/**
+ * What a page has done to itself since the engine opened it, as the browser
+ * tells it. `loader`: the browser's name for the document the engine opened;
+ * `current`: for the one in the main frame now. `documents`: how many
+ * documents the main frame has loaded. `elsewhere`: the page changed its
+ * address without loading a document, to anything but the bound address or by
+ * anything but the history interface, or opened its document anew.
+ * `worlds`: how many times the browser has made the main frame a world for
+ * its script, which it does for every document, one put in the page's place
+ * through a script address included, of which it tells in no other way.
+ * `unknown`: the browser could not be asked. `writes`: every request of the
+ * page that is not a plain read. `told`: asks the browser something and waits
+ * for the answer, so that everything it had to tell before has arrived, and
+ * asks the document the engine opened whether it is still the page's
+ * document and what its address is.
+ */
+type Navigations = { loader: string; current: string; documents: number; atOpen: number; worlds: number; worldsAtOpen: number; others: number; windows: number; elsewhere: boolean; unknown: boolean; writes: ToldWrite[]; told: () => Promise<void> };
+type OpenedPage = Page & { [NAVIGATIONS]?: Navigations };
 const NAVIGATIONS = Symbol("navigations");
 
 /**
@@ -1179,31 +1234,175 @@ const NAVIGATIONS = Symbol("navigations");
  * The answer is 2xx with no redirect, and the main frame's address is then
  * exactly that path on the target, byte for byte, with no query and no
  * fragment.
+ *
+ * One document is loaded: the engine's. A page that loads another, itself
+ * again included, or opens its document anew, is not the page the engine
+ * opened. A page may change its address without loading a document only
+ * through the history interface and only to the very address it is bound to:
+ * frameworks do that as they start, and it takes the page nowhere. To any
+ * other address, a query or a fragment included, it is not the bound page any
+ * more, even if it comes back. All of this is told by the browser, not by the
+ * page. The engine also keeps hold of the document itself, in a world of its
+ * own, and asks it each time whether it is still the page's document and at
+ * the bound address: a document put in its place by any means is another.
  */
 async function openPage(context: BrowserContext, watch: Watch, origin: string, path: string, deadline: number): Promise<Page> {
   const page: OpenedPage = await context.newPage();
-  const navigations = { count: 0, atOpen: 0 };
-  page[NAVIGATIONS] = navigations;
-  page.on("framenavigated", (frame) => void (frame === page.mainFrame() && (navigations.count += 1)));
   const address = `${origin}${path}`;
-  const before = navigations.count;
+  const navigations: Navigations = { loader: "", current: "", documents: 0, atOpen: -1, worlds: 0, worldsAtOpen: -1, others: 0, windows: 0, elsewhere: false, unknown: false, writes: [], told: async () => {} };
+  page[NAVIGATIONS] = navigations;
+  let session: CDPSession | undefined;
+  let main = "";
+  try {
+    session = await context.newCDPSession(page);
+    main = (await session.send("Page.getFrameTree")).frameTree.frame.id;
+    session.on("Page.frameNavigated", (event) => {
+      if (event.frame.parentId !== undefined) return;
+      main = event.frame.id;
+      navigations.documents += 1;
+      navigations.current = event.frame.loaderId;
+    });
+    session.on("Page.navigatedWithinDocument", (event) => {
+      if (event.frameId !== main) return;
+      // Only the history interface, and only to the bound address. A fragment, a traversal or anything else is not that.
+      if (event.url === address && (event as { navigationType?: string }).navigationType === "historyApi") return;
+      navigations.elsewhere = true;
+    });
+    // A document opened anew by script can take another address with it, and the browser tells of nothing else.
+    session.on("Page.documentOpened", (event) => {
+      if (event.frame.parentId === undefined) navigations.elsewhere = true;
+    });
+    // Every request that is not a plain read, with the document the browser says it came from. Told on the same
+    // channel as the documents themselves, so a request of a later document is told of after that document.
+    session.on("Network.requestWillBeSent", (event) => {
+      const method = event.request.method;
+      if (method === "GET" || method === "HEAD") return;
+      navigations.writes.push({ method, url: event.request.url, loader: event.loaderId, documentUrl: event.documentURL, main: event.frameId === main, navigation: event.type === "Document" && event.requestId === event.loaderId, mainLoaderThen: navigations.current, worldsThen: navigations.worlds, elsewhereThen: navigations.elsewhere });
+    });
+    // Who else there has ever been to send into this page: every frame attached in it and every window it opened,
+    // gone again or not. Told on the same channel as the requests.
+    session.on("Page.frameAttached", () => void (navigations.others += 1));
+    session.on("Page.windowOpen", () => void ((navigations.others += 1), (navigations.windows += 1)));
+    context.on("page", (other) => void (other !== page && ((navigations.others += 1), (navigations.windows += 1))));
+    session.on("Runtime.executionContextCreated", (event) => {
+      const made = event.context.auxData as { frameId?: string; isDefault?: boolean } | undefined;
+      if (made?.isDefault === true && made.frameId === main) navigations.worlds += 1;
+    });
+    await session.send("Page.enable");
+    await session.send("Network.enable");
+    await session.send("Runtime.enable");
+  } catch {
+    navigations.unknown = true;
+  }
   const answer = await page.goto(address, { waitUntil: "load", timeout: Math.max(1, Math.min(CHECK_LIMITS.actionMs, deadline - now())) }).catch(() => null);
   if (watch.wrong !== undefined) throw new Stop(watch.wrong);
   if (!answer || answer.status() < 200 || answer.status() > 299 || answer.request().redirectedFrom() !== null) throw new Stop("address-not-bound");
   await atRest(page, watch, deadline);
-  // One navigation: the engine's. A page that then takes itself elsewhere, or rewrites its address, is not the bound page.
-  if (navigations.count !== before + 1 || page.url() !== address) throw new Stop("address-not-bound");
-  navigations.atOpen = navigations.count;
+  // The document itself, held in a world of the engine's own. Asked again before every decision.
+  if (session && !navigations.unknown) {
+    const cdp = session;
+    try {
+      const { executionContextId } = await cdp.send("Page.createIsolatedWorld", { frameId: main });
+      const held = (await cdp.send("Runtime.evaluate", { expression: "document", contextId: executionContextId })).result.objectId;
+      if (!held) throw new Error("no document");
+      navigations.told = async () => {
+        try {
+          await cdp.send("Page.getFrameTree");
+          const answer = await cdp.send("Runtime.callFunctionOn", { objectId: held, functionDeclaration: "function () { return this.defaultView ? this.URL : null; }", returnByValue: true });
+          if (answer.result.value !== address) navigations.elsewhere = true;
+        } catch {
+          // The document is gone, or cannot be asked: it is not known to be the page's any more.
+          navigations.elsewhere = true;
+        }
+      };
+    } catch {
+      navigations.unknown = true;
+    }
+  }
+  await navigations.told();
+  // One document since the page was made: the one the engine asked for.
+  if (navigations.unknown || navigations.documents !== 1 || navigations.elsewhere || page.url() !== address) throw new Stop("address-not-bound");
+  navigations.atOpen = navigations.documents;
+  navigations.worldsAtOpen = navigations.worlds;
+  navigations.loader = navigations.current;
   return page;
 }
 
-/** The page a fill or an act works in: the one opened before it, still at exactly its path. */
-function pageAt(current: Page | undefined, origin: string, path: string): Page {
+/**
+ * The page a step works in or a reading is made on: the one the engine
+ * opened, still that document and still at exactly its path, as far as the
+ * browser has told by the time it answers this.
+ */
+async function pageAt(current: Page | undefined, origin: string, path: string): Promise<Page> {
   if (!current || current.isClosed()) throw new Stop("step-not-done");
   const opened: OpenedPage = current;
-  if (current.url() !== `${origin}${path}` || opened[NAVIGATIONS]!.count !== opened[NAVIGATIONS]!.atOpen) throw new Stop("address-not-bound");
+  const navigations = opened[NAVIGATIONS]!;
+  await navigations.told();
+  if (current.isClosed()) throw new Stop("step-not-done");
+  if (current.url() !== `${origin}${path}` || navigations.unknown || navigations.elsewhere || navigations.documents !== navigations.atOpen || navigations.worlds !== navigations.worldsAtOpen) throw new Stop("address-not-bound");
   return current;
 }
+
+/**
+ * Whether the one write of an `act` came from the page the engine opened, by
+ * what the browser says of the request itself and not by when anything was
+ * heard. A request a script sends carries the browser's name for its document
+ * and that document's address at the time: they must be the opened document
+ * and the bound address, in the main frame. A request that is itself a
+ * navigation (a form sent) names the document it is loading, so it is taken
+ * only if, when the browser told of it, the opened document was still the
+ * page's, and only from a page that had no frame and no other page beside it
+ * when the act began and has had none since, since either could send a form
+ * into it. In both cases
+ * the page must not have been at another address by then. Writes the binding
+ * lists as background are passed over. Anything else, a write the browser
+ * does not tell of on this channel included (one from a worker), is not
+ * attributed. What this cannot tell: script of a frame or of another page
+ * that calls the opened document's own functions to send (`parent.fetch`);
+ * the browser names the opened document for such a request.
+ */
+function writeAttributed(page: Page, since: number, origin: string, path: string, write: { method: string; path: string }, background: Binding["background"], alone: boolean): boolean {
+  const navigations = (page as OpenedPage)[NAVIGATIONS]!;
+  const address = `${origin}${path}`;
+  const told = navigations.writes.slice(since).filter((entry) => {
+    try {
+      const url = new URL(entry.url);
+      if (url.origin !== origin) return false;
+      return !background.some((listed) => listed.method === entry.method && listed.path === url.pathname && url.search === "");
+    } catch {
+      return true;
+    }
+  });
+  if (told.length !== 1) return false;
+  const entry = told[0]!;
+  let url: URL;
+  try {
+    url = new URL(entry.url);
+  } catch {
+    return false;
+  }
+  if (entry.method !== write.method || `${url.pathname}${url.search}` !== write.path || !entry.main) return false;
+  // The page's script still ran in the world of the document that was opened when the browser told of the write,
+  // and the page had not been anywhere else by then, there and back included, nor opened its document anew.
+  if (entry.worldsThen !== navigations.worldsAtOpen || entry.elsewhereThen) return false;
+  // A form that is sent names the document it loads, not the one that sent it: a frame of the page, or another
+  // page of the context, can send one into this page. So it is taken only from a page that had neither.
+  if (entry.navigation) return alone && entry.mainLoaderThen === navigations.loader;
+  return entry.loader === navigations.loader && entry.documentUrl === address;
+}
+
+/** How many frames and windows a page has ever had beside it, as far as the browser has told. */
+function othersOf(page: Page): number {
+  return (page as OpenedPage)[NAVIGATIONS]!.others;
+}
+
+/** How many windows a page has opened, as far as the browser has told. */
+function windowsOf(page: Page): number {
+  return (page as OpenedPage)[NAVIGATIONS]!.windows;
+}
+
+/** How many writes the browser has told of for a page so far: where an act's own begin. */
+const writesTold = (page: Page): number => (page as OpenedPage)[NAVIGATIONS]?.writes.length ?? 0;
 
 function find(page: Page, locator: BoundLocator): Locator {
   if (locator.by === "testid") return page.getByTestId(locator.value);
@@ -1211,7 +1410,14 @@ function find(page: Page, locator: BoundLocator): Locator {
 }
 
 type Facts = { displayed: boolean; value: boolean; secret: boolean; text: string; places: [number, number, string | null][] };
-type Shown = { found: Locator; facts: Facts };
+/**
+ * The element that was looked at, held for an action: `act` runs a function on
+ * that very node, in the engine's own world of the document it was found in.
+ * If the document is no longer there, nothing is done and the answer is
+ * "gone". Nothing here finds the element again.
+ */
+type Bound = { act(functionDeclaration: string, ...values: (string | null)[]): Promise<string>; release(): Promise<void> };
+type Shown = { found: Locator; facts: Facts; bound?: Bound };
 
 /**
  * The one element a locator names, displayed: exactly one match in the main
@@ -1225,7 +1431,7 @@ type Shown = { found: Locator; facts: Facts };
  * the node the locator found, and no other the page might put in its place
  * between two questions.
  */
-async function displayed(page: Page, watch: Watch, locator: BoundLocator, deadline: number, wantText = false): Promise<Shown> {
+async function displayed(page: Page, watch: Watch, locator: BoundLocator, deadline: number, wantText = false, keep = false): Promise<Shown> {
   const found = find(page, locator);
   const single = async () => {
     const count = await found.count();
@@ -1299,7 +1505,25 @@ async function displayed(page: Page, watch: Watch, locator: BoundLocator, deadli
       const held = holder === null ? (await call(element, HOLDS, [{ objectId: hit }])) === true : (await call(hit, HOLDER_PATH, [])) === holder;
       if (!held) throw new Stop("element-not-displayed");
     }
-    return { found, facts };
+    if (!keep) return { found, facts };
+    const kept = session;
+    session = undefined;
+    return {
+      found,
+      facts,
+      bound: {
+        async act(functionDeclaration, ...values) {
+          try {
+            const answer = await kept.send("Runtime.callFunctionOn", { objectId: element, functionDeclaration, arguments: values.map((value) => ({ value })), returnByValue: true });
+            return answer.exceptionDetails || typeof answer.result.value !== "string" ? "failed" : answer.result.value;
+          } catch {
+            // The world the node lived in is gone with its document.
+            return "gone";
+          }
+        },
+        release: async () => void (await kept.detach().catch(() => {})),
+      },
+    };
   } catch (error) {
     if (error instanceof Stop) throw error;
     throw new Stop("element-not-displayed");
@@ -1308,13 +1532,87 @@ async function displayed(page: Page, watch: Watch, locator: BoundLocator, deadli
   }
 }
 
+/**
+ * Types a text into the node this runs on, and nowhere else: no keyboard, no
+ * focus that another document could hold. The value is set as the browser's
+ * own setter sets it and the events a person's typing gives are sent, so that
+ * a page that listens for them hears them. Runs in the engine's world.
+ *
+ * The page's own script runs during this, at each event. It can take the node
+ * out of the document (into a frame's, a window's) while it does. So before
+ * every thing done to the node it is asked again whether it is still in the
+ * document it was examined in, and nothing more is done if it is not. What
+ * was typed before it left is taken back. Script that holds the node can
+ * read what is typed into it in any case: this keeps the engine from typing
+ * anywhere else, not the application's own script from looking.
+ */
+const TYPE_INTO = `function (text, secret) {
+  const el = this;
+  const here = () => el.isConnected && el.ownerDocument === document && !!document.defaultView;
+  if (!here()) return "gone";
+  const kinds = ["", "text", "email", "password", "search", "tel", "url", "number"];
+  let proto;
+  if (el.localName === "input" && kinds.includes((el.getAttribute("type") || "").toLowerCase())) proto = HTMLInputElement.prototype;
+  else if (el.localName === "textarea") proto = HTMLTextAreaElement.prototype;
+  else return "not-a-field";
+  if (el.matches(":disabled") || el.readOnly) return "not-a-field";
+  // No more than a person could type into it.
+  if (el.maxLength >= 0 && text.length > el.maxLength) return "not-set";
+  const set = Object.getOwnPropertyDescriptor(proto, "value").set;
+  el.focus();
+  if (!here()) return "gone";
+  // What kind of field it is, is asked now and not when it was looked at: a field may turn into one that holds a secret.
+  if (secret && el.matches(secret)) return "secret";
+  // A page may refuse what is about to be typed; then nothing is.
+  const allowed = el.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, composed: true, inputType: "insertText", data: text }));
+  if (!here()) return "gone";
+  if (!allowed) return "not-set";
+  if (secret && el.matches(secret)) return "secret";
+  set.call(el, text);
+  el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertText", data: text }));
+  if (!here()) { set.call(el, ""); return "gone"; }
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  if (!here()) { set.call(el, ""); return "gone"; }
+  return el.value === text ? "done" : "not-set";
+}`;
+
+/**
+ * Presses and releases on the node this runs on and clicks it, as a person's
+ * click would in that sequence, without a pointer that another document could
+ * be under by then. Runs in the engine's world. As with typing, the node is
+ * asked before every event whether it is still in the document it was
+ * examined in; and it is not pressed if a person could not press it.
+ */
+const ACT_ON = `function () {
+  const el = this;
+  const here = () => el.isConnected && el.ownerDocument === document && !!document.defaultView;
+  if (!here()) return "gone";
+  if (el.matches(":disabled") || getComputedStyle(el).pointerEvents === "none") return "disabled";
+  const box = el.getBoundingClientRect();
+  const at = { bubbles: true, cancelable: true, composed: true, view: window, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, button: 0 };
+  const steps = [
+    () => el.dispatchEvent(new PointerEvent("pointerdown", { ...at, pointerId: 1, isPrimary: true, buttons: 1 })),
+    () => el.dispatchEvent(new MouseEvent("mousedown", { ...at, buttons: 1 })),
+    () => { if (typeof el.focus === "function") el.focus(); },
+    () => el.dispatchEvent(new PointerEvent("pointerup", { ...at, pointerId: 1, isPrimary: true })),
+    () => el.dispatchEvent(new MouseEvent("mouseup", at)),
+    () => el.click(),
+  ];
+  for (const step of steps) {
+    if (!here()) return "gone";
+    if (el.matches(":disabled")) return "disabled";
+    step();
+  }
+  return here() ? "done" : "gone";
+}`;
+
 /** The number a displayed element shows, read from its one node; and the same again after a moment, or it is not at rest. */
 async function readShown(page: Page, watch: Watch, origin: string, reading: Reading, deadline: number): Promise<string> {
   const read = async () => {
     const { facts } = await displayed(page, watch, reading.locator, deadline, true);
     if (!facts.value) throw new Stop("element-not-a-value");
     // Still the page that was opened: nothing has taken it elsewhere while it was read.
-    pageAt(page, origin, reading.path);
+    await pageAt(page, origin, reading.path);
     const value = readStrictNumber(String(facts.text).trim(), reading.valueKind, reading.unit);
     if (value === undefined) throw new Stop("reading-not-a-number");
     return value;

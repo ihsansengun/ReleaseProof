@@ -109,6 +109,74 @@ Not from script the page can replace.
   target that is not a GET or a HEAD is a write: counted for the `act` under
   way, something gone wrong if there is none, passed over only if the binding
   lists it as background.
+- **Whether a page is still the page the engine opened:** the browser's
+  debugging interface tells of a document loaded in the page, of a change of
+  address without loading one, and of a document opened anew by script.
+  **One document is loaded, the engine's**; a page that loads another,
+  itself again included, or opens its document anew, is `address-not-bound`.
+  **A page may change its address only through the history interface and
+  only to the very address it is bound to**, which frameworks do as they
+  start (the owner's decision of 23 November 2026: harmless same-address
+  history operations, under strict confinement to the route and origin, and
+  nothing broader). To any other address, a query or a fragment or another
+  spelling included, even if it comes back afterwards, and by any other
+  means (a fragment, going back and forth in the history), it is
+  `address-not-bound`. The engine also keeps hold of the document itself, in
+  a world of its own, and asks it before every step and reading whether it
+  is still the page's document and at the bound address; and it counts the
+  worlds the browser makes for the page's script. These overlap with one
+  another and with the count of documents: in the tests, a document put in
+  the page's place through a script address is refused with any one of them
+  taken out, so no test shows that each is needed by itself. For a write, what
+  counts is what the browser had told by the time it told of the request,
+  not the answer of the held document afterwards.
+- **An action reaches the document the engine looked at, or nothing.** The
+  engine does not find the element again when it acts. It types into, and
+  presses, the very node it examined, through the browser's hold on that
+  node in the engine's own world. No keyboard and no pointer are used, which
+  another document could be under by then. The node is asked, before the
+  value is set and before and after every event the engine sends it,
+  whether it is still connected, in the document it was examined in, and
+  that document still shown; if not, nothing more is done, what was typed
+  is taken back, and the check ends `address-not-bound`. Whether the field
+  holds a secret is asked as it is typed into, not only when it was looked
+  at. **What this gives, and what it does not:** the engine does not set a
+  fixture's value (a password) on a node that is outside the examined
+  document at that moment, and does not go on once the node has left it.
+  It does not keep the value from the examined document's own script. That
+  script runs at every event of the act, reads the field as any page reads
+  its own fields, and can copy the value anywhere it can reach, a frame or
+  another page of the same origin included. A fixture's value is therefore
+  known to the page it is typed into, and to whatever that page shares it
+  with; no rule of the engine changes that. A button a person could not
+  press (disabled, in a disabled fieldset, taking no pointer) is not
+  pressed, and a field is not given more than its length allows.
+- **After typing, and after an act that sends nothing, the page must still
+  be the page that was opened.** Neither takes a page anywhere. A page that
+  moves in answer to the engine's own act (on focus, on the press) is
+  `address-not-bound`, and so is an act that sends nothing and follows a
+  link.
+- **A write is the page's own by what the browser says of the request**, not
+  by which of two events the engine heard first. The browser names, for
+  every request, the document it came from and that document's address. A
+  counted write must come from the opened document, at the bound address, in
+  the main frame, while the page's script still ran in that document's
+  world, and the page had been at no other address by then and had not
+  opened its document anew. A form that is sent is itself a navigation, and
+  the browser names for it the document it loads, **not the one that sent
+  it**: it is taken only if it is the first navigation away from the opened
+  document and the page has no frame and no other page beside it, and has
+  had none since the act began (a frame or a window made as the engine
+  presses and taken away again has been there all the same), since
+  either could have sent a form into the main frame. Anything else is
+  `write-not-attributed`: a write sent after the page moved, by the page it
+  turned into, from a frame, or from a worker (of which the browser does not
+  tell on this channel). **What this does not tell apart:** a frame or
+  another page of the same origin that calls the opened page's own
+  functions (`parent.fetch`, `opener.fetch`) sends a request the browser
+  names as the opened document's, and it is counted as the page's. It is
+  the opened document's script interface doing the sending, and the engine
+  has no means of seeing who called it.
 - **Elements and their text:** one node, asked in an isolated world of the
   engine's own making. A page that replaces `getComputedStyle`,
   `getBoundingClientRect` or `innerText` changes nothing there (tested).
@@ -266,6 +334,96 @@ Set by the owner on 23 November 2026. None is met by this code.
   A check must also have a write after it, and the observation is compared
   with its last sight before that write, so what is read at the end is
   attributed to the journey after the starting state.
+- **The engine's acts are not a person's.** Typing sets the field's value
+  and sends the events typing gives; pressing sends the press, the release
+  and the click to the node. The browser marks such events as made by
+  script. A page that acts only on events it trusts does not respond; the
+  check then ends unverified (`write-not-as-expected`, or a condition not
+  met). Nothing here rests on the browser withholding what needs a real
+  gesture: in the browser as the engine starts it, a script-made click
+  opened a window (tested), which is why an act that sends nothing may not
+  leave another page open. This is the price of an act that does not go
+  through a keyboard or a pointer that another document could be under.
+- **What the engine's acts leave out.** No key is pressed or released
+  (`keydown`, `keyup`, `keypress`), nothing is hovered, and no field is
+  left (`blur`): a page that waits for one of these does not respond.
+  Typing is refused (`step-not-done`) for anything but a text-like `input`
+  or a `textarea`: a date, a checkbox, a `select`, an editable element and
+  a type the engine does not know are not typed into.
+- **What rests on how the browser is started.** That one document is
+  loaded rests on the browser telling of every document it puts in the
+  page. The engine makes no setting that turns off the browser's cache of
+  pages or its blocking of windows; what is written here was observed in
+  the browser as the engine starts it. Whether a page prepared ahead by the
+  browser (prerendering) could take the place of the opened one without
+  being told of was not established, and no test covers it. Before trusted
+  verdicts are activated these are to be settled by settings the engine
+  makes itself, not by what the browser happens to do.
+- **What rests on the browser telling the truth in sequence.** That a form
+  sent is the first navigation away from the opened document, that the page
+  had been at no other address and still ran in the opened document's world
+  when a write was sent, are known from the sequence in which the browser
+  tells of documents, worlds and requests on one channel. Whether a frame or
+  a window has been made is counted partly on that channel and partly on
+  the one the engine drives the browser through, and it is compared when
+  the engine decides, after the page has come to rest, not at the moment
+  the write was told of. No way was found to get a later document's form
+  counted; it is the browser's behaviour, not a promise it makes.
+- **Two behaviours of the browser that the rule for forms rests on.** A
+  timer that makes a frame, has it send a form to the top and takes it away
+  again, all just before the act begins, would leave no frame to be seen and
+  none counted since. It was not got to work in 574 tries, for two reasons
+  that were measured and are not promised: while a navigation of the main
+  frame is pending the browser answers none of the engine's questions, so
+  the press cannot be finished on the old document; and the form's
+  navigation waits its turn in the same queue as those questions. If either
+  changes in a later browser, this opens. It is a gate before trusted
+  verdicts are activated.
+- **Dialogs** (`alert`, `confirm`) are dismissed by the engine and count for
+  nothing.
+- **An act that expects a write may open a window**, which stays open to
+  the end of the check; only typing and an act that sends nothing are held
+  to opening none (a window opened and closed again counts too).
+- **Which document sent a write, not what caused it.** A write the page
+  sends by itself while the engine's act is under way (on a timer, say) is
+  counted as the act's if it is the one expected. The rules say where a
+  write came from; they do not say the press brought it about.
+- **A script address before the engine first looks.** A page that puts
+  another document in its own place through a script address as it loads,
+  before the engine has taken its first count, is the document the engine
+  opened, as one that writes over itself while it is parsed is. Later it is
+  refused.
+- **Pressed where a person would not have reached.** The engine does not
+  ask what lies on top while it presses. A button that hides itself or is
+  covered at the press, and a handler on an element inside the button
+  (a person's click lands on the inner element; the engine's on the
+  button), behave otherwise than under a person's hand: the first is
+  pressed all the same, the second is not triggered and the check ends
+  unverified.
+- **A field that changes what is typed** (to capitals, say, or by adding a
+  space) ends `step-not-done`: the engine takes a fill as done only if the
+  field then holds exactly the text.
+- **Ordinary pages that end `write-not-attributed`:** one whose click sends
+  its write from a frame or a worker; one that changes its address first and
+  sends afterwards; one that sends a form and has any frame in it (an
+  embedded widget, an analytics frame) or another page open beside it; one
+  that adds a frame as the form is sent; and one whose form leads to a page
+  that has a frame in it, since the frames of the page it lands on have been
+  counted by the time the engine decides. That last refusal is broader than
+  the rule needs (those frames cannot have sent the form) and is left so
+  rather than rest more on the order of the browser's events.
+- **A page that writes a new document over itself as it is parsed**
+  (`document.write` before it has loaded) is the document the engine opened.
+  A page can draw anything by script in any case; the rules are about where
+  the page is and which document acts, not what it draws.
+- **Ordinary pages that are `address-not-bound`:** a router that works by
+  fragment or adds one on starting; one that adds or removes a trailing
+  slash; one that keeps its state in a query; one that restores a scroll
+  position with a fragment; any client-side redirect; a page that opens or
+  writes its document anew after it has loaded; a page that takes over
+  navigations (the Navigation API), where even a same-address history call
+  is told of as something else; an act that sends nothing and follows a
+  link.
 - Choices the design leaves open, fixed in the code: a viewport of 1280 by
   720; half a second between two tries of a condition after a write, which
   is also tried again while its element is missing or not yet a number; a
