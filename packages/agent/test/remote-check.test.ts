@@ -11,7 +11,9 @@ import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium, type Browser } from "playwright";
 import { Binding } from "../src/remote/binding.ts";
-import { carryOutCheck, checkProblems, expectedInUnit, fixtureKey, readStrictNumber, UNVERIFIED_REASONS, type CheckRecord } from "../src/remote/check.ts";
+import { carryOutCheck, checkProblems, criteriaProblems, expectedInUnit, fixtureKey, readStrictNumber, UNVERIFIED_REASONS, type CheckRecord } from "../src/remote/check.ts";
+import { sha256Hex } from "../src/remote/request.ts";
+import { notQuoted, quotedNumbers } from "../src/validate.ts";
 
 // ---- a stand-in application ----------------------------------------------------
 
@@ -89,6 +91,18 @@ function binding(change: Partial<Draft> = {}): Binding {
   return Binding.parse(draft);
 }
 
+/**
+ * A criteria text for a binding of these tests, and the binding made to be for it: one line that states the
+ * expected value first. The tests of the rules about the text itself write their own.
+ */
+function forText(bound: Binding): { binding: Binding; criteria: string } {
+  const criteria = `${bound.expected.value} is the value shown when the journey is done.`;
+  const made = Binding.parse({ ...bound, snapshotSha256: sha256Hex(criteria), quote: { start: 0, end: criteria.length }, expected: { start: 0, end: bound.expected.value.length, value: bound.expected.value } });
+  return { binding: made, criteria };
+}
+/** Carries a check out as the tests of the journey mean it: with a criteria text that states its expected value. */
+const carry = (options: Omit<Parameters<typeof carryOutCheck>[0], "criteria">) => carryOutCheck({ ...options, ...forText(options.binding) });
+
 let browser: Browser;
 before(async () => {
   browser = await chromium.launch();
@@ -101,7 +115,7 @@ let runs = 0;
 async function check(routes: Routes, bound: Binding = binding(), options: { limitMs?: number; runId?: string } = {}): Promise<{ record: CheckRecord; ledger: Ledger; baseUrl: string }> {
   const { baseUrl, server, ledger } = await app(routes);
   try {
-    const record = await carryOutCheck({ browser, baseUrl, runId: options.runId ?? `00000000-0000-4000-8000-${String(++runs).padStart(12, "0")}`, binding: bound, ...(options.limitMs === undefined ? {} : { limitMs: options.limitMs }) });
+    const record = await carry({ browser, baseUrl, runId: options.runId ?? `00000000-0000-4000-8000-${String(++runs).padStart(12, "0")}`, binding: bound, ...(options.limitMs === undefined ? {} : { limitMs: options.limitMs }) });
     return { record, ledger, baseUrl };
   } finally {
     server.closeAllConnections();
@@ -214,6 +228,96 @@ test("a binding that breaks a rule of the journey is refused, and its check is n
   assert.deepEqual(checkProblems(binding({ steps: [see("count", "0"), see("balance", "0"), ...BUY, see("count", "1"), ...BUY, see("count", "2")], expected: { start: 0, end: 3, value: "200" } })), []);
 });
 
+// ---- rules that need the criteria text -----------------------------------------
+
+test("the reader of quoted numbers says where each number stands, and reads what the validator's reader reads", () => {
+  const texts = [
+    "After a purchase of 24.99 the balance is 100.",
+    "1. The balance is 100\n2) A purchase adds 1,250 to it\n  3. Nothing else changes",
+    "KAN-160 says 160px is 3/4 of #160, from 10:30 to 100\u2013160, and 2026-01-05.",
+    "A balance of \u22125 is shown as 5.00, never as 5.0.1 or 1,24.",
+    "Total:\u00a0100\u00a0items \u2026 7",
+    "",
+  ];
+  for (const text of texts) {
+    const numbers = quotedNumbers(text);
+    // Each number is the text at its place, but for a dash that is read as a minus.
+    for (const number of numbers) assert.equal(text.slice(number.start, number.end).replace(/[\u2010-\u2015\u2212]/g, "-"), number.text, text);
+    // And they are the validator's numbers: each is stated, and nothing else in the text is.
+    for (const number of numbers) assert.equal(notQuoted({ literal: Number(number.text.replaceAll(",", "")) }, text, "plain"), undefined, `${number.text} in ${text}`);
+    const stated = new Set(numbers.map((number) => Number(number.text.replaceAll(",", ""))));
+    for (const candidate of [1, 2, 3, 4, 5, 7, 10, 30, 100, 160, 1250, 24.99, 2026, -5, 5.0, 24]) {
+      assert.equal(notQuoted({ literal: candidate }, text, "plain") === undefined, stated.has(candidate), `${candidate} in ${JSON.stringify(text)}`);
+    }
+  }
+  assert.deepEqual(quotedNumbers("1. The balance is 100\n2) A purchase adds 1,250 to it"), [
+    { start: 18, end: 21, text: "100" },
+    { start: 41, end: 46, text: "1,250" },
+  ]);
+});
+
+test("a binding is for its criteria text: whole lines, the number written at its place, equality only", async () => {
+  const criteria = "# Balance\n\nAfter one purchase the balance is 100.\nA new account starts with a balance of 0.\nThe balance is at least 50 after a refund.\nThe total is 1,250 and never 1250.5.\nLe solde est de 100 apr\u00e8s un achat.\n";
+  const line = (text: string) => ({ start: criteria.indexOf(text), end: criteria.indexOf(text) + text.length });
+  // Where a number stands in a quote: its last place, so that "0" is the nought at the end and not one of "100".
+  const within = (span: { start: number; end: number }, number: string, value = number) => {
+    const at = criteria.slice(span.start, span.end).lastIndexOf(number);
+    return { start: at, end: at + number.length, value };
+  };
+  const purchase = line("After one purchase the balance is 100.");
+  const starts = line("A new account starts with a balance of 0.");
+  const both = { start: purchase.start, end: starts.end };
+  const bound = (change: Partial<Draft> = {}) => binding({ snapshotSha256: sha256Hex(criteria), quote: purchase, expected: within(purchase, "100"), ...change });
+
+  assert.deepEqual(criteriaProblems(bound(), criteria), []);
+  // Two lines, a condition from the one and the final value from the other.
+  const fromQuote = bound({ quote: both, expected: within(both, "100"), steps: [see("count", "0"), { kind: "see", reading: reading("/account", "balance"), expected: { from: "quote", ...within(both, "0") } }, ...BUY, see("count", "1")] });
+  assert.deepEqual(criteriaProblems(fromQuote, criteria), []);
+  // A number written with a group separator is that number.
+  const total = line("The total is 1,250 and never 1250.5.");
+  assert.match(criteriaProblems(bound({ quote: total, expected: within(total, "1,250", "1250") }), criteria).join("\n"), /words a negation/);
+
+  const refusals: [Partial<Draft>, string, RegExp][] = [
+    [{}, `${criteria} `, /not the revision/],
+    [{ snapshotSha256: "b".repeat(64) }, criteria, /not the revision/],
+    [{ quote: { start: purchase.start, end: criteria.length + 5 } }, criteria, /outside the criteria text/],
+    // Offsets off a line boundary: a line begun late, ended early, or with its line break.
+    [{ quote: { start: purchase.start + 6, end: purchase.end }, expected: { start: 28, end: 31, value: "100" } }, criteria, /not whole lines/],
+    [{ quote: { start: purchase.start, end: purchase.end - 1 } }, criteria, /not whole lines/],
+    [{ quote: { start: purchase.start, end: purchase.end + 1 } }, criteria, /not whole lines/],
+    [{ quote: { start: 9, end: 10 }, expected: { start: 0, end: 1, value: "1" } }, criteria, /holds no text|not whole lines/],
+    // A span that is not one whole number: inside a longer one, more than one, inside a word.
+    [{ expected: { ...within(purchase, "100"), end: within(purchase, "100").end - 1, value: "10" } }, criteria, /not at one whole number/],
+    [{ expected: { start: within(purchase, "100").start + 1, end: within(purchase, "100").start + 2, value: "0" } }, criteria, /not at one whole number/],
+    [{ expected: { start: within(purchase, "one").start, end: within(purchase, "one").end, value: "1" } }, criteria, /not at one whole number/],
+    // A value that is not the number at the offsets.
+    [{ expected: within(purchase, "100", "200") }, criteria, /not the number written/],
+    [{ expected: within(purchase, "100", "100.0") }, criteria, /not the number written/],
+    [{ quote: both, expected: within(both, "100"), steps: [see("count", "0"), { kind: "see", reading: reading("/account", "balance"), expected: { from: "quote", ...within(both, "0", "5") } }, ...BUY, see("count", "1")] }, criteria, /condition's expected value is not the number written/],
+    // A bound, a negation, another language.
+    [{ quote: line("The balance is at least 50 after a refund."), expected: within(line("The balance is at least 50 after a refund."), "50") }, criteria, /words a bound/],
+    [{ quote: total, expected: within(total, "1,250", "1250") }, criteria, /words a negation/],
+    [{ quote: line("Le solde est de 100 apr\u00e8s un achat."), expected: within(line("Le solde est de 100 apr\u00e8s un achat."), "100") }, criteria, /outside the English alphabet/],
+  ];
+  for (const [change, text, expected] of refusals) assert.match(criteriaProblems(bound(change), text).join("\n"), expected, JSON.stringify(change));
+
+  // A refused binding is not carried out: nothing is asked of the application.
+  const { baseUrl, server, ledger } = await app({});
+  try {
+    const record = await carryOutCheck({ browser, baseUrl, runId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", binding: bound({ expected: within(purchase, "100", "200") }), criteria });
+    unverified(record, "binding-refused");
+    assert.match((record.refused ?? []).join("\n"), /not the number written/);
+    // With no criteria text at all, nothing is carried out either.
+    unverified(await carryOutCheck({ browser, baseUrl, runId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", binding: bound() } as unknown as Parameters<typeof carryOutCheck>[0]), "binding-refused");
+    assert.deepEqual(ledger.requests, []);
+    // The binding that is for its text is carried out, and verifies against the stand-in application.
+    assert.equal((await carryOutCheck({ browser, baseUrl, runId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", binding: bound(), criteria })).outcome, "verified");
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 // ---- carried out ---------------------------------------------------------------
 
 // The limit is for a run that hangs: it then fails, where it would otherwise never end.
@@ -300,12 +404,12 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     const { record, ledger } = await check(routes, bound, { runId });
     assert.equal(record.outcome, "verified");
     assert.equal(record.writesCounted, 2);
-    const key = fixtureKey(runId, bound);
+    const key = fixtureKey(runId, forText(bound).binding);
     assert.match(key, /^rp-[0-9a-f]{24}$/);
     assert.deepEqual(ledger.bodies, [`{"key":"${key}"}`, `user-${key}`]);
     // Another run, or another binding, has another key.
     assert.notEqual(fixtureKey("22222222-2222-4222-8222-222222222222", bound), key);
-    assert.notEqual(fixtureKey(runId, binding({ ...bound, id: "another" })), key);
+    assert.notEqual(fixtureKey(runId, forText(binding({ ...bound, id: "another" })).binding), key);
     // The value taken from the fixture's answer is nowhere in the record.
     assert.ok(!JSON.stringify(record).includes(key));
   });
@@ -537,7 +641,7 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
           }
         });
         try {
-          const record = await carryOutCheck({ browser, baseUrl, runId: `bbbbbbbb-bbbb-4bbb-8bbb-${String(after).padStart(12, "0")}`, binding: binding({ steps: [see("count", "0")] }) });
+          const record = await carry({ browser, baseUrl, runId: `bbbbbbbb-bbbb-4bbb-8bbb-${String(after).padStart(12, "0")}`, binding: binding({ steps: [see("count", "0")] }) });
           return { after, asked: ledger.requests.includes("GET /cut"), outcome: record.outcome };
         } finally {
           server.closeAllConnections();
@@ -581,9 +685,9 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     const { baseUrl, server, ledger } = await app({ "POST /fixture": () => json({ username: "shared" }) });
     try {
       const bound = binding({ setup: { kind: "fixture", method: "POST", path: "/fixture", body: '{"key":"{{key}}"}' } });
-      const first = await carryOutCheck({ browser, baseUrl, runId: "33333333-3333-4333-8333-333333333333", binding: bound });
+      const first = await carry({ browser, baseUrl, runId: "33333333-3333-4333-8333-333333333333", binding: bound });
       assert.equal(first.outcome, "verified");
-      const second = await carryOutCheck({ browser, baseUrl, runId: "44444444-4444-4444-8444-444444444444", binding: bound });
+      const second = await carry({ browser, baseUrl, runId: "44444444-4444-4444-8444-444444444444", binding: bound });
       unverified(second, "condition-not-met");
       assert.equal(ledger.count, 1, "the second run made no purchase");
     } finally {
@@ -619,12 +723,12 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     try {
       // Twice against one application: the second check begins with nothing stored, as the first did.
       for (const runId of ["77777777-7777-4777-8777-777777777777", "88888888-8888-4888-8888-888888888888"]) {
-        assert.equal((await carryOutCheck({ browser, baseUrl, runId, binding: fresh })).outcome, "verified");
+        assert.equal((await carry({ browser, baseUrl, runId, binding: fresh })).outcome, "verified");
       }
       // Within one check, what the application stores stays: the second page of a check is its second visit.
-      unverified(await carryOutCheck({ browser, baseUrl, runId: "99999999-9999-4999-8999-999999999999", binding: binding({ ...fresh, steps: [see("visits", "0"), see("visits", "0")] }) }), "condition-not-met");
+      unverified(await carry({ browser, baseUrl, runId: "99999999-9999-4999-8999-999999999999", binding: binding({ ...fresh, steps: [see("visits", "0"), see("visits", "0")] }) }), "condition-not-met");
       // In another time zone the hour is another.
-      assert.equal((await carryOutCheck({ browser, baseUrl, runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", binding: binding({ ...fresh, timezone: "Europe/London" }) })).outcome, "failed");
+      assert.equal((await carry({ browser, baseUrl, runId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", binding: binding({ ...fresh, timezone: "Europe/London" }) })).outcome, "failed");
     } finally {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
@@ -886,12 +990,12 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     try {
       const withFixture = binding({ setup: { kind: "fixture", method: "POST", path: "/fixture", body: '{"key":"{{key}}"}' } });
       const started = Date.now();
-      unverified(await carryOutCheck({ browser, baseUrl, runId: "55555555-5555-4555-8555-555555555555", binding: withFixture }), "setup-failed");
+      unverified(await carry({ browser, baseUrl, runId: "55555555-5555-4555-8555-555555555555", binding: withFixture }), "setup-failed");
       assert.ok(Date.now() - started < 5_000, "the answer was given up as soon as it was too long");
       assert.ok(sent < 20_000_000, `${sent} bytes were taken`);
       // A time zone that is not one: refused before the fixture is called.
       ledger.requests.length = 0;
-      unverified(await carryOutCheck({ browser, baseUrl, runId: "66666666-6666-4666-8666-666666666666", binding: binding({ ...withFixture, timezone: "Nowhere/Never" }) }), "setup-failed");
+      unverified(await carry({ browser, baseUrl, runId: "66666666-6666-4666-8666-666666666666", binding: binding({ ...withFixture, timezone: "Nowhere/Never" }) }), "setup-failed");
       assert.deepEqual(ledger.requests, []);
     } finally {
       server.closeAllConnections();
@@ -913,7 +1017,7 @@ test("the runner is used by no run, and no source writes a trusted result", asyn
   // What the runner hands out, by name. A new name is a new way in: it is added here, on purpose, or not at all.
   const exported = [...(await readFile(runner, "utf8")).matchAll(/^export\s+(?:async\s+)?[a-z]+\s+([A-Za-z_$][\w$]*)/gm)].map((match) => match[1]!).sort();
   assert.equal(exported.length, [...(await readFile(runner, "utf8")).matchAll(/^export\b/gm)].length, "every export of the runner is one this test can name");
-  assert.deepEqual(exported, ["CHECK_LIMITS", "CheckOptions", "CheckRecord", "FinalReading", "UNVERIFIED_REASONS", "UnverifiedReason", "carryOutCheck", "checkProblems", "defaultLimitMs", "expectedInUnit", "fixtureKey", "readStrictNumber"]);
+  assert.deepEqual(exported, ["CHECK_LIMITS", "CheckOptions", "CheckRecord", "FinalReading", "UNVERIFIED_REASONS", "UnverifiedReason", "carryOutCheck", "checkProblems", "criteriaProblems", "defaultLimitMs", "expectedInUnit", "fixtureKey", "readStrictNumber"]);
   assert.doesNotMatch(await readFile(runner, "utf8"), /^export \{|^export \*|^export default/m, "the runner hands nothing out under another name");
   const refers = new RegExp(`/check(\\.[cm]?[jt]s)?["'\`]|\\b(?:${exported.join("|")})\\b`);
   // Every place code lives, not only the engine's own source: nothing anywhere calls the runner but its tests.

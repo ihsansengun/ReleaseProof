@@ -12,8 +12,17 @@ the runner, and no source file writes a trusted result.
 
 ## What it does
 
-Given a browser, the target's address, a run id and a binding:
+Given a browser, the target's address, a run id, a binding and the text of
+the criteria snapshot the binding is for:
 
+0. Refuses the binding if it is not for that text (`criteriaProblems`): the
+   text is another revision than the binding names; the quote is not whole
+   lines of it; an expected value taken from the quote is not at exactly one
+   whole number, as the engine's own reader of quoted numbers finds numbers,
+   or is not the number written there; the quote words a bound ("at least",
+   "up to") or a negation ("not", "no", "never"), since only equality can be
+   checked; the quote holds letters outside the English alphabet, since the
+   words for bounds and negations are known in English only.
 1. Refuses the binding if it breaks a rule that can be told without the
    criteria text (`checkProblems`): a write with no before-and-after witness
    (the observation's own element is no witness); writes that all come
@@ -127,10 +136,13 @@ the browser, of every frame, whether anything is registered for leaving
 cannot ask (one the browser keeps apart) as having something; no test
 reaches that last rule yet. If so
 the check ends `leave-script-suppressed`, whatever it read. Many
-applications register such a listener for statistics; until a binding can
-say that an application's leave-time script may be ignored (a signed field,
-with the format change that adds the drawing time), such applications
-cannot be checked.
+applications register such a listener for statistics; today such
+applications cannot be checked.
+
+The owner's rule for any later relaxation (23 November 2026): it must not
+be a general way to ignore application activity that may matter. It has to
+be explicitly approved, narrowly scoped, and fail closed whenever ignoring
+the activity could invalidate the check. No such setting exists yet.
 
 ## Gates before activation
 
@@ -159,12 +171,6 @@ Set by the owner on 23 November 2026. None is met by this code.
 
 ## What it does not do yet
 
-- **The rules that need the criteria text**: that the quote lies on whole
-  lines, that the expected value is the number written at its position, that
-  the quote holds no bound or negation. Until they exist, an outcome says
-  what the application showed against the value in the binding, and nothing
-  about the criteria. They come in the next pull request of this stage,
-  before anything is wired into a run.
 - **Being part of a run.** Checks are not yet carried out before a plan's
   steps, and nothing is written to a run's working record.
 - **Pictures.** The runner keeps none.
@@ -231,6 +237,15 @@ Set by the owner on 23 November 2026. None is met by this code.
   is also tried again while its element is missing or not yet a number; a
   minus sign only at the very start of a number; exactly two decimals for an
   amount in units.
+- **The quote's language is told only by its letters.** A quote in another
+  language that is written with the plain alphabet is not refused, and its
+  words for a bound or a negation are not known.
+- **A reading in hundredths cannot be bound to a quote that writes the amount
+  in units** ("21.60" in the text, 2160 on the page): the expected value is
+  the number written in the quote, and it must be one the reading's unit can
+  spell.
+- **Words for a negation are common.** A sentence with "no", "not" or
+  "never" anywhere in it cannot be bound, whatever it negates.
 - The engine's own limits (`CHECK_LIMITS`) only ever end a check as
   unverified. A check is given up five seconds past its limit even if a page
   keeps the browser busy.

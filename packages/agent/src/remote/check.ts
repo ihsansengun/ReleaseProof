@@ -17,16 +17,14 @@
  * replace what is asked), and what lies on top of an element from the
  * browser's own hit test.
  *
- * NOT YET CHECKED HERE: the rules that need the criteria text (that the quote
- * lies on whole lines, that the expected value is the number written at its
- * position, that the quote holds no bound or negation). Until they are, an
- * outcome of this file says what the application showed against the value in
- * the binding, and nothing about the criteria.
+ * A binding is carried out only against the criteria text it is for:
+ * `criteriaProblems` holds the rules that need that text.
  */
 import { selectors, type Browser, type BrowserContext, type CDPSession, type Locator, type Page, type Request } from "playwright";
 import { SECRET_FIELDS } from "../execute/capture.ts";
 import { bindingProblems, bindingSha256, FIXTURE_KEY_PLACEHOLDER, type Binding } from "./binding.ts";
 import { sha256Hex } from "./request.ts";
+import { quotedNumbers, WORDING } from "../validate.ts";
 
 // ---- outcomes ------------------------------------------------------------------
 
@@ -267,6 +265,45 @@ export function checkProblems(binding: Binding): string[] {
   return problems;
 }
 
+// ---- rules that need the criteria text -----------------------------------------
+
+/**
+ * What is wrong with a binding against the criteria text it is for. A binding
+ * with any of these is refused, never repaired.
+ *
+ * `criteria` is the snapshot's text, whole and exactly as approved. The quote
+ * is that text between the binding's offsets, on whole lines. An expected
+ * value that comes from the quote is exactly one whole number as the engine's
+ * own reader of quoted numbers finds it at its offsets, and is the number
+ * written there. The comparison is equality: a quote that words a bound or a
+ * negation is refused, since equality would read "at least 100" showing 150
+ * as a failure. The lists of such words are English, so a quote that is
+ * plainly in another language is refused too.
+ */
+export function criteriaProblems(binding: Binding, criteria: string): string[] {
+  if (sha256Hex(criteria) !== binding.snapshotSha256) return ["the criteria text is not the revision the binding is for"];
+  const { start, end } = binding.quote;
+  if (end > criteria.length) return ["its quote lies outside the criteria text"];
+  const problems: string[] = [];
+  const quote = criteria.slice(start, end);
+  // Whole lines: it begins where a line begins and ends where one ends, with nothing of a line left out.
+  if ((start > 0 && criteria[start - 1] !== "\n") || (end < criteria.length && criteria[end] !== "\n" && criteria[end] !== "\r") || quote.endsWith("\n") || quote.endsWith("\r")) problems.push("its quote is not whole lines of the criteria text");
+  if (quote.trim() === "") problems.push("its quote holds no text");
+  const said = quote.toLowerCase();
+  if (WORDING.atLeast.test(said) || WORDING.atMost.test(said)) problems.push("its quote words a bound, and only equality can be checked");
+  if (WORDING.negation.test(said)) problems.push("its quote words a negation, and only equality can be checked");
+  if (/[^\u0000-\u007f]/u.test(quote.replace(/[^\p{L}]/gu, ""))) problems.push("its quote holds letters outside the English alphabet, and the words for bounds and negations are known in English only");
+  const numbers = quotedNumbers(quote);
+  const written = (span: { start: number; end: number; value: string }, what: string) => {
+    const found = numbers.find((number) => number.start === span.start && number.end === span.end);
+    if (!found) problems.push(`${what} is not at one whole number of the quote, as the engine reads numbers`);
+    else if (found.text.replaceAll(",", "") !== span.value) problems.push(`${what} is not the number written at its place in the quote`);
+  };
+  written(binding.expected, "its expected value");
+  for (const step of binding.steps) if (step.kind === "see" && step.expected.from === "quote") written(step.expected, "a condition's expected value");
+  return problems;
+}
+
 // ---- the browser's isolated world ----------------------------------------------
 
 /**
@@ -476,6 +513,8 @@ export type CheckOptions = {
   readonly baseUrl: string;
   readonly runId: string;
   readonly binding: Binding;
+  /** The text of the criteria snapshot the binding is for, whole and exactly as approved. */
+  readonly criteria: string;
   /** The whole check may take this long. Default: a time worked out from the binding. */
   readonly limitMs?: number;
 };
@@ -520,7 +559,9 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
   const record = (rest: Pick<CheckRecord, "outcome" | "reason" | "refused" | "contradictionSeen" | "expected" | "finalReadings" | "stepsDone" | "writesCounted" | "lastWriteAfterMs">): CheckRecord => ({ ...base, ...rest, durationMs: Math.round(now() - began) });
   const nothing = { contradictionSeen: false, finalReadings: [], stepsDone: 0, writesCounted: 0 } as const;
 
-  const refused = checkProblems(binding);
+  // Against the criteria text first: a binding for another text is not looked at further.
+  const againstText = typeof options.criteria === "string" ? criteriaProblems(binding, options.criteria) : ["no criteria text was given"];
+  const refused = [...againstText, ...checkProblems(binding)];
   if (refused.length > 0) return record({ outcome: "unverified", reason: "binding-refused", refused, ...nothing });
   const expected = expectedInUnit(binding.expected.value, binding.observation.unit)!;
 
