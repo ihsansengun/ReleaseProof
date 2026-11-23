@@ -461,7 +461,9 @@ test("nothing in the engine uses bindings yet: no other source file refers to th
     }
   };
   walk(src);
-  const others = files.filter((file) => !file.endsWith(path.join("remote", "binding.ts")));
+  // One file may: the check runner, which carries a binding out. No run uses the runner either, and
+  // remote-check.test.ts holds that.
+  const others = files.filter((file) => !file.endsWith(path.join("remote", "binding.ts")) && !file.endsWith(path.join("remote", "check.ts")));
   // By any spelling of its name (with or without an ending, in any kind of quote, or put together from parts),
   // and by the names of what it exports.
   const refers = /binding(\.[cm]?[jt]s)?["'`]|["'`]bind["'`]|authoriseBindings|bindingsSha256|bindingSha256|bindingProblems|BindingApproval|BindingEvidence|SignedBindingSet|signedBindingStatement|FIXTURE_KEY_PLACEHOLDER|BINDING_(APPROVAL|FORMAT)_VERSION/;

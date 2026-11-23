@@ -285,7 +285,7 @@ export async function captureStep(session: Session, began: number, mayPicture: {
 }
 
 /** Fields that hold a secret by their kind. */
-const SECRET_FIELDS = ["input", "select", "textarea"].map((tag) => `${tag}[autocomplete*="password" i], ${tag}[autocomplete*="cc-" i], ${tag}[autocomplete*="one-time-code" i]`).join(", ") + ', input[type="password"]';
+export const SECRET_FIELDS = ["input", "select", "textarea"].map((tag) => `${tag}[autocomplete*="password" i], ${tag}[autocomplete*="cc-" i], ${tag}[autocomplete*="one-time-code" i]`).join(", ") + ', input[type="password"]';
 /** More fields or frames than this, and no picture is kept: there is a limit to what can be covered with care. */
 const MOST_AREAS = 2_000;
 const MOST_FRAMES = 40;
