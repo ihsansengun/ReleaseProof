@@ -327,7 +327,8 @@ by asking script that the page can replace.
   an `act` that expects a write the page may go anywhere, but the write must
   be one the browser names as the opened document's at its bound address,
   and a form that is sent is taken only from a page with no frame and no
-  other page beside it; after a `fill`, and after an `act` that expects
+  other page beside it, then or since the act began (which also refuses a
+  form that leads to a page with a frame in it); after a `fill`, and after an `act` that expects
   none, the page must still be the one that was opened. This narrows who
   can have sent a write; it does not prove it: a frame or page of the same
   origin calling the opened page's own functions is not told apart, and a

@@ -362,11 +362,28 @@ Set by the owner on 23 November 2026. None is met by this code.
 - **What rests on the browser telling the truth in sequence.** That a form
   sent is the first navigation away from the opened document, that the page
   had been at no other address and still ran in the opened document's world
-  when a write was sent, and that no frame or window had been made by then,
-  are all known from the sequence in which the browser tells of documents,
-  worlds, frames and requests on one channel. No way was found to get a
-  later document's form counted; it is the browser's behaviour, not a
-  promise it makes.
+  when a write was sent, are known from the sequence in which the browser
+  tells of documents, worlds and requests on one channel. Whether a frame or
+  a window has been made is counted partly on that channel and partly on
+  the one the engine drives the browser through, and it is compared when
+  the engine decides, after the page has come to rest, not at the moment
+  the write was told of. No way was found to get a later document's form
+  counted; it is the browser's behaviour, not a promise it makes.
+- **Two behaviours of the browser that the rule for forms rests on.** A
+  timer that makes a frame, has it send a form to the top and takes it away
+  again, all just before the act begins, would leave no frame to be seen and
+  none counted since. It was not got to work in 574 tries, for two reasons
+  that were measured and are not promised: while a navigation of the main
+  frame is pending the browser answers none of the engine's questions, so
+  the press cannot be finished on the old document; and the form's
+  navigation waits its turn in the same queue as those questions. If either
+  changes in a later browser, this opens. It is a gate before trusted
+  verdicts are activated.
+- **Dialogs** (`alert`, `confirm`) are dismissed by the engine and count for
+  nothing.
+- **An act that expects a write may open a window**, which stays open to
+  the end of the check; only typing and an act that sends nothing are held
+  to opening none (a window opened and closed again counts too).
 - **Which document sent a write, not what caused it.** A write the page
   sends by itself while the engine's act is under way (on a timer, say) is
   counted as the act's if it is the one expected. The rules say where a
@@ -389,7 +406,12 @@ Set by the owner on 23 November 2026. None is met by this code.
 - **Ordinary pages that end `write-not-attributed`:** one whose click sends
   its write from a frame or a worker; one that changes its address first and
   sends afterwards; one that sends a form and has any frame in it (an
-  embedded widget, an analytics frame) or another page open beside it.
+  embedded widget, an analytics frame) or another page open beside it; one
+  that adds a frame as the form is sent; and one whose form leads to a page
+  that has a frame in it, since the frames of the page it lands on have been
+  counted by the time the engine decides. That last refusal is broader than
+  the rule needs (those frames cannot have sent the form) and is left so
+  rather than rest more on the order of the browser's events.
 - **A page that writes a new document over itself as it is parsed**
   (`document.write` before it has loaded) is the document the engine opened.
   A page can draw anything by script in any case; the rules are about where
