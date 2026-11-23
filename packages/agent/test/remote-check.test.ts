@@ -517,6 +517,38 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     unverified((await check({ "GET /account": (ledger) => account(ledger, `<script>fetch("/held")</script>`), "GET /held": () => "hang" })).record, "page-not-at-rest");
   });
 
+  test("a request that fails in the last moments of a check is not passed over", async () => {
+    // The page that is held sends a request, some time after it loads, that the server cuts off. Whenever that
+    // falls, if the server was asked, the check gives no verdict.
+    const cut = (after: number): Routes => ({
+      "GET /account": (ledger) => html(`<p data-testid="balance">100</p><p data-testid="count">${ledger.count}</p><script>setTimeout(() => fetch("/cut").catch(() => {}), ${after})</script>`),
+    });
+    // The moments are close together because the stretch that matters is short: after the last time the engine
+    // waits for rest, and before it gives its verdict.
+    const moments = Array.from({ length: 36 }, (_unused, index) => 2000 + index * 20);
+    const runs: { after: number; asked: boolean; outcome: string }[] = [];
+    for (let start = 0; start < moments.length; start += 4) runs.push(...(await Promise.all(
+      moments.slice(start, start + 4).map(async (after) => {
+        const { baseUrl, server, ledger } = await app(cut(after));
+        server.prependListener("request", (request) => {
+          if (request.url === "/cut") {
+            ledger.requests.push("GET /cut");
+            request.socket.destroy();
+          }
+        });
+        try {
+          const record = await carryOutCheck({ browser, baseUrl, runId: `bbbbbbbb-bbbb-4bbb-8bbb-${String(after).padStart(12, "0")}`, binding: binding({ steps: [see("count", "0")] }) });
+          return { after, asked: ledger.requests.includes("GET /cut"), outcome: record.outcome };
+        } finally {
+          server.closeAllConnections();
+          await new Promise((resolve) => server.close(resolve));
+        }
+      }),
+    )));
+    for (const run of runs) if (run.asked) assert.equal(run.outcome, "unverified", `cut off ${run.after} ms after the page loaded`);
+    assert.ok(runs.some((run) => run.asked), "the server was asked in at least one run");
+  });
+
   test("the time limit ends a check as unverified", async () => {
     unverified((await check({}, binding(), { limitMs: 1 })).record, "time-ran-out");
     unverified((await check({}, binding(), { limitMs: 1_500 })).record, "time-ran-out");

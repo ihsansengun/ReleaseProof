@@ -707,9 +707,13 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
     }
     // Every page still open, one the application opened itself included, is closed as the engine closes its own.
     for (const page of context.pages()) await closeByEngine(watch, page);
+    // Nothing is open now, so nothing new is sent. What was sent and is not yet accounted for (a request that
+    // failed a moment ago, whose reason is still being found out) is waited for: no verdict is given over it.
+    await allAccounted(watch, deadline);
     sound();
     await context.close();
     context = undefined;
+    if (watch.inFlight.size > 0) throw new Stop("page-not-at-rest");
     if (watch.wrong !== undefined) throw new Stop(watch.wrong);
     // The engine kept a page from what it had registered to do on being left. Whatever that was, it was not done.
     if (watch.leaveSuppressed) throw new Stop("leave-script-suppressed");
@@ -974,6 +978,21 @@ async function closeByEngine(watch: Watch, page: Page): Promise<void> {
   })().catch(() => false);
   if (!(await Promise.race([off, sleep(CHECK_LIMITS.leaveMs).then(() => false)])) && !page.isClosed()) watch.wrong ??= "page-not-at-rest";
   await page.close().catch(() => {});
+}
+
+/** At the end of a check, with every page closed: waits until no request is unaccounted for, and none has been for a moment. */
+async function allAccounted(watch: Watch, deadline: number): Promise<void> {
+  const until = Math.min(deadline, now() + CHECK_LIMITS.restMs);
+  let quietSince: number | undefined;
+  for (;;) {
+    if (watch.wrong !== undefined) throw new Stop(watch.wrong);
+    const at = now();
+    if (watch.inFlight.size > 0) quietSince = undefined;
+    else if (quietSince === undefined) quietSince = at;
+    else if (at - quietSince >= 100) return;
+    if (at >= until) throw new Stop(at >= deadline ? "time-ran-out" : "page-not-at-rest");
+    await sleep(20);
+  }
 }
 
 /** Waits until the context has no request in flight, and has had none for a while. A page that never gets there is unverified. */
