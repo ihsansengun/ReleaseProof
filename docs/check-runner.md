@@ -121,8 +121,34 @@ Not from script the page can replace.
   nothing broader). To any other address, a query or a fragment or another
   spelling included, even if it comes back afterwards, and by any other
   means (a fragment, going back and forth in the history), it is
-  `address-not-bound`. The engine looks again right before it types or
-  clicks, and a write counts only if it was sent before the page left.
+  `address-not-bound`. The engine also keeps hold of the document itself, in
+  a world of its own, and asks it before every decision whether it is still
+  the page's document and at the bound address; and it counts the worlds the
+  browser makes for the page's script, since a document put in the page's
+  place through a script address is told of in no other way.
+- **An action reaches the document the engine looked at, or nothing.** The
+  engine does not find the element again when it acts. It types into, and
+  presses, the very node it examined, through the browser's hold on that
+  node in the engine's own world. No keyboard and no pointer are used, which
+  another document could be under by then. If the document is gone, nothing
+  is typed or pressed and the check ends `address-not-bound`. So a value of
+  a fixture (a password) is never typed into another document than the one
+  that was examined.
+- **After typing, and after an act that sends nothing, the page must still
+  be the page that was opened.** Neither takes a page anywhere. A page that
+  moves in answer to the engine's own act (on focus, on the press) is
+  `address-not-bound`, and so is an act that sends nothing and follows a
+  link.
+- **A write is the page's own by what the browser says of the request**, not
+  by which of two events the engine heard first. The browser names, for
+  every request, the document it came from and that document's address. A
+  counted write must come from the opened document, at the bound address, in
+  the main frame, while the page's script still ran in that document's
+  world; a form that is sent is itself a navigation, and is taken only if it
+  is the first one away from the opened document. Anything else is
+  `write-not-attributed`: a write sent after the page moved, by the page it
+  turned into, from a frame, or from a worker (of which the browser does not
+  tell on this channel).
 - **Elements and their text:** one node, asked in an isolated world of the
   engine's own making. A page that replaces `getComputedStyle`,
   `getBoundingClientRect` or `innerText` changes nothing there (tested).
@@ -280,15 +306,34 @@ Set by the owner on 23 November 2026. None is met by this code.
   A check must also have a write after it, and the observation is compared
   with its last sight before that write, so what is read at the end is
   attributed to the journey after the starting state.
-- **What the browser does not tell of is not seen**: a page that writes a
-  new document over itself through a script address (`javascript:`) is still
-  taken for the document the engine opened. A page can draw anything by
-  script in any case; the rule is about where the page is, not what it
-  draws.
+- **The engine's acts are not a person's.** Typing sets the field's value
+  and sends the events typing gives; pressing sends the press, the release
+  and the click to the node. The browser marks such events as made by
+  script. A page that acts only on events it trusts, or that needs a real
+  gesture (to open a window, for some payment widgets), does not respond;
+  the check then ends unverified (`write-not-as-expected`, or a condition
+  not met). This is the price of an act that cannot land in another
+  document.
+- **What rests on the browser telling the truth in sequence.** That a form
+  sent is the first navigation away from the opened document is known from
+  the sequence in which the browser tells of documents and requests on one
+  channel. No way was found to get a later document's form counted; it is
+  the browser's behaviour, not a promise it makes.
+- **Ordinary pages that end `write-not-attributed`:** one whose click sends
+  its write from a frame or a worker; one that changes its address first and
+  sends afterwards.
+- **A page that writes a new document over itself as it is parsed**
+  (`document.write` before it has loaded) is the document the engine opened.
+  A page can draw anything by script in any case; the rules are about where
+  the page is and which document acts, not what it draws.
 - **Ordinary pages that are `address-not-bound`:** a router that works by
   fragment or adds one on starting; one that adds or removes a trailing
   slash; one that keeps its state in a query; one that restores a scroll
-  position with a fragment; any client-side redirect.
+  position with a fragment; any client-side redirect; a page that opens or
+  writes its document anew after it has loaded; a page that takes over
+  navigations (the Navigation API), where even a same-address history call
+  is told of as something else; an act that sends nothing and follows a
+  link.
 - Choices the design leaves open, fixed in the code: a viewport of 1280 by
   720; half a second between two tries of a condition after a write, which
   is also tried again while its element is missing or not yet a number; a

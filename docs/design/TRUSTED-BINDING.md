@@ -323,8 +323,11 @@ by asking script that the page can replace.
   (Decided by the owner on 23 November 2026, and built so: a page may change
   its address through the history interface to the very address it is bound
   to, which frameworks do as they start; that is not a change of address.
-  Nothing broader is permitted. One document is loaded, the engine's. The
-  rule as carried out is in `docs/check-runner.md`.)
+  Nothing broader is permitted. One document is loaded, the engine's. After
+  an `act` that expects a write the page may go anywhere, but the write must
+  have come from the opened document at its bound address; after a `fill`,
+  and after an `act` that expects none, the page must still be the one that
+  was opened. The rules as carried out are in `docs/check-runner.md`.)
 - **Settled.** A reading is taken only once the page has no request in
   flight, and again after scrolling to the element. A page that never
   comes to rest (one that keeps a request open) is unverified, with that
