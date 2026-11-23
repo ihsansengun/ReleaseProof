@@ -11,7 +11,7 @@ import tls from "node:tls";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium, type Browser } from "playwright";
-import { CHECKPOINT_LIMITS, CHECKPOINT_MARK_HEADER, CHECKPOINT_OUTCOMES, CheckpointRefused, certificateFor, openCheckpoint, type Checkpoint } from "../src/remote/checkpoint.ts";
+import { CHECKPOINT_LIMITS, CHECKPOINT_MARK_HEADER, CHECKPOINT_OUTCOMES, CheckpointRefused, certificateFor, openCheckpoint, type Checkpoint, type CheckpointNote } from "../src/remote/checkpoint.ts";
 
 // ---- applications to stand behind the checkpoint ----------------------------------
 
@@ -112,14 +112,15 @@ test("a certificate made here is for one name, for a server, under the one key, 
   assert.equal(new Date(certificate.validFrom).toISOString(), "2026-11-23T11:55:00.000Z");
   assert.equal(new Date(certificate.validTo).toISOString(), "2026-11-24T12:00:00.000Z");
   assert.deepEqual(certificate.keyUsage, ["1.3.6.1.5.5.7.3.1"]);
-  assert.equal(new X509Certificate(certificateFor("127.0.0.1", key, 1000)).subjectAltName, "IP Address:127.0.0.1");
+  // From 2050 a certificate writes its years in full.
+  assert.equal(new Date(new X509Certificate(certificateFor("shop.example", key, 1000, new Date("2051-03-01T00:00:00Z"))).validFrom).toISOString(), "2051-02-28T23:55:00.000Z");
   // Two for one name are two certificates; a name with anything but a name in it gets none.
   assert.notEqual(new X509Certificate(certificateFor("shop.example", key, 1000)).serialNumber, certificate.serialNumber);
-  for (const name of ["", "Shop.example", "*.example", "shop.example\nDNS:other", "shop example", "-a", "a".repeat(254)]) assert.throws(() => certificateFor(name, key, 1000), CheckpointRefused, JSON.stringify(name));
+  for (const name of ["", "Shop.example", "*.example", "shop.example\nDNS:other", "shop example", "-a", "a".repeat(254), "shop.example.", "a..b", "a.-b", "a-.b", "127.0.0.1", "999.1.1.1", "[::1]"]) assert.throws(() => certificateFor(name, key, 1000), CheckpointRefused, JSON.stringify(name));
 });
 
 test("origins: one to eight, each spelled as a browser spells an origin, none twice", async () => {
-  for (const origins of [[], ["shop.example"], ["ftp://shop.example"], ["https://shop.example/"], ["https://shop.example/path"], ["https://Shop.example"], ["https://user@shop.example"], ["https://shop.example:443"], ["http://shop.example:80"], ["https://a.example", "https://a.example"], Array.from({ length: 9 }, (_, index) => `https://h${index}.example`)]) {
+  for (const origins of [[], ["shop.example"], ["ftp://shop.example"], ["https://shop.example/"], ["https://shop.example/path"], ["https://Shop.example"], ["https://user@shop.example"], ["https://shop.example:443"], ["http://shop.example:80"], ["https://a.example", "https://a.example"], ["https://shop.example."], ["https://-a.example"], ["https://[::1]"], ["https://127.0.0.1"], ["http://[::1]:8080"], ["http://127.0.0.1:0"], ["https://shop.example:0"], Array.from({ length: 9 }, (_, index) => `https://h${index}.example`)]) {
     await assert.rejects(openCheckpoint({ origins }), CheckpointRefused, JSON.stringify(origins));
   }
 });
@@ -189,7 +190,8 @@ describe("the checkpoint in front of an http application", () => {
     for (const url of [`http://127.0.0.1:${other.port}/x`, `http://localhost:${app.port}/x`, `http://elsewhere.example/x`]) {
       const got = await viaProxy(checkpoint, "GET", url, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark });
       assert.equal(got.status, 403, url);
-      assert.match(outcomes(checkpoint).at(-1)!, /^refused-origin GET /);
+      // Kept as "other": the name asked for is the asker's text, and is not kept.
+      assert.equal(outcomes(checkpoint).at(-1), "refused-origin GET other/x");
     }
     assert.equal(other.seen.length, 0);
     assert.ok(!app.seen.some((seen) => seen.url === "/x"));
@@ -252,14 +254,17 @@ describe("the checkpoint in front of an http application", () => {
       assert.throws(() => ((note as { path: string }).path = "/changed"), TypeError);
     }
     assert.deepEqual(checkpoint.notes().slice(-2).map((note) => [note.outcome, note.path, note.query]), [["forwarded", "/login", true], ["refused-unmarked", "/login", true]]);
-    assert.equal(checkpoint.count(), checkpoint.notes().length);
-    // A method or a path that is not plain text is not kept as it came.
-    await new Promise<void>((resolve) => {
-      const socket = net.connect(Number(new URL(checkpoint.url!).port), "127.0.0.1", () => socket.write(`get ${origin}/caf\u00e9 HTTP/1.1\r\nHost: 127.0.0.1:${app.port}\r\n\r\n`));
-      socket.on("data", () => {});
-      socket.on("close", () => resolve());
-    });
-    assert.ok(checkpoint.notes().every((note) => /^[\x21-\x7e]*$/.test(note.path) && /^([A-Z]{1,16}|\?)$/.test(note.method)));
+    assert.equal(Object.values(checkpoint.counts()).reduce((sum, n) => sum + n, 0), checkpoint.notes().length);
+    assert.deepEqual(Object.keys(checkpoint.counts()).sort(), [...CHECKPOINT_OUTCOMES].sort());
+    // What is handed out is a copy: changing it changes nothing here.
+    (checkpoint.notes() as CheckpointNote[]).length = 0;
+    assert.ok(checkpoint.notes().length > 0);
+    // A long path is not kept whole; an origin that is not on the list is not kept as given.
+    await viaProxy(checkpoint, "GET", `${origin}/${"p".repeat(3_000)}`);
+    assert.equal(checkpoint.notes().at(-1)!.path.length, CHECKPOINT_LIMITS.path);
+    await viaProxy(checkpoint, "GET", `http://${"a".repeat(200)}.secret-in-a-name.example/x`);
+    assert.equal(checkpoint.notes().at(-1)!.origin, "other");
+    assert.ok(!JSON.stringify(checkpoint.notes()).includes("secret-in-a-name"));
   });
 });
 
@@ -326,6 +331,61 @@ describe("the checkpoint in front of an https application", () => {
     assert.equal(app.seen.length, before);
   });
 
+  test("inside a tunnel, a request that gives a whole address is not a request for the tunnel's origin", async () => {
+    const before = app.seen.length;
+    for (const target of ["https://shop.example/whole", "http://shop.example/whole", "https://bank.example/whole", "shop.example/whole"]) {
+      const opened = await tunnel(checkpoint, "shop.example:443");
+      const secure = tls.connect({ socket: opened.socket, servername: "shop.example", rejectUnauthorized: false });
+      const back = await new Promise<string>((resolve) => {
+        let text = "";
+        secure.on("data", (chunk) => (text += chunk));
+        secure.on("close", () => resolve(text));
+        secure.on("error", () => resolve(text));
+        secure.on("secureConnect", () => secure.write(`GET ${target} HTTP/1.1\r\nHost: shop.example\r\n${CHECKPOINT_MARK_HEADER}: ${checkpoint.mark}\r\n\r\n`));
+      });
+      // Refused as malformed; or, where it is not even a request, the connection is ended with nothing said.
+      if (target.includes("://")) {
+        assert.match(back, /^HTTP\/1\.1 400/, target);
+        assert.equal(outcomes(checkpoint).at(-1), `refused-malformed GET ${origin}/`);
+      } else assert.equal(back, "", target);
+    }
+    assert.equal(app.seen.length, before);
+  });
+
+  test("an old version of TLS is spoken on neither side", async () => {
+    const opened = await tunnel(checkpoint, "shop.example:443");
+    const old = await new Promise<string>((resolve) => {
+      const secure = tls.connect({ socket: opened.socket, servername: "shop.example", rejectUnauthorized: false, minVersion: "TLSv1", maxVersion: "TLSv1.1", ciphers: "DEFAULT@SECLEVEL=0" });
+      secure.on("secureConnect", () => (secure.destroy(), resolve("spoken")));
+      secure.on("error", () => resolve("refused"));
+      secure.on("close", () => resolve("refused"));
+    });
+    assert.equal(old, "refused");
+    // An application that speaks nothing newer is not spoken to.
+    const seen: string[] = [];
+    const key = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey;
+    const certificate = pem(certificateFor("old.example", key, 60_000));
+    const server = https.createServer({ key: key.export({ type: "pkcs8", format: "pem" }), cert: certificate, minVersion: "TLSv1", maxVersion: "TLSv1.1", ciphers: "DEFAULT@SECLEVEL=0" }, (request, response) => (seen.push(request.url!), response.end("old")));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const forOld = await openCheckpoint({ origins: ["https://old.example"], upstreamCa: certificate, upstreamAddress: () => ({ host: "127.0.0.1", port: (server.address() as net.AddressInfo).port }) });
+    assert.equal((await viaTunnel(forOld, "GET", "https://old.example/x", { [CHECKPOINT_MARK_HEADER]: forOld.mark })).status, 502);
+    assert.deepEqual(seen, []);
+    assert.deepEqual(outcomes(forOld), ["upstream-failed GET https://old.example/x"]);
+    await forOld.close();
+    await new Promise<void>((resolve) => (server.closeAllConnections(), server.close(() => resolve())));
+  });
+
+  test("closing ends a tunnel that is open, and no tunnel is opened afterwards", async () => {
+    const forClosing = await openCheckpoint({ origins: [origin], upstreamCa: app.certificate, upstreamAddress: () => ({ host: "127.0.0.1", port: app.port }) });
+    const opened = await tunnel(forClosing, "shop.example:443");
+    const secure = tls.connect({ socket: opened.socket, servername: "shop.example", rejectUnauthorized: false });
+    await new Promise<void>((resolve) => secure.once("secureConnect", () => resolve()));
+    const ended = new Promise<void>((resolve) => (secure.on("close", () => resolve()), secure.on("error", () => resolve())));
+    await forClosing.close();
+    await ended;
+    await assert.rejects(tunnel(forClosing, "shop.example:443"));
+  });
+
   test("bytes that are not a TLS greeting, or not a request, end a connection and nothing else", async () => {
     const opened = await tunnel(checkpoint, "shop.example:443");
     await new Promise<void>((resolve) => {
@@ -335,6 +395,202 @@ describe("the checkpoint in front of an https application", () => {
       setTimeout(() => (opened.socket.destroy(), resolve()), 500);
     });
     assert.equal((await viaTunnel(checkpoint, "GET", `${origin}/after`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark })).status, 200);
+  });
+});
+
+// ---- a hostile application, and a stranger on the loopback ---------------------------
+
+/** An application that answers whatever it is asked with exactly these bytes, or with nothing. */
+async function rawApp(bytes: string | null): Promise<{ port: number; got: string[]; sockets: Set<net.Socket>; close: () => Promise<void> }> {
+  const got: string[] = [];
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => {});
+    socket.once("data", (chunk) => (got.push(chunk.toString("latin1")), bytes === null ? undefined : socket.write(bytes)));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { port: (server.address() as net.AddressInfo).port, got, sockets, close: () => new Promise((resolve) => (sockets.forEach((socket) => socket.destroy()), server.close(() => resolve()))) };
+}
+const sendRaw = (checkpoint: Checkpoint, text: string, then: (socket: net.Socket) => void = () => {}) =>
+  new Promise<string>((resolve) => {
+    const socket = net.connect(Number(new URL(checkpoint.url!).port), "127.0.0.1", () => (socket.write(text), then(socket)));
+    let back = "";
+    socket.on("data", (chunk) => (back += chunk));
+    socket.on("error", () => {});
+    socket.on("close", () => resolve(back));
+  });
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe("what a hostile application, or a stranger on the loopback, can do to the checkpoint", () => {
+  test("an answer that is not an answer is a failure, and the engine lives", async () => {
+    for (const bytes of ["HTTP/1.1 099 X\r\nContent-Length: 0\r\n\r\n", "HTTP/1.1 000 X\r\nContent-Length: 0\r\n\r\n", "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: other\r\n\r\n", "HTTP/1.1 100 Continue\r\n\r\n", "not an answer at all\r\n\r\n", ""]) {
+      const app = await rawApp(bytes === "" ? null : bytes);
+      const origin = `http://127.0.0.1:${app.port}`;
+      const checkpoint = await openCheckpoint({ origins: [origin], shorter: { upstreamMs: 400 } });
+      const started = Date.now();
+      const got = await viaProxy(checkpoint, "POST", `${origin}/transfer`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark }, "x=1");
+      assert.equal(got.status, 502, JSON.stringify(bytes));
+      assert.ok(Date.now() - started < 3_000, `took ${Date.now() - started} ms: ${JSON.stringify(bytes)}`);
+      // The application had the request, and that is on record, with the failure.
+      assert.equal(app.got.length, 1);
+      assert.deepEqual(outcomes(checkpoint), [`forwarded POST ${origin}/transfer`, `upstream-failed POST ${origin}/transfer`], JSON.stringify(bytes));
+      assert.deepEqual([checkpoint.counts().forwarded, checkpoint.counts()["upstream-failed"]], [1, 1]);
+      await checkpoint.close();
+      await app.close();
+    }
+  });
+
+  test("a connection reset at any point ends that connection and nothing else", async () => {
+    const app = await plainApp();
+    const origin = `http://127.0.0.1:${app.port}`;
+    const checkpoint = await openCheckpoint({ origins: [origin] });
+    const host = `Host: 127.0.0.1:${app.port}\r\n`;
+    const starts = [
+      `GET ${origin}/s HTTP/1.1\r\n${host}Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n`,
+      `GET http://x/s HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`,
+      `POST ${origin}/big HTTP/1.1\r\n${host}Content-Length: 1000000\r\n\r\npartial`,
+      `POST ${origin}/big HTTP/1.1\r\n${host}${CHECKPOINT_MARK_HEADER}: ${checkpoint.mark}\r\nContent-Length: 1000000\r\n\r\npartial`,
+      `CONNECT 127.0.0.1:${app.port} HTTP/1.1\r\n\r\n`,
+      `GET ${origin}/slow HTTP/1.1\r\n${host}${CHECKPOINT_MARK_HEADER}: ${checkpoint.mark}\r\n\r\n`,
+    ];
+    for (let round = 0; round < 20; round += 1) await Promise.all(starts.map((text) => sendRaw(checkpoint, text, (socket) => setTimeout(() => socket.resetAndDestroy(), round % 4))));
+    await pause(300);
+    assert.equal((await viaProxy(checkpoint, "GET", `${origin}/after`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark })).status, 200);
+    await checkpoint.close();
+    await app.close();
+  });
+
+  test("an application that says nothing is given up on in time; a connection that says little does not last", async () => {
+    const app = await plainApp();
+    const origin = `http://127.0.0.1:${app.port}`;
+    const checkpoint = await openCheckpoint({ origins: [origin], shorter: { upstreamMs: 300, connectionMs: 700 } });
+    const started = Date.now();
+    assert.equal((await viaProxy(checkpoint, "GET", `${origin}/hangs`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark })).status, 502);
+    assert.ok(Date.now() - started >= 250 && Date.now() - started < 2_000, `${Date.now() - started} ms`);
+    assert.deepEqual(outcomes(checkpoint), [`forwarded GET ${origin}/hangs`, `upstream-failed GET ${origin}/hangs`]);
+    // A header sent a byte at a time: the connection is ended all the same.
+    const slow = Date.now();
+    let dripping: NodeJS.Timeout | undefined;
+    await sendRaw(checkpoint, `GET ${origin}/drip HTTP/1.1\r\nX-A: `, (socket) => (dripping = setInterval(() => socket.write("a"), 100)));
+    clearInterval(dripping);
+    assert.ok(Date.now() - slow < 2_500, `a slow connection lasted ${Date.now() - slow} ms`);
+    // The times a caller may give are shorter ones only.
+    const longer = await openCheckpoint({ origins: [origin], shorter: { upstreamMs: 10 * 60_000 } });
+    const patient = viaProxy(longer, "GET", `${origin}/slow`, { [CHECKPOINT_MARK_HEADER]: longer.mark });
+    assert.equal((await patient).status, 200);
+    await longer.close();
+    await checkpoint.close();
+    await app.close();
+  });
+
+  test("closing ends the application's side too, and nothing is counted afterwards", async () => {
+    const app = await rawApp(null);
+    const origin = `http://127.0.0.1:${app.port}`;
+    const checkpoint = await openCheckpoint({ origins: [origin] });
+    const waiting = viaProxy(checkpoint, "GET", `${origin}/x`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark }).then(() => "answered", () => "cut");
+    await pause(150);
+    assert.equal(app.sockets.size, 1);
+    const before = checkpoint.counts();
+    await checkpoint.close();
+    await pause(150);
+    assert.equal(await waiting, "cut");
+    assert.equal(app.sockets.size, 0, "the connection to the application outlived the checkpoint");
+    assert.deepEqual(checkpoint.counts(), before);
+    await app.close();
+  });
+
+  test("what the notes cannot hold is still counted", async () => {
+    const app = await plainApp();
+    const origin = `http://127.0.0.1:${app.port}`;
+    const checkpoint = await openCheckpoint({ origins: [origin] });
+    const extra = 40;
+    const line = (index: number) => `GET ${origin}/flood${index} HTTP/1.1\r\nHost: 127.0.0.1:${app.port}\r\n\r\n`;
+    for (let sent = 0; sent < CHECKPOINT_LIMITS.notes + extra; sent += 100) await Promise.all(Array.from({ length: Math.min(100, CHECKPOINT_LIMITS.notes + extra - sent) }, (_, index) => sendRaw(checkpoint, line(sent + index))));
+    assert.equal(checkpoint.notes().length, CHECKPOINT_LIMITS.notes);
+    assert.equal(checkpoint.counts()["refused-unmarked"], CHECKPOINT_LIMITS.notes + extra);
+    // Something sent after the notes are full is not noted, and is counted.
+    await viaProxy(checkpoint, "POST", `${origin}/left`, {}, "x");
+    await viaProxy(checkpoint, "POST", `${origin}/pay`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark }, "x");
+    assert.equal(checkpoint.notes().length, CHECKPOINT_LIMITS.notes);
+    assert.equal(checkpoint.counts()["refused-unmarked"], CHECKPOINT_LIMITS.notes + extra + 1);
+    assert.equal(checkpoint.counts().forwarded, 1);
+    assert.equal(app.seen.length, 1);
+    await checkpoint.close();
+    await app.close();
+  });
+
+  test("what is said about one connection is not passed on, in either direction", async () => {
+    const seen: http.IncomingHttpHeaders[] = [];
+    const server = http.createServer((request, response) => (seen.push(request.headers), response.writeHead(200, { connection: "close, x-up-only", "x-up-only": "1", "x-kept": "1", "proxy-authenticate": "Basic" }).end("ok")));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const origin = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+    const checkpoint = await openCheckpoint({ origins: [origin] });
+    const got = await viaProxy(checkpoint, "GET", `${origin}/x`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark, connection: "x-down-only, keep-alive", "x-down-only": "1", "x-passed": "1", "proxy-authorization": "Basic abc", te: "trailers" });
+    assert.equal(got.status, 200);
+    assert.deepEqual([seen[0]!["x-down-only"], seen[0]!["proxy-authorization"], seen[0]!.te, seen[0]!["x-passed"]], [undefined, undefined, undefined, "1"]);
+    assert.deepEqual([got.headers["x-up-only"], got.headers["proxy-authenticate"], got.headers["x-kept"]], [undefined, undefined, "1"]);
+    await checkpoint.close();
+    await new Promise<void>((resolve) => (server.closeAllConnections(), server.close(() => resolve())));
+  });
+
+  test("it listens on the loopback address only, with a mark of 256 bits, and a socket path only its owner may use", async () => {
+    const app = await plainApp();
+    const origin = `http://127.0.0.1:${app.port}`;
+    const checkpoint = await openCheckpoint({ origins: [origin] });
+    const second = await openCheckpoint({ origins: [origin] });
+    assert.match(checkpoint.url!, /^http:\/\/127\.0\.0\.1:\d+$/);
+    const { networkInterfaces, tmpdir } = await import("node:os");
+    const elsewhere = Object.values(networkInterfaces()).flat().find((address) => address && address.family === "IPv4" && !address.internal)?.address;
+    if (elsewhere !== undefined) {
+      const reached = await new Promise<boolean>((resolve) => {
+        const socket = net.connect(Number(new URL(checkpoint.url!).port), elsewhere, () => (socket.destroy(), resolve(true)));
+        socket.on("error", () => resolve(false));
+      });
+      assert.equal(reached, false, `reachable at ${elsewhere}`);
+    }
+    for (const mark of [checkpoint.mark, second.mark]) {
+      assert.match(mark, /^[0-9a-f]{64}$/);
+      assert.ok(new Set(mark.match(/../g)).size >= 16, "a mark with little in it");
+    }
+    assert.notEqual(checkpoint.mark, second.mark);
+    assert.notEqual(checkpoint.keyPin, second.keyPin);
+    const { mkdtemp, stat } = await import("node:fs/promises");
+    const socketPath = path.join(await mkdtemp(path.join(tmpdir(), "rp-checkpoint-")), "door.sock");
+    const bySocket = await openCheckpoint({ origins: [origin], listen: { path: socketPath } });
+    assert.equal((await stat(socketPath)).mode & 0o777, 0o600);
+    for (const one of [checkpoint, second, bySocket]) await one.close();
+    await app.close();
+  });
+
+  test("it prints nothing, whatever it is sent", async () => {
+    // In a process of its own, so that everything printed there is the checkpoint's doing (or Node's on its behalf).
+    const app = await plainApp();
+    const origin = `http://127.0.0.1:${app.port}`;
+    const module = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "remote", "checkpoint.ts");
+    const script = `
+      import http from "node:http"; import net from "node:net";
+      const { openCheckpoint, CHECKPOINT_MARK_HEADER } = await import(${JSON.stringify(module)});
+      const origin = ${JSON.stringify(origin)};
+      const checkpoint = await openCheckpoint({ origins: [origin, "https://shop.example"], upstreamAddress: () => ({ host: "127.0.0.1", port: ${app.port} }), shorter: { upstreamMs: 500 } });
+      const proxy = new URL(checkpoint.url);
+      const ask = (method, url, headers, body) => new Promise((resolve) => { const r = http.request({ host: proxy.hostname, port: proxy.port, method, path: url, headers: { host: new URL(url).host, ...headers }, agent: false }, (a) => (a.resume(), a.on("end", resolve))); r.on("error", resolve); r.end(body); });
+      const raw = (text) => new Promise((resolve) => { const s = net.connect(Number(proxy.port), "127.0.0.1", () => s.write(text)); s.on("data", () => {}); s.on("error", () => {}); s.on("close", resolve); setTimeout(() => s.destroy(), 800); });
+      await ask("POST", origin + "/a?t=tok-secret", { [CHECKPOINT_MARK_HEADER]: checkpoint.mark, cookie: "sid=tok-secret" }, "password=tok-secret");
+      await ask("POST", origin + "/b?t=tok-secret", { cookie: "sid=tok-secret" }, "password=tok-secret");
+      await ask("GET", "http://elsewhere.example/tok-secret", {});
+      await raw("garbage\\r\\n\\r\\n");
+      await raw("CONNECT shop.example:443 HTTP/1.1\\r\\n\\r\\nnot a greeting");
+      await raw("GET " + origin + "/s HTTP/1.1\\r\\nHost: x\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n\\r\\n");
+      const counts = checkpoint.counts();
+      await checkpoint.close();
+      if (counts.forwarded !== 1 || counts["refused-unmarked"] !== 1 || counts["refused-origin"] !== 1) process.exit(3);
+    `;
+    const { execFile } = await import("node:child_process");
+    const ran = await new Promise<{ code: number | null; out: string; err: string }>((resolve) => execFile(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], { timeout: 30_000 }, (error, out, err) => resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, out, err })));
+    assert.deepEqual(ran, { code: 0, out: "", err: "" });
+    await app.close();
   });
 });
 
@@ -422,20 +678,24 @@ describe("a browser that trusts the checkpoint's key and nothing else", () => {
 test("the checkpoint is used by nothing: not by a run, and not by the check runner", async () => {
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   const source = path.join(root, "packages", "agent", "src", "remote", "checkpoint.ts");
+  const tests = path.join(root, "packages", "agent", "test", "remote-checkpoint.test.ts");
   const text = await readFile(source, "utf8");
   const exported = [...text.matchAll(/^export\s+(?:async\s+)?[a-z]+\s+([A-Za-z_$][\w$]*)/gm)].map((match) => match[1]!).sort();
   assert.equal(exported.length, [...text.matchAll(/^export\b/gm)].length, "every export of the checkpoint is one this test can name");
   assert.deepEqual(exported, ["CHECKPOINT_LIMITS", "CHECKPOINT_MARK_HEADER", "CHECKPOINT_OUTCOMES", "Checkpoint", "CheckpointNote", "CheckpointOptions", "CheckpointOutcome", "CheckpointRefused", "certificateFor", "openCheckpoint"]);
-  const refers = new RegExp(`/checkpoint(\\.[cm]?[jt]s)?["'\`]|\\b(?:${exported.join("|")})\\b`);
+  // No code or configuration anywhere so much as spells its name: hidden directories, and files named like its
+  // tests, included. (Only what git keeps and what is installed are left out.)
   let files = 0;
   for (const file of await readdir(root, { recursive: true })) {
     const parts = file.split(path.sep);
-    if (!/\.(?:[cm]?[jt]sx?)$/.test(file) || parts.includes("node_modules") || parts.some((part) => part.startsWith("."))) continue;
+    if (!/\.(?:[cm]?[jt]sx?|json|ya?ml|sh)$/.test(file) || parts.includes("node_modules") || parts[0] === ".git") continue;
     files += 1;
     const full = path.join(root, file);
-    if (full !== source && !file.endsWith("remote-checkpoint.test.ts")) assert.doesNotMatch(await readFile(full, "utf8"), refers, `${file} refers to the checkpoint`);
+    if (full !== source && full !== tests) assert.doesNotMatch(await readFile(full, "utf8"), /checkpoint/i, `${file} refers to the checkpoint`);
   }
   assert.ok(files > 20);
-  // It writes nothing and prints nothing: what it sees is in memory for as long as it lives.
-  assert.doesNotMatch(text, /console\.|process\.std|node:fs|writeFile|appendFile/);
+  // It writes nothing and prints nothing. By its text: the one thing it does to a file is restrict its socket.
+  assert.doesNotMatch(text, /console|process\.std|writeFile|appendFile|createWriteStream|\bimport\(/);
+  assert.deepEqual([...text.matchAll(/from "(node:[a-z/]+)"/g)].map((match) => match[1]).sort(), ["node:crypto", "node:fs/promises", "node:http", "node:https", "node:net", "node:tls"]);
+  assert.match(text, /^import \{ chmod \} from "node:fs\/promises";$/m);
 });

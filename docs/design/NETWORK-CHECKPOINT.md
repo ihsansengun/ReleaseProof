@@ -39,22 +39,43 @@ One rule: **nothing reaches the application unless the engine released it.**
 - The engine attaches the mark, in the header `x-releaseproof-released`, to each request it lets go. The
   checkpoint forwards a request only if it bears exactly the mark (compared in constant time, given once) and
   is for an origin on the list; it removes the mark first. The application never sees it.
-- Everything else is refused (403) and noted: a request without the mark, for another origin, for a socket
-  (`Upgrade`), or one that names one origin and asks another.
+- Everything else is refused and counted: a request without the mark, for another origin, for a socket
+  (`Upgrade`), or one that names one origin and asks another. What is not a request at all (bytes the
+  reader of requests rejects) ends its connection with nothing said and is not counted.
 - For an `https` origin the checkpoint ends the browser's connection with a certificate it makes itself for
   that one name under its key, and opens its own connection to the application, **whose certificate it
   verifies itself** against the system's authorities. A site that does not verify is not spoken to (502).
-- The browser is to trust the key by its pin (`keyPin`, for `--ignore-certificate-errors-spki-list`) and
-  nothing else. There is no authority certificate: nothing exists that could sign for another key, and nothing
-  is put in any trust store.
-- Answers, redirects included, are handed back as they are. The checkpoint follows nothing.
-- Closing it ends every connection and forgets the key and the mark.
+- The browser is told to accept the key by its pin (`keyPin`, for `--ignore-certificate-errors-spki-list`).
+  There is no authority certificate: nothing exists that could sign for another key, and nothing is put in any
+  trust store. Two things this does not say: under the pin the browser accepts any certificate with that key,
+  whatever name is on it (the key is the checkpoint's alone, so the name adds nothing); and the browser still
+  trusts the public authorities it always trusts, which matters only if it can reach something other than the
+  checkpoint, and that is the next part's business.
+- Answers, redirects included, are handed back as they are. The checkpoint follows nothing. An answer that is
+  not a final answer (a status outside 200 to 599, a change of protocol, nothing at all within the time) is a
+  failure: the browser gets 502.
+- A request is counted as **forwarded from the moment the connection to the application stands** (verified,
+  for https), because from then the application may have acted on it, whatever it answers or does not.
+- Closing it ends every connection, the application's side included, and lets go of the mark and of what the
+  browser's connections are ended with. Nothing is counted afterwards.
+- It listens on the loopback address only, or on a socket path that only its owner may use. A connection of
+  the browser's lasts ten minutes at most and there are 256 at most.
 
 ## What it keeps
 
-For each request: how it was dealt with (one of a fixed list), the method, the origin, the path **without its
-query**, and whether there was a query. Nothing else: no query, header, cookie, body, password or token is
-kept, written or logged. The module writes no file and prints nothing; a test holds that.
+In memory, and nowhere else:
+
+- **Counts** of how requests were dealt with, by outcome (a fixed list). These always go on.
+- **Notes**, one per request, up to 2,000: the outcome, the method, the origin, the path **without its query**
+  (at most 512 characters), and whether there was a query. The origin is one from the list or the word
+  `other`: a name that is not on the list is the asker's text and is not kept.
+
+No query, header, cookie or body is kept. The module writes no file and prints nothing; tests hold that, by
+its text and by running it in a process of its own.
+
+**A path is kept, and a path can carry something secret** (a link to reset a password, a session in the
+address). It is also text a page chose. Whoever reads the notes must not write paths to a log or a report as
+they are; that is a rule for the part that uses the checkpoint, and is not enforced here.
 
 The checkpoint does see everything the page sends and receives in clear while it passes. That is what ending
 the connection means. By the owner's decision it is approved **for controlled testing with dedicated
@@ -72,6 +93,8 @@ not to pass through it at this stage.
   are held, and is a later part with its own review.
 - **Not for sockets.** An `Upgrade` is refused. Applications that need one cannot be checked through it yet.
 - **Not HTTP/2 towards the browser.** It speaks HTTP/1.1 to the browser.
+- **Not for an address in place of a name over https**, nor for an address in brackets or a name with a
+  trailing dot. Over http a plain address is served, as tests and local applications have.
 
 ## Limits to know about
 
@@ -84,6 +107,15 @@ not to pass through it at this stage.
   forwarded; they would still be for a listed origin only.
 - **A request the engine marks for an origin that is not on the list** is refused before any connection, so
   the mark is not sent there. The engine is to mark only requests for listed origins all the same.
+- **The mark is one value for the whole check**, not tied to a method or an address. Which requests get it
+  is the engine's decision, made where they are held.
+- **A hostile application can waste a check**, not falsify it: it can fail to answer, answer slowly a byte
+  at a time (the time limit is on silence, not on the whole answer), or send bodies of any size.
+- **Notes are in the order requests were dealt with**, not the order they were sent; and a request the
+  browser gave up on after it was sent is counted as forwarded and as failed.
+- **Answers before the final one** (a status in the 100s) are not passed on.
+- **Anything on the machine that can reach the loopback address** can ask the checkpoint, fill its notes
+  (the counts go on) and use up its connections. It cannot have anything forwarded without the mark.
 - **One browser build** was used for the browser tests.
 - **No measurement of speed** beyond the tests passing.
 
