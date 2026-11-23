@@ -325,9 +325,14 @@ by asking script that the page can replace.
   to, which frameworks do as they start; that is not a change of address.
   Nothing broader is permitted. One document is loaded, the engine's. After
   an `act` that expects a write the page may go anywhere, but the write must
-  have come from the opened document at its bound address; after a `fill`,
-  and after an `act` that expects none, the page must still be the one that
-  was opened. The rules as carried out are in `docs/check-runner.md`.)
+  be one the browser names as the opened document's at its bound address,
+  and a form that is sent is taken only from a page with no frame and no
+  other page beside it; after a `fill`, and after an `act` that expects
+  none, the page must still be the one that was opened. This narrows who
+  can have sent a write; it does not prove it: a frame or page of the same
+  origin calling the opened page's own functions is not told apart, and a
+  fixture's value is known to the script of the page it is typed into. The
+  rules as carried out, and their limits, are in `docs/check-runner.md`.)
 - **Settled.** A reading is taken only once the page has no request in
   flight, and again after scrolling to the element. A page that never
   comes to rest (one that keeps a request open) is unverified, with that
