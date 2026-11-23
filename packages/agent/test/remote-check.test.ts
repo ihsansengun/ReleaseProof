@@ -1014,6 +1014,21 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
     unverified((await check({ "GET /prep": () => html(`<button onclick="${swap}">Prep</button>`) }, pressesLast)).record, "address-not-bound");
   });
 
+  test("an element that cannot be acted on yet is not waited for while the page turns into another", async () => {
+    // The original failure, with no clock to hit: the element is there and disabled, so an act that waits for it
+    // to be usable waits; the page turns into a second one whose element is usable; and the waiting act lands
+    // there. The engine acts on the node it looked at, at once, or not at all.
+    const turns = (first: string): Routes => ({ ...fixture, "GET /enter": () => html(`${first}<script>addEventListener("load", () => setTimeout(() => location.replace("/second"), 2500))</script>`), "GET /prep": () => html(`${first}<script>addEventListener("load", () => setTimeout(() => location.replace("/second"), 2500))</script>`), "GET /second": () => html(secondPage) });
+    const typed = await check(turns(`<input aria-label="Name" disabled>`), typesLast());
+    assert.equal(typed.record.outcome, "unverified");
+    assert.deepEqual(taken(typed.ledger), [], "a fixture's value was typed into the page it turned into");
+    const pressed = await check(turns(`<button disabled>Prep</button>`), pressesLast);
+    assert.equal(pressed.record.outcome, "unverified");
+    assert.deepEqual(taken(pressed.ledger), [], "the engine pressed in the page it turned into");
+    // Typing opens no other page.
+    unverified((await check({ ...fixture, "GET /enter": () => html(`<input aria-label="Name" onfocus="window.open('/more')">`), "GET /more": () => html(`<p>More</p>`) }, typesLast())).record, "address-not-bound");
+  });
+
   test("the engine does not do what a person could not", async () => {
     // A button a person cannot press: disabled by what it stands in, or taking no clicks.
     unverified((await check({ "GET /prep": () => html(`<fieldset disabled><button>Prep</button></fieldset>`) }, pressesLast)).record, "step-not-done");
@@ -1051,6 +1066,15 @@ describe("an approved check, carried out by the engine", { concurrency: 6, timeo
       ["moved, then a form sent", { ...buys(`history.pushState(null, '', '/other'); document.forms[0].submit()`, `<form method="post" action="/purchase"></form>`), "POST /purchase": (ledger) => ((ledger.balance += 100), (ledger.count += 1), { status: 303, headers: { location: "/account" } }) }],
       ["moved and back, then sent", buys(`history.pushState(null, '', '/other'); history.replaceState(null, '', '/buy'); ${post}`)],
       ["its document opened anew, then sent", buys(`document.open(); document.write('<p>new</p>'); document.close(); ${post}`)],
+    );
+    // A frame or a window made as the engine presses, which sends a form into the page; left there, or taken away
+    // again at once. It was not there when the act began, and has been there all the same.
+    const sends = (ledger: Ledger) => ((ledger.balance += 100), (ledger.count += 1), { status: 303, headers: { location: "/account" } });
+    const madeFrame = `const f = document.createElement('iframe'); document.body.appendChild(f); const d = f.contentDocument; d.body.innerHTML = '<form method=post action=/purchase target=_top></form>'; d.forms[0].submit()`;
+    notThePages.push(
+      ["a form sent by a frame made in the press", { ...buys(madeFrame), "POST /purchase": sends }],
+      ["a form sent by a frame made in the press and taken away", { ...buys(`${madeFrame}; f.remove()`), "POST /purchase": sends }],
+      ["a form sent by a window made in the press", { ...buys(`window.name = 'main'; const w = window.open('about:blank'); w.document.body.innerHTML = '<form method=post action=/purchase target=main></form>'; w.document.forms[0].submit(); w.close()`), "POST /purchase": sends }],
     );
     for (const [name, routes] of notThePages) {
       const { record } = await check(routes);

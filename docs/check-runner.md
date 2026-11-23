@@ -122,10 +122,14 @@ Not from script the page can replace.
   spelling included, even if it comes back afterwards, and by any other
   means (a fragment, going back and forth in the history), it is
   `address-not-bound`. The engine also keeps hold of the document itself, in
-  a world of its own, and asks it before every decision whether it is still
-  the page's document and at the bound address; and it counts the worlds the
-  browser makes for the page's script, since a document put in the page's
-  place through a script address is told of in no other way.
+  a world of its own, and asks it before every step and reading whether it
+  is still the page's document and at the bound address; and it counts the
+  worlds the browser makes for the page's script. These overlap with one
+  another and with the count of documents: in the tests, a document put in
+  the page's place through a script address is refused with any one of them
+  taken out, so no test shows that each is needed by itself. For a write, what
+  counts is what the browser had told by the time it told of the request,
+  not the answer of the held document afterwards.
 - **An action reaches the document the engine looked at, or nothing.** The
   engine does not find the element again when it acts. It types into, and
   presses, the very node it examined, through the browser's hold on that
@@ -161,7 +165,9 @@ Not from script the page can replace.
   opened its document anew. A form that is sent is itself a navigation, and
   the browser names for it the document it loads, **not the one that sent
   it**: it is taken only if it is the first navigation away from the opened
-  document and the page has no frame and no other page beside it, since
+  document and the page has no frame and no other page beside it, and has
+  had none since the act began (a frame or a window made as the engine
+  presses and taken away again has been there all the same), since
   either could have sent a form into the main frame. Anything else is
   `write-not-attributed`: a write sent after the page moved, by the page it
   turned into, from a frame, or from a worker (of which the browser does not
@@ -354,10 +360,32 @@ Set by the owner on 23 November 2026. None is met by this code.
   verdicts are activated these are to be settled by settings the engine
   makes itself, not by what the browser happens to do.
 - **What rests on the browser telling the truth in sequence.** That a form
-  sent is the first navigation away from the opened document is known from
-  the sequence in which the browser tells of documents and requests on one
-  channel. No way was found to get a later document's form counted; it is
-  the browser's behaviour, not a promise it makes.
+  sent is the first navigation away from the opened document, that the page
+  had been at no other address and still ran in the opened document's world
+  when a write was sent, and that no frame or window had been made by then,
+  are all known from the sequence in which the browser tells of documents,
+  worlds, frames and requests on one channel. No way was found to get a
+  later document's form counted; it is the browser's behaviour, not a
+  promise it makes.
+- **Which document sent a write, not what caused it.** A write the page
+  sends by itself while the engine's act is under way (on a timer, say) is
+  counted as the act's if it is the one expected. The rules say where a
+  write came from; they do not say the press brought it about.
+- **A script address before the engine first looks.** A page that puts
+  another document in its own place through a script address as it loads,
+  before the engine has taken its first count, is the document the engine
+  opened, as one that writes over itself while it is parsed is. Later it is
+  refused.
+- **Pressed where a person would not have reached.** The engine does not
+  ask what lies on top while it presses. A button that hides itself or is
+  covered at the press, and a handler on an element inside the button
+  (a person's click lands on the inner element; the engine's on the
+  button), behave otherwise than under a person's hand: the first is
+  pressed all the same, the second is not triggered and the check ends
+  unverified.
+- **A field that changes what is typed** (to capitals, say, or by adding a
+  space) ends `step-not-done`: the engine takes a fill as done only if the
+  field then holds exactly the text.
 - **Ordinary pages that end `write-not-attributed`:** one whose click sends
   its write from a frame or a worker; one that changes its address first and
   sends afterwards; one that sends a form and has any frame in it (an

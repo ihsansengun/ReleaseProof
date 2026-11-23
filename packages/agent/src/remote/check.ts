@@ -749,6 +749,8 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
       } else if (step.kind === "fill") {
         const page = await pageAt(current, origin, step.path);
         const { facts, bound } = await displayed(page, watch, step.locator, deadline, false, true);
+        const pagesAtFill = context.pages().length;
+        const windowsAtFill = windowsOf(page);
         try {
           let text: string;
           const literal = step.value.from === "literal";
@@ -774,14 +776,20 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
         await atRest(page, watch, deadline);
         // Typing takes a page nowhere: one that has gone elsewhere, or is another document, as it was typed into is not the bound page.
         await pageAt(page, origin, step.path);
+        // Nor does typing open another page.
+        if (context.pages().length !== pagesAtFill || windowsOf(page) !== windowsAtFill) throw new Stop("address-not-bound");
       } else if (step.kind === "act") {
         const page = await pageAt(current, origin, step.path);
         const { bound } = await displayed(page, watch, step.locator, deadline, false, true);
         const window = watch.openWindow(page);
         const since = writesTold(page);
         // Who else could send into this page: its frames, and the other pages of the context.
+        // Asked when the act begins, and counted again when it is over: a frame or a page made as the engine
+        // presses, and taken away again, has been there all the same.
+        const others = othersOf(page);
         const alone = page.frames().length === 1 && context.pages().length === 1;
         const pagesBefore = context.pages().length;
+        const windows = windowsOf(page);
         try {
           await pageAt(page, origin, step.path);
           // Acted on the very element that was looked at, in the document it was looked at in.
@@ -797,13 +805,13 @@ export async function carryOutCheck(options: CheckOptions): Promise<CheckRecord>
           // An act that sends nothing takes the page nowhere either: it is still the page that was opened, and it
           // has opened no other.
           await pageAt(page, origin, step.path);
-          if (context.pages().length !== pagesBefore) throw new Stop("address-not-bound");
+          if (context.pages().length !== pagesBefore || windowsOf(page) !== windows) throw new Stop("address-not-bound");
         } else {
           const { method, path } = step.expects;
           if (written.length !== 1 || written[0]!.method !== method || written[0]!.path !== path || written[0]!.status === undefined || written[0]!.status >= 400) throw new Stop("write-not-as-expected");
           // The write came from the page the engine opened, at its bound address: by what the browser says of the request.
           await (page as OpenedPage)[NAVIGATIONS]!.told().catch(() => {});
-          if (!writeAttributed(page, since, origin, step.path, { method, path }, binding.background, alone)) throw new Stop("write-not-attributed");
+          if (!writeAttributed(page, since, origin, step.path, { method, path }, binding.background, alone && othersOf(page) === others && context.pages().length === pagesBefore)) throw new Stop("write-not-attributed");
           progress.writesCounted += 1;
           lastWriteAt = written[0]!.answeredAt ?? now();
           progress.lastWriteAfterMs = Math.ceil(lastWriteAt - began);
@@ -1217,7 +1225,7 @@ type ToldWrite = { method: string; url: string; loader: string; documentUrl: str
  * asks the document the engine opened whether it is still the page's
  * document and what its address is.
  */
-type Navigations = { loader: string; current: string; documents: number; atOpen: number; worlds: number; worldsAtOpen: number; elsewhere: boolean; unknown: boolean; writes: ToldWrite[]; told: () => Promise<void> };
+type Navigations = { loader: string; current: string; documents: number; atOpen: number; worlds: number; worldsAtOpen: number; others: number; windows: number; elsewhere: boolean; unknown: boolean; writes: ToldWrite[]; told: () => Promise<void> };
 type OpenedPage = Page & { [NAVIGATIONS]?: Navigations };
 const NAVIGATIONS = Symbol("navigations");
 
@@ -1241,7 +1249,7 @@ const NAVIGATIONS = Symbol("navigations");
 async function openPage(context: BrowserContext, watch: Watch, origin: string, path: string, deadline: number): Promise<Page> {
   const page: OpenedPage = await context.newPage();
   const address = `${origin}${path}`;
-  const navigations: Navigations = { loader: "", current: "", documents: 0, atOpen: -1, worlds: 0, worldsAtOpen: -1, elsewhere: false, unknown: false, writes: [], told: async () => {} };
+  const navigations: Navigations = { loader: "", current: "", documents: 0, atOpen: -1, worlds: 0, worldsAtOpen: -1, others: 0, windows: 0, elsewhere: false, unknown: false, writes: [], told: async () => {} };
   page[NAVIGATIONS] = navigations;
   let session: CDPSession | undefined;
   let main = "";
@@ -1271,6 +1279,11 @@ async function openPage(context: BrowserContext, watch: Watch, origin: string, p
       if (method === "GET" || method === "HEAD") return;
       navigations.writes.push({ method, url: event.request.url, loader: event.loaderId, documentUrl: event.documentURL, main: event.frameId === main, navigation: event.type === "Document" && event.requestId === event.loaderId, mainLoaderThen: navigations.current, worldsThen: navigations.worlds, elsewhereThen: navigations.elsewhere });
     });
+    // Who else there has ever been to send into this page: every frame attached in it and every window it opened,
+    // gone again or not. Told on the same channel as the requests.
+    session.on("Page.frameAttached", () => void (navigations.others += 1));
+    session.on("Page.windowOpen", () => void ((navigations.others += 1), (navigations.windows += 1)));
+    context.on("page", (other) => void (other !== page && ((navigations.others += 1), (navigations.windows += 1))));
     session.on("Runtime.executionContextCreated", (event) => {
       const made = event.context.auxData as { frameId?: string; isDefault?: boolean } | undefined;
       if (made?.isDefault === true && made.frameId === main) navigations.worlds += 1;
@@ -1339,7 +1352,8 @@ async function pageAt(current: Page | undefined, origin: string, path: string): 
  * navigation (a form sent) names the document it is loading, so it is taken
  * only if, when the browser told of it, the opened document was still the
  * page's, and only from a page that had no frame and no other page beside it
- * when the act began, since either could send a form into it. In both cases
+ * when the act began and has had none since, since either could send a form
+ * into it. In both cases
  * the page must not have been at another address by then. Writes the binding
  * lists as background are passed over. Anything else, a write the browser
  * does not tell of on this channel included (one from a worker), is not
@@ -1375,6 +1389,16 @@ function writeAttributed(page: Page, since: number, origin: string, path: string
   // page of the context, can send one into this page. So it is taken only from a page that had neither.
   if (entry.navigation) return alone && entry.mainLoaderThen === navigations.loader;
   return entry.loader === navigations.loader && entry.documentUrl === address;
+}
+
+/** How many frames and windows a page has ever had beside it, as far as the browser has told. */
+function othersOf(page: Page): number {
+  return (page as OpenedPage)[NAVIGATIONS]!.others;
+}
+
+/** How many windows a page has opened, as far as the browser has told. */
+function windowsOf(page: Page): number {
+  return (page as OpenedPage)[NAVIGATIONS]!.windows;
 }
 
 /** How many writes the browser has told of for a page so far: where an act's own begin. */
