@@ -1,7 +1,8 @@
 # Design: the network checkpoint
 
 Status: **built as a part by itself (`packages/agent/src/remote/checkpoint.ts`) and used by nothing.** No run
-and no check goes through it yet. Trusted verdicts stay disabled. The research behind it is in
+and no check goes through it yet. (A test would notice an ordinary use of it. That test is a tripwire against
+wiring it in by accident, not a lock against doing so on purpose.) Trusted verdicts stay disabled. The research behind it is in
 `docs/research/rpai-33-network-boundary/`.
 
 ## Why
@@ -42,16 +43,22 @@ One rule: **nothing reaches the application unless the engine released it.**
 - Everything else is refused and counted: a request without the mark, for another origin, for a socket
   (`Upgrade`), or one that names one origin and asks another. What is not a request at all (bytes the
   reader of requests rejects) ends its connection with nothing said and is not counted.
+- A released request whose `Connection` header names its own length, its encoding or its addressee for
+  removal is refused: sent on without its length, its body would be read by the application as a second
+  request that nobody released. (A browser does not let a page set that header; whoever holds the mark could.)
 - For an `https` origin the checkpoint ends the browser's connection with a certificate it makes itself for
   that one name under its key, and opens its own connection to the application, **whose certificate it
-  verifies itself** against the system's authorities. A site that does not verify is not spoken to (502).
+  verifies itself** against the authorities Node trusts (its own list, and any added through
+  `NODE_EXTRA_CA_CERTS`; not the operating system's store). A site that does not verify is not spoken to (502).
 - The browser is told to accept the key by its pin (`keyPin`, for `--ignore-certificate-errors-spki-list`).
   There is no authority certificate: nothing exists that could sign for another key, and nothing is put in any
   trust store. Two things this does not say: under the pin the browser accepts any certificate with that key,
   whatever name is on it (the key is the checkpoint's alone, so the name adds nothing); and the browser still
   trusts the public authorities it always trusts, which matters only if it can reach something other than the
   checkpoint, and that is the next part's business.
-- Answers, redirects included, are handed back as they are. The checkpoint follows nothing. An answer that is
+- Answers, redirects included, are handed back. The checkpoint follows nothing. Requests and answers are
+  written out again on the way, so the spelling of header names, the framing of bodies and, for an http
+  origin, a path the address rules normalise can differ from what was sent; what is said in them does not. An answer that is
   not a final answer (a status outside 200 to 599, a change of protocol, nothing at all within the time) is a
   failure: the browser gets 502.
 - A request is counted as **forwarded from the moment the connection to the application stands** (verified,
@@ -73,9 +80,16 @@ In memory, and nowhere else:
 No query, header, cookie or body is kept. The module writes no file and prints nothing; tests hold that, by
 its text and by running it in a process of its own.
 
+What is kept is copied out of the request, so that the rest of the request is let go: a test looks through
+everything a process holds after requests have passed and finds their paths and none of their queries or
+cookies. At most 2,000 notes of at most 512 characters of path: about a megabyte.
+
 **A path is kept, and a path can carry something secret** (a link to reset a password, a session in the
-address). It is also text a page chose. Whoever reads the notes must not write paths to a log or a report as
-they are; that is a rule for the part that uses the checkpoint, and is not enforced here.
+address). It is also text a page chose. The checkpoint never writes or prints one.
+
+**Gate before activation (owner's decision, 23 November 2026):** paths from these notes must be made safe
+before they reach any report a customer sees or any log that is kept. That is to be done in the part that
+uses the checkpoint, and is mandatory before trusted verdicts are activated. It is not enforced here.
 
 The checkpoint does see everything the page sends and receives in clear while it passes. That is what ending
 the connection means. By the owner's decision it is approved **for controlled testing with dedicated
@@ -110,12 +124,17 @@ not to pass through it at this stage.
 - **The mark is one value for the whole check**, not tied to a method or an address. Which requests get it
   is the engine's decision, made where they are held.
 - **A hostile application can waste a check**, not falsify it: it can fail to answer, answer slowly a byte
-  at a time (the time limit is on silence, not on the whole answer), or send bodies of any size.
+  at a time (the time limit is on silence, before an answer and in the middle of one, not on the whole
+  answer), keep sending answers that are not final ones, or send bodies of any size. A connection of the
+  browser's ends after ten minutes whatever is said on it.
+- **One connection to the application for each request**; none is kept for the next.
+- **The oldest version of TLS spoken** is 1.2, by this code and by Node's own default.
 - **Notes are in the order requests were dealt with**, not the order they were sent; and a request the
   browser gave up on after it was sent is counted as forwarded and as failed.
 - **Answers before the final one** (a status in the 100s) are not passed on.
 - **Anything on the machine that can reach the loopback address** can ask the checkpoint, fill its notes
-  (the counts go on) and use up its connections. It cannot have anything forwarded without the mark.
+  (the counts go on) and use up its 256 connections for as long as it keeps them, which keeps the browser
+  out: a check that cannot run, not a wrong result. It cannot have anything forwarded without the mark.
 - **One browser build** was used for the browser tests.
 - **No measurement of speed** beyond the tests passing.
 

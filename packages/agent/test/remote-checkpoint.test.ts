@@ -61,6 +61,9 @@ function viaProxy(checkpoint: Checkpoint, method: string, url: string, headers: 
       const chunks: Buffer[] = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => resolve({ status: response.statusCode!, body: Buffer.concat(chunks).toString("latin1"), headers: response.headers }));
+      // An answer cut off in the middle is not an answer.
+      response.on("error", reject);
+      response.on("close", () => reject(new Error("the answer was cut off")));
     });
     request.on("error", reject);
     request.end(body);
@@ -116,7 +119,9 @@ test("a certificate made here is for one name, for a server, under the one key, 
   assert.equal(new Date(new X509Certificate(certificateFor("shop.example", key, 1000, new Date("2051-03-01T00:00:00Z"))).validFrom).toISOString(), "2051-02-28T23:55:00.000Z");
   // Two for one name are two certificates; a name with anything but a name in it gets none.
   assert.notEqual(new X509Certificate(certificateFor("shop.example", key, 1000)).serialNumber, certificate.serialNumber);
-  for (const name of ["", "Shop.example", "*.example", "shop.example\nDNS:other", "shop example", "-a", "a".repeat(254), "shop.example.", "a..b", "a.-b", "a-.b", "127.0.0.1", "999.1.1.1", "[::1]"]) assert.throws(() => certificateFor(name, key, 1000), CheckpointRefused, JSON.stringify(name));
+  // The longest label and the longest name there are.
+  for (const name of [`${"a".repeat(63)}.example`, `${"a.".repeat(126)}a`, "localhost", "xn--bcher-kva.example"]) assert.ok(new X509Certificate(certificateFor(name, key, 1000)).checkHost(name), name);
+  for (const name of ["", "Shop.example", "*.example", "shop.example\nDNS:other", "shop example", "-a", "a".repeat(254), "shop.example.", "a..b", "a.-b", "a-.b", "127.0.0.1", "999.1.1.1", "[::1]", `${"a".repeat(64)}.example`, `${"a.".repeat(126)}aa`]) assert.throws(() => certificateFor(name, key, 1000), CheckpointRefused, JSON.stringify(name));
 });
 
 test("origins: one to eight, each spelled as a browser spells an origin, none twice", async () => {
@@ -352,6 +357,27 @@ describe("the checkpoint in front of an https application", () => {
     assert.equal(app.seen.length, before);
   });
 
+  test("an https application that never answers is a failure the browser is told of; a tunnel in a tunnel is refused and counted", async () => {
+    const silent = https.createServer({ key: appKey.export({ type: "pkcs8", format: "pem" }), cert: app.certificate }, () => {});
+    await new Promise<void>((resolve) => silent.listen(0, "127.0.0.1", resolve));
+    const forSilent = await openCheckpoint({ origins: [origin], upstreamCa: app.certificate, upstreamAddress: () => ({ host: "127.0.0.1", port: (silent.address() as net.AddressInfo).port }), shorter: { upstreamMs: 300 } });
+    assert.equal((await viaTunnel(forSilent, "GET", `${origin}/quiet`, { [CHECKPOINT_MARK_HEADER]: forSilent.mark })).status, 502);
+    assert.deepEqual(outcomes(forSilent), [`forwarded GET ${origin}/quiet`, `upstream-failed GET ${origin}/quiet`]);
+    const opened = await tunnel(forSilent, "shop.example:443");
+    const secure = tls.connect({ socket: opened.socket, servername: "shop.example", rejectUnauthorized: false });
+    const back = await new Promise<string>((resolve) => {
+      let text = "";
+      secure.on("data", (chunk) => (text += chunk));
+      secure.on("close", () => resolve(text));
+      secure.on("error", () => resolve(text));
+      secure.on("secureConnect", () => secure.write("CONNECT shop.example:443 HTTP/1.1\r\nHost: shop.example:443\r\n\r\n"));
+    });
+    assert.match(back, /^HTTP\/1\.1 403/);
+    assert.equal(outcomes(forSilent).at(-1), `refused-malformed CONNECT ${origin}/`);
+    await forSilent.close();
+    await new Promise<void>((resolve) => (silent.closeAllConnections(), silent.close(() => resolve())));
+  });
+
   test("an old version of TLS is spoken on neither side", async () => {
     const opened = await tunnel(checkpoint, "shop.example:443");
     const old = await new Promise<string>((resolve) => {
@@ -425,7 +451,7 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("what a hostile application, or a stranger on the loopback, can do to the checkpoint", () => {
   test("an answer that is not an answer is a failure, and the engine lives", async () => {
-    for (const bytes of ["HTTP/1.1 099 X\r\nContent-Length: 0\r\n\r\n", "HTTP/1.1 000 X\r\nContent-Length: 0\r\n\r\n", "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: other\r\n\r\n", "HTTP/1.1 100 Continue\r\n\r\n", "not an answer at all\r\n\r\n", ""]) {
+    for (const bytes of ["HTTP/1.1 099 X\r\nContent-Length: 0\r\n\r\n", "HTTP/1.1 000 X\r\nContent-Length: 0\r\n\r\n", "HTTP/1.1 600 X\r\nContent-Length: 0\r\n\r\n", "HTTP/1.1 999 X\r\nContent-Length: 0\r\n\r\n", "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: other\r\n\r\n", "HTTP/1.1 100 Continue\r\n\r\n", "not an answer at all\r\n\r\n", ""]) {
       const app = await rawApp(bytes === "" ? null : bytes);
       const origin = `http://127.0.0.1:${app.port}`;
       const checkpoint = await openCheckpoint({ origins: [origin], shorter: { upstreamMs: 400 } });
@@ -476,11 +502,15 @@ describe("what a hostile application, or a stranger on the loopback, can do to t
     await sendRaw(checkpoint, `GET ${origin}/drip HTTP/1.1\r\nX-A: `, (socket) => (dripping = setInterval(() => socket.write("a"), 100)));
     clearInterval(dripping);
     assert.ok(Date.now() - slow < 2_500, `a slow connection lasted ${Date.now() - slow} ms`);
-    // The times a caller may give are shorter ones only.
-    const longer = await openCheckpoint({ origins: [origin], shorter: { upstreamMs: 10 * 60_000 } });
-    const patient = viaProxy(longer, "GET", `${origin}/slow`, { [CHECKPOINT_MARK_HEADER]: longer.mark });
-    assert.equal((await patient).status, 200);
-    await longer.close();
+    // An answer begun and not gone on with is ended after the same silence, not left for the connection's whole time.
+    const half = await rawApp("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nonly this much");
+    const halfOrigin = `http://127.0.0.1:${half.port}`;
+    const forHalf = await openCheckpoint({ origins: [halfOrigin], shorter: { upstreamMs: 300, connectionMs: 20_000 } });
+    const begun = Date.now();
+    await viaProxy(forHalf, "GET", `${halfOrigin}/half`, { [CHECKPOINT_MARK_HEADER]: forHalf.mark }).catch(() => undefined);
+    assert.ok(Date.now() - begun < 3_000, `an answer left half said lasted ${Date.now() - begun} ms`);
+    await forHalf.close();
+    await half.close();
     await checkpoint.close();
     await app.close();
   });
@@ -530,9 +560,104 @@ describe("what a hostile application, or a stranger on the loopback, can do to t
     const got = await viaProxy(checkpoint, "GET", `${origin}/x`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark, connection: "x-down-only, keep-alive", "x-down-only": "1", "x-passed": "1", "proxy-authorization": "Basic abc", te: "trailers" });
     assert.equal(got.status, 200);
     assert.deepEqual([seen[0]!["x-down-only"], seen[0]!["proxy-authorization"], seen[0]!.te, seen[0]!["x-passed"]], [undefined, undefined, undefined, "1"]);
+    const more = await sendRaw(checkpoint, `GET ${origin}/y HTTP/1.1\r\nHost: ${new URL(origin).host}\r\n${CHECKPOINT_MARK_HEADER}: ${checkpoint.mark}\r\nKeep-Alive: timeout=5\r\nTrailer: x-t\r\nX-Passed: 2\r\nConnection: close\r\n\r\n`);
+    assert.match(more, /^HTTP\/1\.1 200/);
+    assert.deepEqual([seen[1]!["keep-alive"], seen[1]!.trailer, seen[1]!["x-passed"]], [undefined, undefined, "2"]);
     assert.deepEqual([got.headers["x-up-only"], got.headers["proxy-authenticate"], got.headers["x-kept"]], [undefined, undefined, "1"]);
     await checkpoint.close();
     await new Promise<void>((resolve) => (server.closeAllConnections(), server.close(() => resolve())));
+  });
+
+  test("a released request cannot ask for its length or its addressee to be dropped on the way", async () => {
+    // Sent on without its length, a body would be read by the application as a second request, released by nobody.
+    const app = await rawApp("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+    const origin = `http://127.0.0.1:${app.port}`;
+    const checkpoint = await openCheckpoint({ origins: [origin] });
+    const second = "POST /transfer-everything HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
+    for (const names of ["content-length", "Content-Length", "close, content-length", "transfer-encoding", "host", CHECKPOINT_MARK_HEADER]) {
+      const back = await sendRaw(checkpoint, `DELETE ${origin}/item/1 HTTP/1.1\r\nHost: 127.0.0.1:${app.port}\r\n${CHECKPOINT_MARK_HEADER}: ${checkpoint.mark}\r\nConnection: ${names}\r\nContent-Length: ${second.length}\r\n\r\n${second}`);
+      assert.match(back, /^HTTP\/1\.1 400/, names);
+      assert.equal(outcomes(checkpoint).at(-1), `refused-malformed DELETE ${origin}/item/1`);
+    }
+    assert.deepEqual(app.got, [], "something reached the application");
+    assert.equal(checkpoint.counts().forwarded, 0);
+    // With its length, the same request is one request to the application, body and all.
+    const whole = await sendRaw(checkpoint, `DELETE ${origin}/item/1 HTTP/1.1\r\nHost: 127.0.0.1:${app.port}\r\n${CHECKPOINT_MARK_HEADER}: ${checkpoint.mark}\r\nConnection: close\r\nContent-Length: ${second.length}\r\n\r\n${second}`);
+    assert.match(whole, /^HTTP\/1\.1 200/);
+    assert.equal(app.got.length, 1);
+    assert.match(app.got[0]!, /^DELETE \/item\/1 HTTP\/1\.1\r\n/);
+    assert.match(app.got[0]!, /content-length: \d+|transfer-encoding: chunked/i);
+    assert.equal(checkpoint.counts().forwarded, 1);
+    await checkpoint.close();
+    await app.close();
+  });
+
+  test("no more connections than the limit, and one that is turned away does not keep its place", async () => {
+    const app = await plainApp();
+    const origin = `http://127.0.0.1:${app.port}`;
+    const checkpoint = await openCheckpoint({ origins: [origin] });
+    const port = Number(new URL(checkpoint.url!).port);
+    // Turned away, with every asker keeping its half open: none of them keeps a place, so the next request is served.
+    const turnedAway = await Promise.all(
+      Array.from({ length: CHECKPOINT_LIMITS.connections }, () => new Promise<net.Socket>((resolve) => {
+        const socket = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true }, () => socket.write("CONNECT elsewhere.example:443 HTTP/1.1\r\n\r\n"));
+        socket.on("data", () => {});
+        socket.on("error", () => resolve(socket));
+        socket.on("end", () => resolve(socket));
+      })),
+    );
+    assert.equal(checkpoint.counts()["refused-origin"], CHECKPOINT_LIMITS.connections);
+    assert.equal((await viaProxy(checkpoint, "GET", `${origin}/next`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark })).status, 200);
+    turnedAway.forEach((socket) => socket.destroy());
+    // The limit: idle connections up to it are held; one more is ended at once; and none of it stops the count.
+    const idle = await Promise.all(Array.from({ length: CHECKPOINT_LIMITS.connections }, () => new Promise<net.Socket>((resolve) => { const socket = net.connect(port, "127.0.0.1", () => resolve(socket)); socket.on("error", () => {}); })));
+    await pause(200);
+    const extra = await Promise.race([sendRaw(checkpoint, `GET ${origin}/over HTTP/1.1\r\nHost: 127.0.0.1:${app.port}\r\n${CHECKPOINT_MARK_HEADER}: ${checkpoint.mark}\r\n\r\n`), pause(2_000).then(() => "held")]);
+    assert.equal(extra, "", "a connection beyond the limit was served or held");
+    idle.forEach((socket) => socket.destroy());
+    await pause(200);
+    assert.equal((await viaProxy(checkpoint, "GET", `${origin}/after`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark })).status, 200);
+    // What is handed out of the counts is a copy that cannot be changed.
+    const counts = checkpoint.counts();
+    assert.throws(() => ((counts as Record<string, number>).forwarded = 99), TypeError);
+    assert.equal(checkpoint.counts().forwarded, 2);
+    await checkpoint.close();
+    await app.close();
+  });
+
+  test("the query of a request is not kept anywhere in memory, though its path is", async () => {
+    // In a process of its own, with a look at everything it holds. The marks are made of bytes there, never of a
+    // text, so that a text of them found afterwards is one the checkpoint kept.
+    const app = await plainApp();
+    const module = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "remote", "checkpoint.ts");
+    const script = `
+      import net from "node:net"; import v8 from "node:v8"; import { randomBytes } from "node:crypto";
+      const { openCheckpoint, CHECKPOINT_MARK_HEADER } = await import(${JSON.stringify(module)});
+      const origin = "http://127.0.0.1:${app.port}";
+      const checkpoint = await openCheckpoint({ origins: [origin] });
+      const port = Number(new URL(checkpoint.url).port);
+      const letters = () => Buffer.from(randomBytes(24).map((byte) => 97 + (byte % 26)));
+      const inPath = [], inQuery = [], inCookie = [];
+      for (let round = 0; round < 12; round += 1) {
+        const [a, b, c] = [letters(), letters(), letters()];
+        inPath.push(a); inQuery.push(b); inCookie.push(c);
+        const marked = round % 2 === 0 ? Buffer.from(CHECKPOINT_MARK_HEADER + ": " + checkpoint.mark + "\\r\\n") : Buffer.alloc(0);
+        const bytes = Buffer.concat([Buffer.from("GET " + origin + "/p/"), a, Buffer.from("?token="), b, Buffer.from(" HTTP/1.1\\r\\nHost: 127.0.0.1:${app.port}\\r\\nCookie: sid="), c, Buffer.from("\\r\\n"), marked, Buffer.from("Connection: close\\r\\n\\r\\n")]);
+        await new Promise((resolve) => { const s = net.connect(port, "127.0.0.1", () => s.write(bytes)); s.on("data", () => {}); s.on("error", () => {}); s.on("close", resolve); });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      globalThis.gc(); globalThis.gc();
+      const chunks = []; for await (const chunk of v8.getHeapSnapshot()) chunks.push(chunk);
+      const heap = Buffer.concat(chunks);
+      const found = (list) => list.filter((needle) => heap.includes(needle)).length;
+      process.stdout.write(JSON.stringify({ notes: checkpoint.notes().length, path: found(inPath), query: found(inQuery), cookie: found(inCookie) }));
+      await checkpoint.close();
+    `;
+    const { execFile } = await import("node:child_process");
+    const out = await new Promise<string>((resolve, reject) => execFile(process.execPath, ["--expose-gc", "--import", "tsx", "--input-type=module", "-e", script], { timeout: 60_000, maxBuffer: 1 << 20 }, (error, stdout, stderr) => (error ? reject(new Error(`${error.message} ${stderr}`)) : resolve(stdout))));
+    // The paths are found (so the looking works); no query and no cookie is.
+    assert.deepEqual(JSON.parse(out), { notes: 12, path: 12, query: 0, cookie: 0 });
+    await app.close();
   });
 
   test("it listens on the loopback address only, with a mark of 256 bits, and a socket path only its owner may use", async () => {

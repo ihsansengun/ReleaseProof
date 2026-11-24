@@ -6,7 +6,7 @@
  *
  * NOT USED BY ANY RUN, AND NOT BY THE CHECK RUNNER. Nothing here is called
  * when a run starts, is carried out or is reported, and no verdict depends on
- * it. A test holds that so.
+ * it. A test would notice an ordinary use of it; it is a tripwire, not a lock.
  *
  * One rule: **nothing reaches the application unless the engine released
  * it.** The engine holds every request of the page before it is sent, and
@@ -94,7 +94,7 @@ export type CheckpointOptions = {
   origins: readonly string[];
   /** Where to listen: a port on the loopback address (0 for any), or the path of a socket. Default: any port. */
   listen?: { port: number } | { path: string };
-  /** Authorities to verify applications against, in place of the system's. For tests with certificates made there. */
+  /** Authorities to verify applications against, in place of the ones Node trusts. For tests with certificates made there. */
   upstreamCa?: string | Buffer | (string | Buffer)[];
   /** Where a name is, in place of asking. For tests: the names they use are nowhere. */
   upstreamAddress?: (origin: string) => { host: string; port: number } | undefined;
@@ -140,20 +140,23 @@ function originOf(text: string): string {
 }
 
 const REFUSAL = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-/** What is said to a proxy or about one connection, and is not passed on; and whatever a `Connection` header names. */
-const hopByHop = (headers: http.IncomingHttpHeaders, more: string[]): string[] => [
-  ...more,
-  "connection",
-  "keep-alive",
-  "upgrade",
-  "te",
-  "trailer",
-  "proxy-connection",
-  ...String(headers.connection ?? "")
+/** Says no on a connection that is not a request's, and ends it: the other side keeping its half open keeps nothing. */
+const turnAway = (socket: { write(text: string, done: () => void): unknown; destroy(): unknown }) => void socket.write(REFUSAL, () => socket.destroy());
+/** What a `Connection` header names besides its own words. */
+const named = (headers: http.IncomingHttpHeaders): string[] =>
+  String(headers.connection ?? "")
     .split(",")
     .map((name) => name.trim().toLowerCase())
-    .filter((name) => name !== ""),
-];
+    .filter((name) => name !== "" && name !== "close" && name !== "keep-alive" && name !== "upgrade");
+/**
+ * What says where a message ends, and whom it is for. A `Connection` header may not name these for removal: a
+ * body sent on without its length would be read by the application as a second request.
+ */
+const FRAMING = ["content-length", "transfer-encoding", "host"];
+/** What is said to a proxy or about one connection, and is not passed on; and whatever a `Connection` header names. */
+const hopByHop = (headers: http.IncomingHttpHeaders, more: string[]): string[] => [...more, "connection", "keep-alive", "upgrade", "te", "trailer", "proxy-connection", ...named(headers).filter((name) => !FRAMING.includes(name))];
+/** Text of a request that is kept, as a text of its own: a piece cut from a longer one would keep all of it alive. */
+const copyOf = (text: string) => Buffer.from(text, "latin1").toString("latin1");
 
 /**
  * Opens a checkpoint for one check. Throws `CheckpointRefused` if the origins
@@ -195,7 +198,8 @@ export async function openCheckpoint(options: CheckpointOptions): Promise<Checkp
     const path = at === -1 ? target : target.slice(0, at);
     // The path only, and not all of a long one. An origin that is not on the list is not kept as it was given:
     // it is text of the asker's choosing. A method or a path that is not plain text is not kept as it came.
-    kept.push(Object.freeze({ outcome, method: /^[A-Z]{1,16}$/.test(method) ? method : "?", origin: origins.has(origin) ? origin : "other", path: /^[\x21-\x7e]*$/.test(path) ? path.slice(0, CHECKPOINT_LIMITS.path) : "?", query: at !== -1 }));
+    // What is kept of the request is copied out of it, so that the rest of it (its query above all) is let go.
+    kept.push(Object.freeze({ outcome, method: /^[A-Z]{1,16}$/.test(method) ? copyOf(method) : "?", origin: origins.has(origin) ? copyOf(origin) : "other", path: /^[\x21-\x7e]*$/.test(path) ? copyOf(path.slice(0, CHECKPOINT_LIMITS.path)) : "?", query: at !== -1 }));
   };
 
   const marked = (request: http.IncomingMessage): boolean => {
@@ -211,7 +215,7 @@ export async function openCheckpoint(options: CheckpointOptions): Promise<Checkp
     response.end();
   };
 
-  /** Sends a released request to the application and its answer back, as they are. Nothing of either is kept. */
+  /** Sends a released request to the application and its answer back. Nothing of either is kept. */
   const forward = (origin: string, request: http.IncomingMessage, response: http.ServerResponse, target: string) => {
     const url = new URL(origin);
     const secure = url.protocol === "https:";
@@ -256,7 +260,8 @@ export async function openCheckpoint(options: CheckpointOptions): Promise<Checkp
     });
     // A change of protocol, or an end with no answer, is not an answer either.
     out.on("upgrade", (_answer, socket) => (socket.destroy(), failed()));
-    out.on("timeout", failed);
+    // Silence for the time allowed, before an answer or in the middle of one, ends it.
+    out.on("timeout", () => (settled ? (out.destroy(), response.destroy()) : failed()));
     out.on("error", failed);
     out.on("close", () => {
       if (!settled) failed();
@@ -277,6 +282,8 @@ export async function openCheckpoint(options: CheckpointOptions): Promise<Checkp
     // The name the request gives for itself is the one it was sent to, or it is not forwarded under either.
     if (request.headers.host !== new URL(origin).host) return void (note("refused-malformed", method, origin, target), request.resume(), refuse(response, 400));
     if (!marked(request)) return void (note("refused-unmarked", method, origin, target), request.resume(), refuse(response));
+    // A released request that asks for its own length or addressee to be dropped on the way is not sent on.
+    if (named(request.headers).some((name) => FRAMING.includes(name) || name === CHECKPOINT_MARK_HEADER)) return void (note("refused-malformed", method, origin, target), request.resume(), refuse(response, 400));
     try {
       forward(origin, request, response, target);
     } catch {
@@ -297,7 +304,13 @@ export async function openCheckpoint(options: CheckpointOptions): Promise<Checkp
     socket.on("error", () => socket.destroy());
     const target = request.url ?? "/";
     note("refused-upgrade", request.method ?? "?", tunnelled.get(request.socket) ?? "other", target.startsWith("/") ? target : "/");
-    socket.end(REFUSAL);
+    turnAway(socket);
+  });
+  // A tunnel asked for inside a tunnel.
+  inner.on("connect", (request, socket) => {
+    socket.on("error", () => socket.destroy());
+    note("refused-malformed", "CONNECT", tunnelled.get(request.socket) ?? "other", "/");
+    turnAway(socket);
   });
   inner.on("clientError", (_error, socket) => socket.destroy());
 
@@ -322,7 +335,7 @@ export async function openCheckpoint(options: CheckpointOptions): Promise<Checkp
   outer.on("upgrade", (request, socket) => {
     socket.on("error", () => socket.destroy());
     note("refused-upgrade", request.method ?? "?", "other", "/");
-    socket.end(REFUSAL);
+    turnAway(socket);
   });
   outer.on("clientError", (_error, socket) => socket.destroy());
   outer.on("connect", (request, socket: net.Socket) => {
@@ -333,12 +346,13 @@ export async function openCheckpoint(options: CheckpointOptions): Promise<Checkp
       const context = asked ? ending?.get(asked[1]!) : undefined;
       if (closed || !asked || !origins.has(origin) || context === undefined) {
         note(asked ? "refused-origin" : "refused-malformed", "CONNECT", origin, "/");
-        return void socket.end(REFUSAL);
+        return void turnAway(socket);
       }
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       const ended = hold(new tls.TLSSocket(socket, { isServer: true, secureContext: context, ALPNProtocols: ["http/1.1"] }));
       ended.on("error", () => ended.destroy());
-      ended.setTimeout(upstreamMs, () => ended.destroy());
+      // Longer than an application is waited for, so that the browser is told of a failure before it is cut off.
+      ended.setTimeout(upstreamMs * 2, () => ended.destroy());
       tunnelled.set(ended, origin);
       inner.emit("connection", ended);
     } catch {
