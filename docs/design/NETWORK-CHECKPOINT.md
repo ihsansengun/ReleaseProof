@@ -152,12 +152,59 @@ not to pass through it at this stage.
 - **One browser build** was used for the browser tests.
 - **No measurement of speed** beyond the tests passing.
 
+## The browser's side
+
+Built as a part by itself (`packages/agent/src/remote/isolated.ts` and `isolated-inside.mjs`) and **used by
+nothing**.
+
+A browser is not asked to stay behind the checkpoint: it is put where there is nothing else. The engine starts
+it in a **network namespace of its own**, which the operating system makes with one interface, the loopback.
+What runs first inside that namespace is the engine's own small program, which:
+
+1. raises the loopback (with `ip`, or by asking the kernel through `python3` where there is no `ip`);
+2. reads the kernel's list of interfaces and stops unless it is the loopback alone;
+3. opens the one door: a listener on that loopback which hands every connection to the checkpoint's socket
+   on the file system outside;
+4. writes down the namespace's name and its interfaces for the engine;
+5. only then starts the browser, as its own child, so that the two end together.
+
+The browser is told that its proxy is the door, that it resolves no name itself, and which one key to accept.
+
+**If any of this cannot be done, no browser is started** (owner's rule, 23 November 2026: isolation is
+mandatory, and a check refuses to run without it). The engine does not take it on trust: it reads what was
+written down, and refuses, ending the browser, unless the namespace is another than its own and has the
+loopback and nothing else. The reasons for refusing are a fixed list.
+
+What the tests show, on a machine that lets a namespace be made: a page that tries WebRTC (three ways),
+WebTransport, and direct connections by address sends nothing that arrives outside, at the machine's loopback
+or at its other addresses; the same page in an ordinary browser sends packets and opens connections there, so
+the looking works. And that nothing is started when the tool for namespaces is missing or says no, when what
+answers to its name makes no namespace, and when the loopback cannot be raised.
+
+### Limits to know about
+
+- **Only the network is confined.** The browser sees the same files and processes as the engine. A socket
+  on the file system (the checkpoint's own is one) is reachable to anything that runs as the same user. A
+  page cannot open such a socket; a browser that had been taken over could. The browser's own sandbox is as
+  the browser library starts it, which is off. Confinement of files and processes is the worker's business
+  (KAN-16) and is a gate before hosted use.
+- **The engine must have the right to make a namespace**: as an administrator, or through user namespaces
+  where the machine allows them. Where neither holds (some shared build machines), the answer is a refusal,
+  and the tests there show only the refusals.
+- **One of two ordinary tools** must be present to raise the loopback.
+- **What is written down comes from the engine's program inside the namespace, before the browser starts.**
+  It is not a measurement taken again later, and a browser that had been taken over could rewrite the file;
+  it is read once, when the browser has started.
+- **A page can still talk to the door as much as it likes.** That is the checkpoint's business: what does
+  not bear the mark is refused there.
+- **Linux only**, one browser build, and no measurement of what it costs beyond about two seconds to start.
+
 ## Stages
 
 | Part | What | State |
 |---|---|---|
 | a | This checkpoint, by itself | built, used by nothing |
-| b | A browser that cannot go round it; a check refuses to run otherwise | not started |
+| b | A browser that cannot go round it; a check refuses to run otherwise | built, used by nothing |
 | c | The check runner holds every request, decides, and uses a and b; leave-time by what is observed; how the intended act's request is told from another | not started |
 
 Each part is merged only after independent security review, passing tests and the owner's approval. The

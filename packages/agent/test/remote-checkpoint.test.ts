@@ -804,6 +804,7 @@ test("the checkpoint is used by nothing: not by a run, and not by the check runn
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   const source = path.join(root, "packages", "agent", "src", "remote", "checkpoint.ts");
   const tests = path.join(root, "packages", "agent", "test", "remote-checkpoint.test.ts");
+  const beside = [path.join(path.dirname(source), "isolated.ts"), path.join(path.dirname(source), "isolated-inside.mjs"), path.join(path.dirname(tests), "remote-isolated.test.ts")];
   const text = await readFile(source, "utf8");
   const exported = [...text.matchAll(/^export\s+(?:async\s+)?[a-z]+\s+([A-Za-z_$][\w$]*)/gm)].map((match) => match[1]!).sort();
   assert.equal(exported.length, [...text.matchAll(/^export\b/gm)].length, "every export of the checkpoint is one this test can name");
@@ -816,8 +817,11 @@ test("the checkpoint is used by nothing: not by a run, and not by the check runn
     if (!/\.(?:[cm]?[jt]sx?|json|ya?ml|sh)$/.test(file) || parts.includes("node_modules") || parts[0] === ".git") continue;
     files += 1;
     const full = path.join(root, file);
-    if (full !== source && full !== tests) assert.doesNotMatch(await readFile(full, "utf8"), /checkpoint/i, `${file} refers to the checkpoint`);
+    if (full !== source && full !== tests && !beside.includes(full)) assert.doesNotMatch(await readFile(full, "utf8"), /checkpoint/i, `${file} refers to the checkpoint`);
   }
+  // The browser that is to stand behind it speaks of it and is handed its socket's path, and does not use it:
+  // only that part's tests open one.
+  for (const file of beside.slice(0, 2)) assert.doesNotMatch(await readFile(file, "utf8"), /checkpoint\.ts|openCheckpoint|CHECKPOINT_/, `${path.basename(file)} uses the checkpoint`);
   assert.ok(files > 20);
   // It writes nothing and prints nothing. By its text: the one thing it does to a file is restrict its socket.
   assert.doesNotMatch(text, /console|process\.std|writeFile|appendFile|createWriteStream|\bimport\(/);
