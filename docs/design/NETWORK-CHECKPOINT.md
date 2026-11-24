@@ -82,7 +82,8 @@ its text and by running it in a process of its own.
 
 What is kept is copied out of the request, so that the rest of the request is let go: a test looks through
 everything a process holds after requests have passed and finds their paths and none of their queries or
-cookies. At most 2,000 notes of at most 512 characters of path: about a megabyte.
+cookies. At most 2,000 notes of at most 512 characters of path: about a megabyte of text (measured: two to
+three megabytes of memory under a flood of 30,000 long addresses, and no growth beyond that).
 
 **A path is kept, and a path can carry something secret** (a link to reset a password, a session in the
 address). It is also text a page chose. The checkpoint never writes or prints one.
@@ -135,6 +136,19 @@ not to pass through it at this stage.
 - **Anything on the machine that can reach the loopback address** can ask the checkpoint, fill its notes
   (the counts go on) and use up its 256 connections for as long as it keeps them, which keeps the browser
   out: a check that cannot run, not a wrong result. It cannot have anything forwarded without the mark.
+- **Known and not yet put right** (found by the third review, 24 November 2026; none lets anything through
+  that was not released, and none is a wrong count of what reached the application):
+  - *The silence limit in the middle of an answer also runs while the browser is the one not reading.* A
+    browser that stops reading a large answer for the whole time (30 seconds) loses the rest of it, and that
+    cut is not counted as a failure. Not seen with a real browser.
+  - *An https application that accepts a connection and never completes TLS* fails, and is counted, but
+    the browser's connection is ended with nothing said, not with 502, after twice the time.
+  - *An answer with a `Transfer-Encoding` other than `chunked`* is handed to the browser as it came, on a
+    connection that is then kept. The browser tested read it to the end without confusion; another reader
+    might not.
+  - *A request with an `Expect` Node does not know* is answered 417 by Node and not counted. Nothing of it
+    reaches the application.
+  These are to be put right, with tests, before the checkpoint is used by a check (the third part).
 - **One browser build** was used for the browser tests.
 - **No measurement of speed** beyond the tests passing.
 
