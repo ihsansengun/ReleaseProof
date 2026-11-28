@@ -194,11 +194,13 @@ describe("when the browser cannot be isolated, none is started", () => {
 
   test("a namespace that is not one: the engine's own network, under another name", async () => {
     // Something that answers to the tool's name and makes nothing: what runs inside finds the machine's own
-    // interfaces, or the engine finds its own namespace written down. Either way no browser is left running.
+    // interfaces, or the engine finds its own namespace written down; or, without the right to touch the
+    // machine's own loopback, it cannot go through the motion of raising it. Every one of these is a refusal,
+    // and no browser is left running.
     const fake = temporary("rp-fake-");
     writeFileSync(path.join(fake, "unshare"), '#!/bin/sh\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\n[ "$#" -gt 0 ] && shift\n[ "$#" -eq 0 ] && exit 0\nexec "$@"\n');
     chmodSync(path.join(fake, "unshare"), 0o755);
-    await withPath([fake, ...(path0 ?? "").split(":")], async () => refused(["other-interfaces", "not-isolated", "door-not-opened"]));
+    await withPath([fake, ...(path0 ?? "").split(":")], async () => refused(["other-interfaces", "not-isolated", "door-not-opened", "loopback-not-raised"]));
   });
 
   test("inside the namespace the loopback cannot be raised", { skip: can ? false : "needs a namespace" }, async () => {
