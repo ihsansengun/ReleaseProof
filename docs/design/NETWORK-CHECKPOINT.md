@@ -230,6 +230,21 @@ back; and when the socket is not there, is not a socket, or has nobody behind it
 - **A machine whose kernel puts other interfaces into every new namespace** (some do, for tunnels) would
   get a refusal at every launch. Not met here; a reviewer showed the refusal with an added interface, and no
   test in the repository does.
+- **Known and not yet put right** (found by the third review of this part, 28 November 2026; in none of
+  them is a browser that is not isolated handed back, and in none does anything leave the namespace):
+  - *A browser all of whose processes are stopped dead, its crash reporters included, is never given up
+    on.* The launch then gives no answer at all, and two stopped crash reporters and what was written stay
+    behind, inside the namespace. With the browser's main process alone stopped, the answer is a refusal
+    after about a minute and nothing is left. Shown by stopping the processes on purpose.
+  - *What is handed over is read where an error in the reading is not caught*: something made to throw
+    when its pin or its path is read gets that error back and not a refusal; and the pin is read again
+    after it was checked. Nothing is started in the first case; in the second what is read stays one
+    argument to the browser.
+  - *An engine that is gone before the program inside has begun* is not noticed by that program: the
+    browser is started and ends by itself within a second, because its line to the engine is cut.
+  - *The limit on a socket path's length and the time given to a browser to answer are not held by a
+    test*: with either taken out, the tests pass.
+  These are to be put right, with tests, before a check starts a browser this way (the third part).
 - **Not held by a test in the repository**, though each was shown by a reviewer: a browser that never
   speaks or stops answering being given up on; one process of a browser being outside while the rest are
   in; the browser being ended when the engine is gone.
