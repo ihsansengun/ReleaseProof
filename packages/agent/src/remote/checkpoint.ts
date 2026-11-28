@@ -290,14 +290,23 @@ export async function openCheckpoint(options: CheckpointOptions): Promise<Checkp
     });
     // A change of protocol, or an end with no answer, is not an answer either.
     out.on("upgrade", (_answer, socket) => (socket.destroy(), failed()));
-    // No answer begun in the time allowed, whatever the reason (the connection never stood included), ends it.
-    quiet(failed);
+    // No answer begun in the time allowed ends it, whatever the reason (the connection never stood included).
+    // The time is the application's: while the browser is still sending its request and the application is
+    // taking it, or the browser itself has stopped sending, the wait goes on.
+    const waiting = () => quiet(() => (!request.complete && !out.writableNeedDrain ? waiting() : failed()));
+    waiting();
+    request.on("data", waiting);
+    request.on("end", waiting);
     out.on("error", failed);
     out.on("close", () => {
       if (!settled) failed();
     });
     request.on("error", () => out.destroy());
     response.on("close", () => out.destroy());
+    // For as long as this is under way, the browser's connection is not idle, however long it reads or sends nothing.
+    const connection = request.socket;
+    busy.set(connection, (busy.get(connection) ?? 0) + 1);
+    response.on("close", () => busy.set(connection, Math.max(0, (busy.get(connection) ?? 1) - 1)));
     request.pipe(out);
   };
 
@@ -325,6 +334,8 @@ export async function openCheckpoint(options: CheckpointOptions): Promise<Checkp
 
   // What the browser says inside a connection the checkpoint has ended for it: requests for one https origin.
   const tunnelled = new WeakMap<net.Socket, string>();
+  // How many requests are under way on each of the browser's connections.
+  const busy = new WeakMap<net.Socket, number>();
   const inner = http.createServer((request, response) => {
     const origin = tunnelled.get(request.socket);
     if (origin === undefined) return void (request.resume(), refuse(response, 400));
@@ -343,6 +354,9 @@ export async function openCheckpoint(options: CheckpointOptions): Promise<Checkp
     turnAway(socket);
   });
   inner.on("clientError", (_error, socket) => socket.destroy());
+  // A connection that has been idle for its time. (Asked of here, or the reader of requests would end it whatever
+  // was under way on it.)
+  inner.on("timeout", (socket) => ((busy.get(socket) ?? 0) === 0 ? void socket.destroy() : void socket.setTimeout(upstreamMs * 2)));
   // A request that expects something nobody here knows of: said no to here, and counted, not left to be
   // answered without a word in the record.
   const unexpected = (origin: (request: http.IncomingMessage) => string) => (request: http.IncomingMessage, response: http.ServerResponse) => {
@@ -392,7 +406,9 @@ export async function openCheckpoint(options: CheckpointOptions): Promise<Checkp
       const ended = hold(new tls.TLSSocket(socket, { isServer: true, secureContext: context, ALPNProtocols: ["http/1.1"] }));
       ended.on("error", () => ended.destroy());
       // Longer than an application is waited for, so that the browser is told of a failure before it is cut off.
-      ended.setTimeout(upstreamMs * 2, () => ended.destroy());
+      // An idle tunnel is ended; one with a request under way is not idle (a browser slow to read a large
+      // answer is not cut off here), and ends with its connection's own time at the latest.
+      ended.setTimeout(upstreamMs * 2);
       tunnelled.set(ended, origin);
       inner.emit("connection", ended);
     } catch {

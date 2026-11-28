@@ -131,21 +131,28 @@ not to pass through it at this stage.
 - **One connection to the application for each request**; none is kept for the next.
 - **The oldest version of TLS spoken** is 1.2, by this code and by Node's own default.
 - **Notes are in the order requests were dealt with**, not the order they were sent; and a request the
-  browser gave up on after it was sent is counted as forwarded and as failed.
+  browser gave up on after it was sent and before any answer began is counted as forwarded and as failed;
+  one it gives up on in the middle of an answer is counted as forwarded only.
 - **Answers before the final one** (a status in the 100s) are not passed on.
 - **Anything on the machine that can reach the loopback address** can ask the checkpoint, fill its notes
   (the counts go on) and use up its 256 connections for as long as it keeps them, which keeps the browser
   out: a check that cannot run, not a wrong result. It cannot have anything forwarded without the mark.
 - **Put right since the third review of the checkpoint** (each with a test):
-  - *Only the application's own silence ends an answer.* The checkpoint keeps its own clock for it, before
-    an answer and between the pieces of one, and time in which the browser is the one not reading does not
-    count. An answer that is cut off, by that clock or by the application breaking it off, is counted as a
-    failure after having been counted as sent on.
+  - *Only the application's own silence ends a request or an answer.* The checkpoint keeps its own clock
+    for it: before an answer and between the pieces of one. Time in which the browser is the slow side
+    does not count: while it is still sending its request (a large upload), and while it is not reading an
+    answer (a large download), over http and https alike. An answer that is cut off, by that clock or by
+    the application breaking it off, is counted as a failure after having been counted as sent on.
+    What still ends a request whichever side is slow is the time one connection of the browser's may last
+    (ten minutes); a download ended that way, or by the browser itself going away, is not counted as the
+    application's failure.
   - *An https application that takes the connection and never greets* is a failure the browser is told of
     (502) after the time allowed.
   - *An answer whose end is told by a `Transfer-Encoding` other than `chunked`* is not handed to the
     browser: it is a failure.
-  - *A request with an `Expect` nobody here knows of* is refused here (417) and counted.
+  - *A request with an `Expect` nobody here knows of* is refused here (417) and counted. (Node decides
+    what it knows: a value that has `100-continue` in it among other things, and any `Expect` in a request
+    of the oldest version of the protocol, are sent on with the header as it came.)
 - **One browser build** was used for the browser tests.
 - **No measurement of speed** beyond the tests passing.
 
