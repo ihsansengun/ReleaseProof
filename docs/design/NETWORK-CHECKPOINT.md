@@ -172,10 +172,11 @@ What runs first inside that namespace is the engine's own small program, which:
    the engine that started it is gone. (If this program itself is killed outright, the browser lives on in the
    namespace, with no door, until the engine ends it.)
 
-Where the machine allows both, the namespace is made **as a user namespace's own administrator** and not as
-the engine's own user: measured, a process started as the machine's administrator in a plain network
-namespace can step back into the machine's own network, and one in a user namespace cannot (on the kernel
-this was measured on, as the administrator and as an ordinary user).
+The namespace is made **as a user namespace's own administrator**, and in no other way (owner's decision,
+28 November 2026). There was a second way, as the machine's own administrator; it is gone: measured, a
+process started that way in a plain network namespace can step back into the machine's own network, and one
+in a user namespace cannot (on the kernel this was measured on, as the administrator and as an ordinary
+user). Where the machine does not allow a user namespace, no browser is started.
 
 The browser is told that its proxy is the door, that it resolves no name itself, and which one key to accept.
 
@@ -230,31 +231,20 @@ back; and when the socket is not there, is not a socket, or has nobody behind it
 - **A machine whose kernel puts other interfaces into every new namespace** (some do, for tunnels) would
   get a refusal at every launch. Not met here; a reviewer showed the refusal with an added interface, and no
   test in the repository does.
-- **Known and not yet put right** (found by the third review of this part, 28 November 2026; in none of
-  them is a browser that is not isolated handed back, and in none does anything leave the namespace):
-  - *A browser all of whose processes are stopped dead, its crash reporters included, is never given up
-    on.* The launch then gives no answer at all, and two stopped crash reporters and what was written stay
-    behind, inside the namespace. With the browser's main process alone stopped, the answer is a refusal
-    after about a minute and nothing is left. Shown by stopping the processes on purpose.
-  - *What is handed over is read where an error in the reading is not caught*: something made to throw
-    when its pin or its path is read gets that error back and not a refusal; and the pin is read again
-    after it was checked. Nothing is started in the first case; in the second what is read stays one
-    argument to the browser.
-  - *An engine that is gone before the program inside has begun* is not noticed by that program: the
-    browser is started and ends by itself within a second, because its line to the engine is cut.
-  - *The limit on a socket path's length and the time given to a browser to answer are not held by a
-    test*: with either taken out, the tests pass.
-  These are to be put right, with tests, before a check starts a browser this way (the third part).
-- **Not held by a test in the repository**, though each was shown by a reviewer: a browser that never
-  speaks or stops answering being given up on; one process of a browser being outside while the rest are
-  in; the browser being ended when the engine is gone.
-- **IPv6 was not there to be tested**: the machine these tests ran on has none.
-- **Where the tests run.** The job that runs all of this repository's tests is on a machine that does not
-  let a namespace be made: there the tests that show a browser cannot get out are skipped, visibly, and only
-  the refusals run. A second job (`isolation` in `.github/workflows/tests.yml`) runs those tests alone, as an
-  ordinary user, on a machine where the one rule against it has been lifted, and fails if a namespace cannot
-  be made. A pass of that job is the one that says something about isolation, for the way of making a
-  namespace that an ordinary user can use; the other way is not exercised there. See `docs/CI-SECURITY.md`.
+- **Put right since the third review of this part** (each with a test):
+  - *Ending a browser takes a set time.* It is asked to end and given five seconds; then every process
+    still in its namespace is ended outright, whatever state it is in. A browser all of whose processes
+    are stopped dead, its crash reporters included, no longer holds a launch or a close for ever, and
+    nothing of it is left.
+  - *What is handed over is read once*, where an error in the reading is a refusal like any other.
+  - *The limit on a socket path's length* is held by a test at the last byte that fits and the first that
+    does not; so is the browser being gone once the engine is killed.
+- **Known and left as it is:** an engine that is gone before the program inside the namespace has begun is
+  not noticed by that program. The browser is started and ends by itself within a second, because its line
+  to the engine is cut.
+- **Not held by a test in the repository**, though each was shown by a reviewer: the time given to a browser
+  to say what its processes are (the time given it to start is held); one process of a browser being
+  outside the namespace while the rest are in.
 - **Linux only**, one browser build, and a start that takes a few tenths of a second longer than without.
 
 ## Stages
