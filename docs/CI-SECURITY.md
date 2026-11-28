@@ -269,6 +269,33 @@ without downloading the artifact and cannot issue commands to the runner.
   an artifact for 14 days. Browser traces are excluded because they record
   typed values.
 
+## The engine's own tests (`tests.yml`)
+
+Separate from the four stages above. On a pull request this workflow runs the pull request's own code, tests
+and workflow file, so it is given nothing: no secret, a read-only token, and a machine of GitHub's that is
+thrown away when the job ends.
+
+It has two jobs:
+
+- **`test`** runs the whole suite. The machine does not let an ordinary user make a network namespace, so the
+  tests that show an isolated browser cannot get out are skipped there, with the reason printed, and only the
+  refusals run.
+- **`isolation`** runs those tests and nothing else, and exists so that a pass means isolation was shown:
+  - one fixed line lifts the machine's rule against ordinary users making namespaces
+    (`kernel.apparmor_restrict_unprivileged_userns`). That is the only thing done as the administrator;
+  - the tests run as the ordinary user and make the namespace as a user namespace's own administrator, which
+    has no rights over the machine. A test fails if they are run as the administrator, or if the namespace
+    would be made the other way;
+  - `RELEASEPROOF_REQUIRE_ISOLATION=1` makes "a namespace cannot be made" a failure and not a skip.
+
+What this does and does not protect: on these machines any job's code can make itself the administrator of
+its own machine; that is how they are built, and it was so before this job existed. The protection for a pull
+request's code is not that it lacks rights inside the machine. It is that the machine holds nothing (no
+secret, a token that can only read what is public) and is destroyed afterwards. The `isolation` job changes
+none of that. What it adds is one loosened setting on a machine that lives for a few minutes.
+
+Do not add a secret or a write permission to this workflow, and do not run its tests as the administrator.
+
 ## Assumptions
 
 - Docker's container isolation, and `docker load` and `docker build` of

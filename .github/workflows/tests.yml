@@ -48,3 +48,48 @@ jobs:
       - name: Test
         working-directory: packages/agent
         run: npm test
+
+  # The tests that show a browser cannot get out of its network namespace need a
+  # machine that lets one be made. The job above runs on a machine that does not,
+  # and skips them; so they run here, alone, where a pass means it was shown.
+  #
+  # TRUST: as above, this executes the pull request's code: no secret, read-only
+  # token, on a machine that is thrown away afterwards. Nothing here runs as the
+  # administrator except the one fixed line that lifts this machine's rule
+  # against ordinary users making namespaces. The tests themselves run as the
+  # ordinary user, and make the namespace the way the engine prefers to: as a
+  # user namespace's own administrator, with no rights over the machine.
+  # Do not add a secret, a write permission, or a step that runs the tests as
+  # the administrator.
+  isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Install
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+
+      - name: Let an ordinary user of this machine make a namespace
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # RELEASEPROOF_REQUIRE_ISOLATION: if a namespace still cannot be made, the
+      # tests fail and do not skip. A pass here is never a pass by omission.
+      - name: Show that an isolated browser cannot get out
+        working-directory: packages/agent
+        env:
+          RELEASEPROOF_REQUIRE_ISOLATION: "1"
+        run: |
+          test "$(id -u)" != 0
+          npx tsx --test test/remote-isolated.test.ts
+
