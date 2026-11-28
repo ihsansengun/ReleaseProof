@@ -75,7 +75,8 @@ door.listen(Number(doorPort), "127.0.0.1", async () => {
   }
   // No browser for an engine that is no longer there.
   if (process.ppid !== startedBy) process.exit(73);
-  writeFileSync(reportPath, JSON.stringify({ namespace, interfaces: listed }));
+  // With this program's own number, so that the engine can take hold of the namespace itself and not only its name.
+  writeFileSync(reportPath, JSON.stringify({ namespace, interfaces: listed, pid: process.pid }));
   // The browser, with what it was given to speak to the engine through (descriptors 3 and 4) passed on as they are.
   const browser = spawn(browserPath, browserArguments, { stdio: ["ignore", "inherit", "inherit", 3, 4] });
   browser.on("error", () => process.exit(71));

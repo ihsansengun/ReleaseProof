@@ -297,6 +297,51 @@ exec ${real} "$@"
     await door.close();
   });
 
+  test("a browser is ended once: what later bears its namespace's name is another's, and is left alone", async () => {
+    // The kernel gives the name of a namespace that is gone to the next one made, within a fraction of a second.
+    // Something unrelated is started again and again until it has been given the name the browser's namespace
+    // had; ending the browser a second time must not touch it.
+    const door = await listeningSocket();
+    const one = await launchIsolatedBrowser({ checkpointSocket: door.path, keyPin: `${"A".repeat(43)}=` });
+    const name = one.namespace;
+    // While the browser lives, the engine has hold of the namespace itself, so that its name cannot become
+    // another's before everything in it has been ended; afterwards it has let go.
+    const holds = () => readdirSync("/proc/self/fd").filter((fd) => { try { return readlinkSync(`/proc/self/fd/${fd}`) === name; } catch { return false; } }).length;
+    assert.equal(holds(), 1, "the engine has no hold on the browser's namespace");
+    const first = one.close();
+    assert.equal(one.close(), first, "a second ending is a second piece of work");
+    await first;
+    assert.equal(holds(), 0, "the engine kept hold of a namespace it had ended");
+    let bystander: ReturnType<typeof spawn> | undefined;
+    for (let tries = 0; tries < 40 && bystander === undefined; tries += 1) {
+      const candidate = spawn("unshare", ["--user", "--map-root-user", "--net", "sleep", "60"], { stdio: "ignore" });
+      await pause(150);
+      const got = candidate.pid === undefined ? "" : (() => { try { return readlinkSync(`/proc/${candidate.pid}/ns/net`); } catch { return ""; } })();
+      if (got === name) bystander = candidate;
+      else (candidate.kill("SIGKILL"), await pause(50));
+    }
+    try {
+      // Whatever the kernel did with the name: a second ending signals nothing at all.
+      const signal = process.kill;
+      let signalled = 0;
+      process.kill = ((...given: Parameters<typeof process.kill>) => ((signalled += 1), signal.apply(process, given))) as typeof process.kill;
+      try {
+        await one.close();
+        await one.close();
+      } finally {
+        process.kill = signal;
+      }
+      assert.equal(signalled, 0, "ending a browser a second time signalled a process");
+      await pause(300);
+      // Where the name did come round again (it nearly always does), its new bearer is still running.
+      if (bystander !== undefined) assert.equal(bystander.exitCode ?? bystander.signalCode, null, "ending a browser again ended something that had been given its namespace's name");
+      else console.log("# the kernel did not hand the name out again in 40 tries: the second ending was made, with nothing to harm");
+    } finally {
+      bystander?.kill("SIGKILL");
+      await door.close();
+    }
+  });
+
   test("when the engine is gone, so is the browser", async () => {
     // An engine of its own, which starts an isolated browser, says where it is, and is then killed outright.
     const door = await listeningSocket();

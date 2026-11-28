@@ -27,7 +27,7 @@
  * processes, only its network. See the design note.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, readlink, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, readdir, readlink, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,7 +71,10 @@ export type IsolatedBrowser = {
   readonly browser: Browser;
   /** The namespace every process of the browser was found in, as the kernel names it. Never the engine's own. */
   readonly namespace: string;
-  /** Ends the browser and everything in its namespace, and removes what was written for it. */
+  /**
+   * Ends the browser and everything in its namespace, and removes what was written for it. Once: a second call
+   * does nothing. End the browser through this and not through the browser itself.
+   */
   close(): Promise<void>;
 };
 
@@ -97,22 +100,50 @@ export function namespaceCommand(): string[] | undefined {
   return spawnSync(command[0]!, [...command.slice(1), "true"], { stdio: "ignore", timeout: 10_000 }).status === 0 ? command : undefined;
 }
 
-/** Ends, at once, every process that is in a namespace. Never the engine's own. */
-async function endEverythingIn(namespace: string, own: string): Promise<void> {
-  if (namespace === own || !/^net:\[\d+\]$/.test(namespace)) return;
+/**
+ * A hold on a namespace itself. The kernel's name for a namespace is given to another as soon as the first is
+ * gone, within a fraction of a second: a name alone says nothing a moment later. While this hold is open the
+ * namespace is not gone, so nothing else can come to bear its name.
+ */
+type Hold = { handle: FileHandle; device: number; inode: number };
+
+/** Takes hold of the namespace a process is in, if it is the one named and is not the engine's own. */
+async function holdOn(namespace: unknown, pid: unknown, own: string): Promise<Hold | undefined> {
+  const named = typeof namespace === "string" ? /^net:\[(\d+)\]$/.exec(namespace) : null;
+  if (named === null || namespace === own || typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 1) return undefined;
+  const handle = await open(`/proc/${pid}/ns/net`, "r").catch(() => undefined);
+  if (handle === undefined) return undefined;
+  try {
+    const found = await handle.stat();
+    const mine = await stat("/proc/self/ns/net");
+    // What was opened is the namespace that was named, and not the engine's.
+    if (String(found.ino) === named[1] && !(found.ino === mine.ino && found.dev === mine.dev)) return { handle, device: found.dev, inode: found.ino };
+  } catch {}
+  await handle.close().catch(() => {});
+  return undefined;
+}
+
+/** Ends, at once, every process that is in the namespace held. */
+async function endEverythingIn(held: Hold): Promise<void> {
   for (const entry of await readdir("/proc").catch(() => [] as string[])) {
     if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue;
-    if ((await namespaceOf(Number(entry))) !== namespace) continue;
+    const where = await stat(`/proc/${entry}/ns/net`).catch(() => undefined);
+    if (where === undefined || where.ino !== held.inode || where.dev !== held.device) continue;
     try {
       process.kill(Number(entry), "SIGKILL");
     } catch {}
   }
 }
 
-/** Asks a browser to end, waits a set time, and then ends whatever is still in its namespace. */
-async function end(browser: Browser | undefined, namespace: string | undefined, own: string): Promise<void> {
+/** Asks a browser to end, waits a set time, ends whatever is still in its namespace, and lets go of the namespace. */
+async function end(browser: Browser | undefined, held: Hold | undefined): Promise<void> {
   if (browser !== undefined) await Promise.race([browser.close().catch(() => {}), new Promise((resolve) => setTimeout(resolve, END_MS).unref())]);
-  if (namespace !== undefined) await endEverythingIn(namespace, own);
+  if (held === undefined) return;
+  try {
+    await endEverythingIn(held);
+  } finally {
+    await held.handle.close().catch(() => {});
+  }
 }
 
 const quoted = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
@@ -148,10 +179,10 @@ export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Pr
 
   let directory: string | undefined;
   let browser: Browser | undefined;
-  // The namespace that was written down, once it has been: what is in it is ended whatever else happens.
-  let made: string | undefined;
+  // A hold on the namespace that was written down, once it has been: what is in it is ended whatever else happens.
+  let held: Hold | undefined;
   const undo = async () => {
-    await end(browser, made, own);
+    await end(browser, held);
     if (directory !== undefined) await rm(directory, { recursive: true, force: true }).catch(() => {});
   };
   try {
@@ -179,7 +210,7 @@ export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Pr
       });
     } catch {
       const left = await written();
-      if (typeof left?.namespace === "string") made = left.namespace;
+      held = await holdOn(left?.namespace, left?.pid, own);
       const said = left?.refused;
       throw new IsolationRefused((ISOLATION_REFUSALS as readonly unknown[]).includes(said) ? (said as IsolationRefusal) : said === "interfaces-not-read" ? "other-interfaces" : "browser-not-started");
     }
@@ -188,7 +219,7 @@ export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Pr
     const found = await written();
     if (found === undefined) throw new IsolationRefused("browser-not-started");
     const { namespace, interfaces } = found;
-    if (typeof namespace === "string") made = namespace;
+    held = await holdOn(namespace, found.pid, own);
     if (typeof namespace !== "string" || !/^net:\[\d+\]$/.test(namespace) || namespace === own || !Array.isArray(interfaces) || interfaces.length !== 1 || interfaces[0] !== "lo") throw new IsolationRefused("not-isolated");
     // And not taken on that word alone. The browser is asked for its processes, and the kernel is asked, from
     // here, which namespace each of them is in: every one in the namespace that was written down.
@@ -207,14 +238,19 @@ export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Pr
     const where = await Promise.all(processes.map((one) => namespaceOf(one.id)));
     if (where.length === 0 || where.some((one) => one !== namespace)) throw new IsolationRefused("not-isolated");
 
-    const [started, kept] = [browser, directory];
+    // Without a hold on the namespace nothing in it could be ended for certain later: no browser is handed over.
+    if (held === undefined) throw new IsolationRefused("not-isolated");
+    const [started, kept, holding] = [browser, directory, held];
+    // Ended once. A second asking does nothing: by then the namespace is let go of, and its name may be another's.
+    let ended: Promise<void> | undefined;
     return {
       browser: started,
       namespace,
-      close: async () => {
-        await end(started, namespace, own);
-        await rm(kept, { recursive: true, force: true }).catch(() => {});
-      },
+      close: () =>
+        (ended ??= (async () => {
+          await end(started, holding);
+          await rm(kept, { recursive: true, force: true }).catch(() => {});
+        })()),
     };
   } catch (error) {
     await undo();

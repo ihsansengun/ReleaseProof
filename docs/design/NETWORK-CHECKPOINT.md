@@ -193,15 +193,15 @@ trust, in two steps:
 Every way out of starting a browser is a refusal from a fixed list, with the browser ended and what the
 launcher wrote removed, whatever went wrong and whatever it was handed. Each wait has an end: five seconds for
 each of the two tools that can raise the loopback, three for each of the two times the door is tried, thirty
-for the browser to start and thirty more for it to say what its processes are (ending a browser that has
-stopped answering can take the browser library another thirty). The one thing with no end set here is the
+for the browser to start, thirty more for it to say what its processes are, and five for it to end when
+asked. The one thing with no end set here is the
 engine itself being killed: then the browser ends because its line to the engine is cut, and the directory
 the launcher wrote stays.
 
 What the tests show, on a machine that lets a namespace be made: a page that tries WebRTC (three ways),
 WebTransport, and direct connections by address sends nothing that arrives outside, at the machine's loopback
 or at its other addresses; the same page in an ordinary browser sends packets and opens connections there, so
-the looking works; the same again for each of the two ways a namespace can be made. And that nothing is
+the looking works. And that nothing is
 started, or is left running, when the tool for namespaces is missing or says no; when what answers to its
 name makes no namespace; when it makes none and writes down exactly what the engine hopes to read; when what
 is written down is nothing or nonsense; when the loopback cannot be raised or the tool for it does not come
@@ -214,9 +214,9 @@ back; and when the socket is not there, is not a socket, or has nobody behind it
   page cannot open such a socket; a browser that had been taken over could. The browser's own sandbox is as
   the browser library starts it, which is off. Confinement of files and processes is the worker's business
   (KAN-16) and is a gate before hosted use.
-- **The engine must have the right to make a namespace**: as an administrator, or through user namespaces
-  where the machine allows them. Where neither holds (some shared build machines), the answer is a refusal,
-  and the tests there show only the refusals.
+- **The machine must allow user namespaces.** Where it does not (some shared build machines, as they
+  come), the answer is a refusal, the administrator's rights notwithstanding, and the tests there show only
+  the refusals.
 - **One of two ordinary tools** must be present to raise the loopback.
 - **The processes looked at are the ones the browser names**: itself, its network, storage and graphics
   services, and the pages it has by then. Its helpers that start others, and its crash reporters, are not in
@@ -236,6 +236,13 @@ back; and when the socket is not there, is not a socket, or has nobody behind it
     still in its namespace is ended outright, whatever state it is in. A browser all of whose processes
     are stopped dead, its crash reporters included, no longer holds a launch or a close for ever, and
     nothing of it is left.
+  - *The engine holds the namespace itself, not its name, until that is done.* The kernel gives the name
+    of a namespace that is gone to the next one made, within a fraction of a second (measured: 80 to 350
+    milliseconds). Ending "everything in the namespace called so" a moment too late would end something
+    unrelated. So from the moment the namespace is written down the engine keeps it open, which keeps its
+    name from being given away; what is ended is what is in the namespace held; and the hold is let go of
+    only afterwards. A browser is ended once: asking again does nothing. (Found by the review of the first
+    version of this fix, which ended by name and could be asked twice.)
   - *What is handed over is read once*, where an error in the reading is a refusal like any other.
   - *The limit on a socket path's length* is held by a test at the last byte that fits and the first that
     does not; so is the browser being gone once the engine is killed.
@@ -243,8 +250,11 @@ back; and when the socket is not there, is not a socket, or has nobody behind it
   not noticed by that program. The browser is started and ends by itself within a second, because its line
   to the engine is cut.
 - **Not held by a test in the repository**, though each was shown by a reviewer: the time given to a browser
-  to say what its processes are (the time given it to start is held); one process of a browser being
-  outside the namespace while the rest are in.
+  to say what its processes are (the time given it to start is held); that a shorter time asked for in a
+  test cannot be a longer one; one process of a browser being outside the namespace while the rest are in.
+- **End a browser through the launcher's own ending**, not through the browser library's. Ended the other
+  way, its processes are gone and the launcher's ending then finds nothing to do, which is harmless; but
+  what the launcher wrote stays until its ending is asked for.
 - **Linux only**, one browser build, and a start that takes a few tenths of a second longer than without.
 
 ## Stages
