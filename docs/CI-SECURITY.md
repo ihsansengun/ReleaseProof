@@ -277,10 +277,12 @@ thrown away when the job ends.
 
 It has two jobs:
 
-- **`test`** runs the whole suite. Nothing in it uses the administrator's rights: the browser is fetched
-  without the option that would have the browser library install system packages that way. The ordinary
-  user of that machine can still become the administrator, and can use the container service the suite
-  needs, so this is a habit kept by the file and not a wall. The machine does not let an ordinary user make a network namespace, so the
+- **`test`** runs the whole suite. Its install no longer uses the administrator's rights: the browser is
+  fetched without the option that would have the browser library install system packages that way. The
+  rest of the job still does, as before: the container tests use those rights (to set network rules and to
+  read a process's settings), and the image they need is built from the pull request's code by the
+  container service. The ordinary user of that machine can become the administrator at will, so what the
+  install now refrains from is a habit kept by the file and not a wall. The machine does not let an ordinary user make a network namespace, so the
   tests that show an isolated browser cannot get out are skipped there, with the reason printed, and only the
   refusals run.
 - **`isolation`** runs those tests and nothing else, and exists so that a pass means isolation was shown:
@@ -292,9 +294,12 @@ It has two jobs:
     rights up for the rest of the job: the ordinary user's permission to become the administrator is
     removed and the container service, which would be another way to it, is stopped;
   - the install and the tests run after that, as the ordinary user. Each of those two steps first checks
-    that neither way back is open, and stops if one is. It is no answer to a fault in the kernel;
+    that neither way back is open, and stops if one is. Giving the rights up is no answer to a fault in
+    the kernel;
   - the browser is fetched without the option that installs system packages, since that option needs the
-    administrator's rights; the machine already has what the browser needs. They make the namespace as a user namespace's own administrator, which has no administrator's
+    administrator's rights. This relies on GitHub's machine already having what the browser needs; if it
+    stops having it, the browser does not start and the tests fail (they do not pass over it);
+  - the tests make the namespace as a user namespace's own administrator, which has no administrator's
     rights over the machine's network (the ordinary user's files are still its to read). A test fails if
     they are run as the administrator, or if the namespace would be made the other way;
   - `RELEASEPROOF_REQUIRE_ISOLATION=1` makes "a namespace cannot be made" a failure and not a skip. With it,
