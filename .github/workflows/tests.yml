@@ -48,3 +48,67 @@ jobs:
       - name: Test
         working-directory: packages/agent
         run: npm test
+
+  # The tests that show a browser cannot get out of its network namespace need a
+  # machine that lets one be made. The job above runs on a machine that does not,
+  # and skips them; so they run here, alone, where a pass means it was shown.
+  #
+  # TRUST: as above, this executes the pull request's code: no secret, read-only
+  # token, on a machine that is thrown away afterwards. Two steps use the
+  # administrator's rights: the install (the browser library installs system
+  # packages that way, as it does in the job above), and one step that lifts
+  # this machine's rule against ordinary users making namespaces and then gives
+  # up the administrator's rights for what follows. The tests run after that,
+  # as the ordinary user, and make the namespace the way the engine prefers
+  # to: as a user namespace's own administrator, which has no administrator's
+  # rights over the machine's network.
+  # A pull request can change this file, as it can any file: what protects the
+  # repository is that this machine holds nothing, not what the file says.
+  # Do not add a secret, a write permission, or a step that runs the tests as
+  # the administrator.
+  isolation:
+    # A fixed version of the machine: the rule lifted below is that version's.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Install
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+
+      # The last thing done with the administrator's rights. After it, the two
+      # known ways for what the steps below run (the tests, and whatever they
+      # load) to make itself the administrator are closed: asking, and the
+      # container service, which is stopped. It does not undo anything the
+      # install above did with those rights, and it is no answer to a fault in
+      # the kernel.
+      - name: Let an ordinary user of this machine make a namespace, and give up the administrator's rights
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo systemctl stop docker.socket docker.service containerd.service || true
+          sudo sh -c 'rm -f /etc/sudoers.d/runner /etc/sudoers.d/*runner*; if grep -rqs "^runner" /etc/sudoers /etc/sudoers.d; then echo "the ordinary user may still become the administrator" >&2; exit 1; fi'
+          sudo -k
+
+      # RELEASEPROOF_REQUIRE_ISOLATION: if a namespace still cannot be made, the
+      # tests fail and do not skip. A pass here is never a pass by omission.
+      - name: Show that an isolated browser cannot get out
+        working-directory: packages/agent
+        env:
+          RELEASEPROOF_REQUIRE_ISOLATION: "1"
+        run: |
+          id
+          if [ "$(id -u)" = 0 ]; then echo "running as the administrator" >&2; exit 1; fi
+          if sudo -n true 2>/dev/null; then echo "the administrator's rights were not given up" >&2; exit 1; fi
+          if docker info >/dev/null 2>&1; then echo "the container service is still there to be asked" >&2; exit 1; fi
+          npx tsx --test test/remote-isolated.test.ts
+

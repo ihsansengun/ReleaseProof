@@ -249,12 +249,12 @@ back; and when the socket is not there, is not a socket, or has nobody behind it
   speaks or stops answering being given up on; one process of a browser being outside while the rest are
   in; the browser being ended when the engine is gone.
 - **IPv6 was not there to be tested**: the machine these tests ran on has none.
-- **Where the tests run.** The machine that runs this repository's tests for every change does not allow a
-  namespace to be made. There the tests that show a browser cannot get out are skipped, visibly, and only
-  the refusals run; so those tests passing there says nothing about isolation. Whether to give that machine
-  the right is the owner's decision; until then the proof is from machines that have it.
-- **A page can still talk to the door as much as it likes.** That is the checkpoint's business: what does
-  not bear the mark is refused there.
+- **Where the tests run.** The job that runs all of this repository's tests is on a machine that does not
+  let a namespace be made: there the tests that show a browser cannot get out are skipped, visibly, and only
+  the refusals run. A second job (`isolation` in `.github/workflows/tests.yml`) runs those tests alone, as an
+  ordinary user, on a machine where the one rule against it has been lifted, and fails if a namespace cannot
+  be made. A pass of that job is the one that says something about isolation, for the way of making a
+  namespace that an ordinary user can use; the other way is not exercised there. See `docs/CI-SECURITY.md`.
 - **Linux only**, one browser build, and a start that takes a few tenths of a second longer than without.
 
 ## Stages

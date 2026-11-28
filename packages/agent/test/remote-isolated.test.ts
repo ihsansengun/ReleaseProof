@@ -19,6 +19,14 @@ import { CHECKPOINT_MARK_HEADER, openCheckpoint, type Checkpoint } from "../src/
 import { ISOLATION_REFUSALS, IsolationRefused, launchIsolatedBrowser, namespaceCommand, type IsolatedBrowser } from "../src/remote/isolated.ts";
 
 const can = namespaceCommand() !== undefined;
+// Where the tests are run to show isolation and for nothing else, not being able to make a namespace is a failure
+// and not a reason to pass over them; and the namespace is to be the kind that has no rights over the machine.
+const required = process.env.RELEASEPROOF_REQUIRE_ISOLATION === "1";
+test("where isolation is to be shown, it can be: a namespace can be made, as an ordinary user's own", { skip: required ? false : "not asked for here" }, () => {
+  assert.ok(can, "this machine does not let a network namespace be made, and these tests were run to show isolation");
+  assert.ok(namespaceCommand()!.includes("--user"), "the namespace would be made with rights over the machine");
+  assert.notEqual(process.getuid?.(), 0, "these tests are not to be run as the administrator");
+});
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Everything written while these tests run goes under one directory of their own, so that what is counted there
 // is theirs and not other work on the machine; it is removed at the end.
@@ -209,14 +217,18 @@ describe("a browser in a network namespace of its own", { skip: can ? false : "t
           await one.close();
         }
       }
+    } catch (error) {
+      await forThis.close().catch(() => {});
+      throw error;
     } finally {
       process.env.PATH = path0;
     }
+    // Closed whatever was found, so that a failure above is a failure and not a wait.
+    await forThis.close();
     assert.ok(tried.length >= 1);
     // Where both ways are open, the one that leaves the browser without rights over the machine's network is taken.
     if (tried.length === 2) assert.ok(namespaceCommand()!.includes("--user"));
     assert.equal(existsSync(marker), false, "part of a path was run as a command");
-    await forThis.close();
   });
 
   test("ending it ends everything in its namespace and leaves nothing written", async () => {
