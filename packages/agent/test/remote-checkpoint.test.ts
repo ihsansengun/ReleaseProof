@@ -378,6 +378,20 @@ describe("the checkpoint in front of an https application", () => {
     await new Promise<void>((resolve) => (silent.closeAllConnections(), silent.close(() => resolve())));
   });
 
+  test("an https application that takes the connection and never greets is a failure the browser is told of", async () => {
+    // It reads what it is sent and says nothing back.
+    const mute = net.createServer((socket) => (socket.on("error", () => {}), socket.resume()));
+    await new Promise<void>((resolve) => mute.listen(0, "127.0.0.1", resolve));
+    const forMute = await openCheckpoint({ origins: [origin], upstreamCa: app.certificate, upstreamAddress: () => ({ host: "127.0.0.1", port: (mute.address() as net.AddressInfo).port }), shorter: { upstreamMs: 300 } });
+    const began = Date.now();
+    assert.equal((await viaTunnel(forMute, "GET", `${origin}/mute`, { [CHECKPOINT_MARK_HEADER]: forMute.mark })).status, 502);
+    assert.ok(Date.now() - began < 2_000, `${Date.now() - began} ms`);
+    // The connection never stood, so nothing was sent on: a failure, and not a request the application had.
+    assert.deepEqual(outcomes(forMute), [`upstream-failed GET ${origin}/mute`]);
+    await forMute.close();
+    await new Promise<void>((resolve) => mute.close(() => resolve()));
+  });
+
   test("an old version of TLS is spoken on neither side", async () => {
     const opened = await tunnel(checkpoint, "shop.example:443");
     const old = await new Promise<string>((resolve) => {
@@ -509,8 +523,90 @@ describe("what a hostile application, or a stranger on the loopback, can do to t
     const begun = Date.now();
     await viaProxy(forHalf, "GET", `${halfOrigin}/half`, { [CHECKPOINT_MARK_HEADER]: forHalf.mark }).catch(() => undefined);
     assert.ok(Date.now() - begun < 3_000, `an answer left half said lasted ${Date.now() - begun} ms`);
+    // And it is on record that the answer was cut off: sent on, and failed.
+    assert.deepEqual(outcomes(forHalf), [`forwarded GET ${halfOrigin}/half`, `upstream-failed GET ${halfOrigin}/half`]);
     await forHalf.close();
     await half.close();
+    await checkpoint.close();
+    await app.close();
+  });
+
+  test("a browser that is slow to read loses nothing: only the application's own silence ends an answer", async () => {
+    // A large answer, and a reader that stops reading for several times as long as an application may be silent.
+    const size = 40 * 1024 * 1024;
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200, { "content-length": String(size) });
+      const piece = Buffer.alloc(1024 * 1024, 97);
+      let sent = 0;
+      const more = () => {
+        while (sent < size) {
+          sent += piece.length;
+          if (!response.write(piece)) return void response.once("drain", more);
+        }
+        response.end();
+      };
+      more();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const origin = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+    const checkpoint = await openCheckpoint({ origins: [origin], shorter: { upstreamMs: 300 } });
+    const proxy = new URL(checkpoint.url!);
+    const received = await new Promise<number>((resolve) => {
+      const request = http.request({ host: proxy.hostname, port: proxy.port, method: "GET", path: `${origin}/large`, headers: { host: new URL(origin).host, [CHECKPOINT_MARK_HEADER]: checkpoint.mark }, agent: false }, (answer) => {
+        let got = 0;
+        let paused = false;
+        answer.on("data", (chunk: Buffer) => {
+          got += chunk.length;
+          if (!paused && got > 2 * 1024 * 1024) {
+            paused = true;
+            answer.pause();
+            setTimeout(() => answer.resume(), 1_500);
+          }
+        });
+        answer.on("end", () => resolve(got));
+        answer.on("close", () => resolve(got));
+        answer.on("error", () => resolve(got));
+      });
+      request.on("error", () => resolve(-1));
+      request.end();
+    });
+    assert.equal(received, size, "the rest of the answer was lost while the browser was not reading");
+    assert.deepEqual(outcomes(checkpoint), [`forwarded GET ${origin}/large`]);
+    await checkpoint.close();
+    await new Promise<void>((resolve) => (server.closeAllConnections(), server.close(() => resolve())));
+  });
+
+  test("an answer whose end is told another way than the checkpoint passes on is not handed to the browser", async () => {
+    for (const encoding of ["identity", "gzip", "xchunked", "gzip, chunked"]) {
+      const app = await rawApp(`HTTP/1.1 200 OK\r\nTransfer-Encoding: ${encoding}\r\n\r\nhello`);
+      const origin = `http://127.0.0.1:${app.port}`;
+      const checkpoint = await openCheckpoint({ origins: [origin], shorter: { upstreamMs: 400 } });
+      const got = await viaProxy(checkpoint, "GET", `${origin}/x`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark });
+      assert.equal(got.status, 502, encoding);
+      assert.ok(!got.body.includes("hello"), encoding);
+      assert.deepEqual(outcomes(checkpoint), [`forwarded GET ${origin}/x`, `upstream-failed GET ${origin}/x`], encoding);
+      await checkpoint.close();
+      await app.close();
+    }
+    // The one way it does pass on is passed on.
+    const app = await rawApp("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
+    const origin = `http://127.0.0.1:${app.port}`;
+    const checkpoint = await openCheckpoint({ origins: [origin] });
+    const got = await viaProxy(checkpoint, "GET", `${origin}/x`, { [CHECKPOINT_MARK_HEADER]: checkpoint.mark });
+    assert.deepEqual([got.status, got.body], [200, "hello"]);
+    await checkpoint.close();
+    await app.close();
+  });
+
+  test("a request that expects what nobody knows of is refused here, and counted", async () => {
+    const app = await plainApp();
+    const origin = `http://127.0.0.1:${app.port}`;
+    const checkpoint = await openCheckpoint({ origins: [origin] });
+    const back = await sendRaw(checkpoint, `POST ${origin}/pay HTTP/1.1\r\nHost: 127.0.0.1:${app.port}\r\n${CHECKPOINT_MARK_HEADER}: ${checkpoint.mark}\r\nExpect: nothing\r\nContent-Length: 3\r\n\r\nx=1`);
+    assert.match(back, /^HTTP\/1\.1 417/);
+    assert.deepEqual(outcomes(checkpoint), ["refused-malformed POST other/"]);
+    assert.equal(checkpoint.counts()["refused-malformed"], 1);
+    assert.equal(app.seen.length, 0);
     await checkpoint.close();
     await app.close();
   });

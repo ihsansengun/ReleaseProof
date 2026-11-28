@@ -124,9 +124,9 @@ not to pass through it at this stage.
   the mark is not sent there. The engine is to mark only requests for listed origins all the same.
 - **The mark is one value for the whole check**, not tied to a method or an address. Which requests get it
   is the engine's decision, made where they are held.
-- **A hostile application can waste a check**, not falsify it: it can fail to answer, answer slowly a byte
-  at a time (the time limit is on silence, before an answer and in the middle of one, not on the whole
-  answer), keep sending answers that are not final ones, or send bodies of any size. A connection of the
+- **A hostile application can waste a check**, not falsify it: it can answer slowly a byte at a time (the
+  time limit is on its silence, not on the whole answer) or send bodies of any size. Answers that are not
+  final ones do not count as an answer begun. A connection of the
   browser's ends after ten minutes whatever is said on it.
 - **One connection to the application for each request**; none is kept for the next.
 - **The oldest version of TLS spoken** is 1.2, by this code and by Node's own default.
@@ -136,19 +136,16 @@ not to pass through it at this stage.
 - **Anything on the machine that can reach the loopback address** can ask the checkpoint, fill its notes
   (the counts go on) and use up its 256 connections for as long as it keeps them, which keeps the browser
   out: a check that cannot run, not a wrong result. It cannot have anything forwarded without the mark.
-- **Known and not yet put right** (found by the third review, 24 November 2026; none lets anything through
-  that was not released, and none is a wrong count of what reached the application):
-  - *The silence limit in the middle of an answer also runs while the browser is the one not reading.* A
-    browser that stops reading a large answer for the whole time (30 seconds) loses the rest of it, and that
-    cut is not counted as a failure. Not seen with a real browser.
-  - *An https application that accepts a connection and never completes TLS* fails, and is counted, but
-    the browser's connection is ended with nothing said, not with 502, after twice the time.
-  - *An answer with a `Transfer-Encoding` other than `chunked`* is handed to the browser as it came, on a
-    connection that is then kept. The browser tested read it to the end without confusion; another reader
-    might not.
-  - *A request with an `Expect` Node does not know* is answered 417 by Node and not counted. Nothing of it
-    reaches the application.
-  These are to be put right, with tests, before the checkpoint is used by a check (the third part).
+- **Put right since the third review of the checkpoint** (each with a test):
+  - *Only the application's own silence ends an answer.* The checkpoint keeps its own clock for it, before
+    an answer and between the pieces of one, and time in which the browser is the one not reading does not
+    count. An answer that is cut off, by that clock or by the application breaking it off, is counted as a
+    failure after having been counted as sent on.
+  - *An https application that takes the connection and never greets* is a failure the browser is told of
+    (502) after the time allowed.
+  - *An answer whose end is told by a `Transfer-Encoding` other than `chunked`* is not handed to the
+    browser: it is a failure.
+  - *A request with an `Expect` nobody here knows of* is refused here (417) and counted.
 - **One browser build** was used for the browser tests.
 - **No measurement of speed** beyond the tests passing.
 
