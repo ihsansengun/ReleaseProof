@@ -217,14 +217,18 @@ describe("a browser in a network namespace of its own", { skip: can ? false : "t
           await one.close();
         }
       }
+    } catch (error) {
+      await forThis.close();
+      throw error;
     } finally {
       process.env.PATH = path0;
     }
+    // Closed whatever was found, so that a failure above is a failure and not a wait.
+    await forThis.close();
     assert.ok(tried.length >= 1);
     // Where both ways are open, the one that leaves the browser without rights over the machine's network is taken.
     if (tried.length === 2) assert.ok(namespaceCommand()!.includes("--user"));
     assert.equal(existsSync(marker), false, "part of a path was run as a command");
-    await forThis.close();
   });
 
   test("ending it ends everything in its namespace and leaves nothing written", async () => {

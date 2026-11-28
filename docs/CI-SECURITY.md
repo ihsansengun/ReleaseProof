@@ -281,18 +281,34 @@ It has two jobs:
   tests that show an isolated browser cannot get out are skipped there, with the reason printed, and only the
   refusals run.
 - **`isolation`** runs those tests and nothing else, and exists so that a pass means isolation was shown:
-  - one fixed line lifts the machine's rule against ordinary users making namespaces
-    (`kernel.apparmor_restrict_unprivileged_userns`). That is the only thing done as the administrator;
-  - the tests run as the ordinary user and make the namespace as a user namespace's own administrator, which
-    has no rights over the machine. A test fails if they are run as the administrator, or if the namespace
-    would be made the other way;
-  - `RELEASEPROOF_REQUIRE_ISOLATION=1` makes "a namespace cannot be made" a failure and not a skip.
+  - it runs on a fixed version of GitHub's machine (`ubuntu-24.04`), since the rule it lifts is that
+    version's;
+  - two steps use the administrator's rights. The install does, because the browser library installs
+    system packages that way (as in the `test` job). Then one step lifts the machine's rule against ordinary
+    users making namespaces (`kernel.apparmor_restrict_unprivileged_userns`) and, as its last act, gives the
+    administrator's rights up for the rest of the job: the ordinary user's permission to become the
+    administrator is removed and the container service, which would be another way to it, is stopped;
+  - the tests run after that, as the ordinary user, and the step first checks that neither way back is
+    open. They make the namespace as a user namespace's own administrator, which has no administrator's
+    rights over the machine's network (the ordinary user's files are still its to read). A test fails if
+    they are run as the administrator, or if the namespace would be made the other way;
+  - `RELEASEPROOF_REQUIRE_ISOLATION=1` makes "a namespace cannot be made" a failure and not a skip. With it,
+    no test of that file is passed over.
+
+It shows the way of making a namespace that the engine prefers and an ordinary user can use. The other way
+(as the administrator) is not exercised there; it is on a machine where the tests are run as one.
 
 What this does and does not protect: on these machines any job's code can make itself the administrator of
 its own machine; that is how they are built, and it was so before this job existed. The protection for a pull
 request's code is not that it lacks rights inside the machine. It is that the machine holds nothing (no
-secret, a token that can only read what is public) and is destroyed afterwards. The `isolation` job changes
-none of that. What it adds is one loosened setting on a machine that lives for a few minutes.
+secret, and a token that can only read; in a public repository, only what is public anyway) and is destroyed
+afterwards. The `isolation` job changes none of that. What it adds is one loosened setting on a machine that
+lives for a few minutes. Giving up the administrator's rights before the tests is for the file as it stands:
+it keeps the tests and what they bring with them from using those rights. A pull request that changes the
+file can leave that step out, and gains nothing by it that it did not have.
+
+A red `isolation` job does not stop a merge by itself: it must be made a required check in the repository's
+settings, which is the owner's to do.
 
 Do not add a secret or a write permission to this workflow, and do not run its tests as the administrator.
 

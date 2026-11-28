@@ -253,7 +253,8 @@ back; and when the socket is not there, is not a socket, or has nobody behind it
   let a namespace be made: there the tests that show a browser cannot get out are skipped, visibly, and only
   the refusals run. A second job (`isolation` in `.github/workflows/tests.yml`) runs those tests alone, as an
   ordinary user, on a machine where the one rule against it has been lifted, and fails if a namespace cannot
-  be made. A pass of that job is the one that says something about isolation. See `docs/CI-SECURITY.md`.
+  be made. A pass of that job is the one that says something about isolation, for the way of making a
+  namespace that an ordinary user can use; the other way is not exercised there. See `docs/CI-SECURITY.md`.
 - **Linux only**, one browser build, and a start that takes a few tenths of a second longer than without.
 
 ## Stages
