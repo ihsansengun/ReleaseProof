@@ -27,7 +27,13 @@ CREATE TABLE IF NOT EXISTS orders (
   customer_id INTEGER NOT NULL,
   total_cents INTEGER NOT NULL,
   status TEXT NOT NULL,
+  discount_cents INTEGER NOT NULL DEFAULT 0,
+  promo_code TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS cart_promos (
+  customer_id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS payment_events (
   event_id TEXT PRIMARY KEY,
@@ -55,6 +61,12 @@ export function db(): DatabaseSync {
   if (!globalForDb.shopDb) {
     const conn = new DatabaseSync(process.env.DATABASE_FILE ?? "shop.db");
     conn.exec(SCHEMA);
+    // Database files created before promo codes existed lack the order columns.
+    const orderColumns = conn.prepare("PRAGMA table_info(orders)").all() as { name: string }[];
+    if (!orderColumns.some((c) => c.name === "promo_code")) {
+      conn.exec("ALTER TABLE orders ADD COLUMN discount_cents INTEGER NOT NULL DEFAULT 0");
+      conn.exec("ALTER TABLE orders ADD COLUMN promo_code TEXT");
+    }
     const insert = conn.prepare(
       "INSERT OR IGNORE INTO products (id, name, price_cents) VALUES (?, ?, ?)",
     );
