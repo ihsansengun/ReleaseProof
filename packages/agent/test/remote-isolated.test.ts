@@ -218,7 +218,7 @@ describe("a browser in a network namespace of its own", { skip: can ? false : "t
         }
       }
     } catch (error) {
-      await forThis.close();
+      await forThis.close().catch(() => {});
       throw error;
     } finally {
       process.env.PATH = path0;

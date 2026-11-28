@@ -86,10 +86,12 @@ jobs:
           npm ci --ignore-scripts
           npx playwright install --with-deps chromium
 
-      # The last thing done with the administrator's rights. After it, what the
-      # steps below run (the tests, and whatever they bring with them) cannot
-      # make itself the administrator: not by asking, and not through the
-      # container service, which is stopped.
+      # The last thing done with the administrator's rights. After it, the two
+      # known ways for what the steps below run (the tests, and whatever they
+      # load) to make itself the administrator are closed: asking, and the
+      # container service, which is stopped. It does not undo anything the
+      # install above did with those rights, and it is no answer to a fault in
+      # the kernel.
       - name: Let an ordinary user of this machine make a namespace, and give up the administrator's rights
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -104,6 +106,7 @@ jobs:
         env:
           RELEASEPROOF_REQUIRE_ISOLATION: "1"
         run: |
+          id
           if [ "$(id -u)" = 0 ]; then echo "running as the administrator" >&2; exit 1; fi
           if sudo -n true 2>/dev/null; then echo "the administrator's rights were not given up" >&2; exit 1; fi
           if docker info >/dev/null 2>&1; then echo "the container service is still there to be asked" >&2; exit 1; fi

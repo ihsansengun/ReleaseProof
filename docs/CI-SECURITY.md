@@ -288,15 +288,18 @@ It has two jobs:
     users making namespaces (`kernel.apparmor_restrict_unprivileged_userns`) and, as its last act, gives the
     administrator's rights up for the rest of the job: the ordinary user's permission to become the
     administrator is removed and the container service, which would be another way to it, is stopped;
-  - the tests run after that, as the ordinary user, and the step first checks that neither way back is
-    open. They make the namespace as a user namespace's own administrator, which has no administrator's
+  - the tests run after that, as the ordinary user, and the step first checks that neither of those two
+    ways back is open, and stops if one is. This covers the tests and what they load. It does not cover
+    what the install step ran earlier with the administrator's rights (code chosen by the lockfile), which
+    could have left something behind, nor a fault in the kernel. They make the namespace as a user namespace's own administrator, which has no administrator's
     rights over the machine's network (the ordinary user's files are still its to read). A test fails if
     they are run as the administrator, or if the namespace would be made the other way;
   - `RELEASEPROOF_REQUIRE_ISOLATION=1` makes "a namespace cannot be made" a failure and not a skip. With it,
     no test of that file is passed over.
 
 It shows the way of making a namespace that the engine prefers and an ordinary user can use. The other way
-(as the administrator) is not exercised there; it is on a machine where the tests are run as one.
+(as the administrator) is not shown anywhere in CI. It was shown by hand and by reviewers on a machine where
+the tests were run as the administrator.
 
 What this does and does not protect: on these machines any job's code can make itself the administrator of
 its own machine; that is how they are built, and it was so before this job existed. The protection for a pull
