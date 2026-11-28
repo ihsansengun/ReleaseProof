@@ -779,7 +779,10 @@ describe("a browser that trusts the checkpoint's key and nothing else", () => {
     assert.equal(await page.evaluate(`fetch("/order", { method: "POST", body: "n=1" }).then((r) => r.status)`), 200);
     await page.evaluate(`addEventListener("pagehide", () => navigator.sendBeacon("/left", "x"))`);
     await page.close();
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    // The browser sends it when it gets round to it: waited for, up to a limit, and then a moment more for
+    // anything that would have gone on to the application.
+    for (let waited = 0; waited < 10_000 && !outcomes(checkpoint).includes(`refused-unmarked POST ${origin}/left`); waited += 100) await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 300));
     assert.ok(app.seen.some((seen) => seen.method === "POST" && seen.url === "/order"));
     assert.ok(!app.seen.some((seen) => seen.url === "/left"), "what the page sent as it was left reached the application");
     assert.ok(outcomes(checkpoint).includes(`refused-unmarked POST ${origin}/left`));
@@ -804,6 +807,7 @@ test("the checkpoint is used by nothing: not by a run, and not by the check runn
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   const source = path.join(root, "packages", "agent", "src", "remote", "checkpoint.ts");
   const tests = path.join(root, "packages", "agent", "test", "remote-checkpoint.test.ts");
+  const beside = [path.join(path.dirname(source), "isolated.ts"), path.join(path.dirname(source), "isolated-inside.mjs"), path.join(path.dirname(tests), "remote-isolated.test.ts")];
   const text = await readFile(source, "utf8");
   const exported = [...text.matchAll(/^export\s+(?:async\s+)?[a-z]+\s+([A-Za-z_$][\w$]*)/gm)].map((match) => match[1]!).sort();
   assert.equal(exported.length, [...text.matchAll(/^export\b/gm)].length, "every export of the checkpoint is one this test can name");
@@ -816,8 +820,11 @@ test("the checkpoint is used by nothing: not by a run, and not by the check runn
     if (!/\.(?:[cm]?[jt]sx?|json|ya?ml|sh)$/.test(file) || parts.includes("node_modules") || parts[0] === ".git") continue;
     files += 1;
     const full = path.join(root, file);
-    if (full !== source && full !== tests) assert.doesNotMatch(await readFile(full, "utf8"), /checkpoint/i, `${file} refers to the checkpoint`);
+    if (full !== source && full !== tests && !beside.includes(full)) assert.doesNotMatch(await readFile(full, "utf8"), /checkpoint/i, `${file} refers to the checkpoint`);
   }
+  // The browser that is to stand behind it speaks of it and is handed its socket's path, and does not use it:
+  // only that part's tests open one.
+  for (const file of beside.slice(0, 2)) assert.doesNotMatch(await readFile(file, "utf8"), /\bimport\b[^;]*checkpoint|\brequire\([^)]*checkpoint|["'`][^"'`\n]*checkpoint[^"'`\n]*\.[cm]?[jt]s["'`]|["'`]\.{1,2}\/[^"'`\n]*checkpoint|openCheckpoint|CHECKPOINT_/i, `${path.basename(file)} uses the checkpoint`);
   assert.ok(files > 20);
   // It writes nothing and prints nothing. By its text: the one thing it does to a file is restrict its socket.
   assert.doesNotMatch(text, /console|process\.std|writeFile|appendFile|createWriteStream|\bimport\(/);

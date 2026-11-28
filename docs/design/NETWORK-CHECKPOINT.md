@@ -152,12 +152,117 @@ not to pass through it at this stage.
 - **One browser build** was used for the browser tests.
 - **No measurement of speed** beyond the tests passing.
 
+## The browser's side
+
+Built as a part by itself (`packages/agent/src/remote/isolated.ts` and `isolated-inside.mjs`) and **used by
+nothing**.
+
+A browser is not asked to stay behind the checkpoint: it is put where there is nothing else. The engine starts
+it in a **network namespace of its own**, which the operating system makes with one interface, the loopback.
+What runs first inside that namespace is the engine's own small program, which:
+
+1. raises the loopback (with `ip`, or by asking the kernel through `python3` where there is no `ip`);
+2. reads the kernel's list of interfaces and stops unless it is the loopback alone;
+3. opens the one door: a listener on that loopback which hands every connection to the checkpoint's socket
+   on the file system outside;
+4. goes through the door once itself, so that a loopback that was not really raised, or a socket nobody
+   listens on, is found out before any browser exists;
+5. writes down the namespace's name and its interfaces for the engine;
+6. only then starts the browser, as its own child. It ends the browser when it is told to end, and when
+   the engine that started it is gone. (If this program itself is killed outright, the browser lives on in the
+   namespace, with no door, until the engine ends it.)
+
+Where the machine allows both, the namespace is made **as a user namespace's own administrator** and not as
+the engine's own user: measured, a process started as the machine's administrator in a plain network
+namespace can step back into the machine's own network, and one in a user namespace cannot (on the kernel
+this was measured on, as the administrator and as an ordinary user).
+
+The browser is told that its proxy is the door, that it resolves no name itself, and which one key to accept.
+
+**If any of this cannot be done, no browser is started, or the one that was is ended** (owner's rule, 23
+November 2026: isolation is mandatory, and a check refuses to run without it). The engine does not take it on
+trust, in two steps:
+
+- it reads what was written down, and refuses unless the namespace is another than its own and has the
+  loopback and nothing else;
+- it then asks the browser for its processes and asks the kernel, from outside, which namespace each one is
+  in, and refuses unless every one is in the namespace that was written down. What is written down alone
+  would be the word of whatever was started; this is the browser itself, looked at.
+
+Every way out of starting a browser is a refusal from a fixed list, with the browser ended and what the
+launcher wrote removed, whatever went wrong and whatever it was handed. Each wait has an end: five seconds for
+each of the two tools that can raise the loopback, three for each of the two times the door is tried, thirty
+for the browser to start and thirty more for it to say what its processes are (ending a browser that has
+stopped answering can take the browser library another thirty). The one thing with no end set here is the
+engine itself being killed: then the browser ends because its line to the engine is cut, and the directory
+the launcher wrote stays.
+
+What the tests show, on a machine that lets a namespace be made: a page that tries WebRTC (three ways),
+WebTransport, and direct connections by address sends nothing that arrives outside, at the machine's loopback
+or at its other addresses; the same page in an ordinary browser sends packets and opens connections there, so
+the looking works; the same again for each of the two ways a namespace can be made. And that nothing is
+started, or is left running, when the tool for namespaces is missing or says no; when what answers to its
+name makes no namespace; when it makes none and writes down exactly what the engine hopes to read; when what
+is written down is nothing or nonsense; when the loopback cannot be raised or the tool for it does not come
+back; and when the socket is not there, is not a socket, or has nobody behind it.
+
+### Limits to know about
+
+- **Only the network is confined.** The browser sees the same files and processes as the engine. A socket
+  on the file system (the checkpoint's own is one) is reachable to anything that runs as the same user. A
+  page cannot open such a socket; a browser that had been taken over could. The browser's own sandbox is as
+  the browser library starts it, which is off. Confinement of files and processes is the worker's business
+  (KAN-16) and is a gate before hosted use.
+- **The engine must have the right to make a namespace**: as an administrator, or through user namespaces
+  where the machine allows them. Where neither holds (some shared build machines), the answer is a refusal,
+  and the tests there show only the refusals.
+- **One of two ordinary tools** must be present to raise the loopback.
+- **The processes looked at are the ones the browser names**: itself, its network, storage and graphics
+  services, and the pages it has by then. Its helpers that start others, and its crash reporters, are not in
+  that list; they were seen in the namespace, and what they start later is started there. A tool for
+  namespaces that set out to deceive could still start part of a browser elsewhere under a name the browser
+  gives; the tools on the engine's own path are trusted not to.
+- **The socket's path is at most 107 bytes.** A longer one would be cut short without a word and lead to
+  whatever is at the shortened path, so it is refused.
+- **The looking is done once, when the browser has started.** It is not done again later. The kernel's
+  names for namespaces are used again after one is gone, so a name says nothing across launches; what is
+  compared is taken within one launch.
+- **A machine whose kernel puts other interfaces into every new namespace** (some do, for tunnels) would
+  get a refusal at every launch. Not met here; a reviewer showed the refusal with an added interface, and no
+  test in the repository does.
+- **Known and not yet put right** (found by the third review of this part, 28 November 2026; in none of
+  them is a browser that is not isolated handed back, and in none does anything leave the namespace):
+  - *A browser all of whose processes are stopped dead, its crash reporters included, is never given up
+    on.* The launch then gives no answer at all, and two stopped crash reporters and what was written stay
+    behind, inside the namespace. With the browser's main process alone stopped, the answer is a refusal
+    after about a minute and nothing is left. Shown by stopping the processes on purpose.
+  - *What is handed over is read where an error in the reading is not caught*: something made to throw
+    when its pin or its path is read gets that error back and not a refusal; and the pin is read again
+    after it was checked. Nothing is started in the first case; in the second what is read stays one
+    argument to the browser.
+  - *An engine that is gone before the program inside has begun* is not noticed by that program: the
+    browser is started and ends by itself within a second, because its line to the engine is cut.
+  - *The limit on a socket path's length and the time given to a browser to answer are not held by a
+    test*: with either taken out, the tests pass.
+  These are to be put right, with tests, before a check starts a browser this way (the third part).
+- **Not held by a test in the repository**, though each was shown by a reviewer: a browser that never
+  speaks or stops answering being given up on; one process of a browser being outside while the rest are
+  in; the browser being ended when the engine is gone.
+- **IPv6 was not there to be tested**: the machine these tests ran on has none.
+- **Where the tests run.** The machine that runs this repository's tests for every change does not allow a
+  namespace to be made. There the tests that show a browser cannot get out are skipped, visibly, and only
+  the refusals run; so those tests passing there says nothing about isolation. Whether to give that machine
+  the right is the owner's decision; until then the proof is from machines that have it.
+- **A page can still talk to the door as much as it likes.** That is the checkpoint's business: what does
+  not bear the mark is refused there.
+- **Linux only**, one browser build, and a start that takes a few tenths of a second longer than without.
+
 ## Stages
 
 | Part | What | State |
 |---|---|---|
 | a | This checkpoint, by itself | built, used by nothing |
-| b | A browser that cannot go round it; a check refuses to run otherwise | not started |
+| b | A browser that cannot go round it; a check refuses to run otherwise | built, used by nothing |
 | c | The check runner holds every request, decides, and uses a and b; leave-time by what is observed; how the intended act's request is told from another | not started |
 
 Each part is merged only after independent security review, passing tests and the owner's approval. The
