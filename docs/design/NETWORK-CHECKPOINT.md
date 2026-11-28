@@ -165,21 +165,41 @@ What runs first inside that namespace is the engine's own small program, which:
 2. reads the kernel's list of interfaces and stops unless it is the loopback alone;
 3. opens the one door: a listener on that loopback which hands every connection to the checkpoint's socket
    on the file system outside;
-4. writes down the namespace's name and its interfaces for the engine;
-5. only then starts the browser, as its own child, so that the two end together.
+4. goes through the door once itself, so that a loopback that was not really raised, or a socket nobody
+   listens on, is found out before any browser exists;
+5. writes down the namespace's name and its interfaces for the engine;
+6. only then starts the browser, as its own child. It ends the browser when it is told to end, and when
+   the engine that started it is gone. (If this program itself is killed outright, the browser lives on in the
+   namespace, with no door, until the engine ends it.)
+
+Where the machine allows both, the namespace is made **as a user namespace's own administrator** and not as
+the engine's own user: measured, a process started as the machine's administrator in a plain network
+namespace can step back into the machine's own network, and one in a user namespace cannot.
 
 The browser is told that its proxy is the door, that it resolves no name itself, and which one key to accept.
 
-**If any of this cannot be done, no browser is started** (owner's rule, 23 November 2026: isolation is
-mandatory, and a check refuses to run without it). The engine does not take it on trust: it reads what was
-written down, and refuses, ending the browser, unless the namespace is another than its own and has the
-loopback and nothing else. The reasons for refusing are a fixed list.
+**If any of this cannot be done, no browser is started, or the one that was is ended** (owner's rule, 23
+November 2026: isolation is mandatory, and a check refuses to run without it). The engine does not take it on
+trust, in two steps:
+
+- it reads what was written down, and refuses unless the namespace is another than its own and has the
+  loopback and nothing else;
+- it then asks the browser for its processes and asks the kernel, from outside, which namespace each one is
+  in, and refuses unless every one is in the namespace that was written down. What is written down alone
+  would be the word of whatever was started; this is the browser itself, looked at.
+
+Every way out of starting a browser is a refusal from a fixed list, with the browser ended and nothing left
+written, whatever went wrong (a tool that does not come back is given up on after five seconds; a browser
+that has not started after thirty is one that did not).
 
 What the tests show, on a machine that lets a namespace be made: a page that tries WebRTC (three ways),
 WebTransport, and direct connections by address sends nothing that arrives outside, at the machine's loopback
 or at its other addresses; the same page in an ordinary browser sends packets and opens connections there, so
-the looking works. And that nothing is started when the tool for namespaces is missing or says no, when what
-answers to its name makes no namespace, and when the loopback cannot be raised.
+the looking works; the same again for each of the two ways a namespace can be made. And that nothing is
+started, or is left running, when the tool for namespaces is missing or says no; when what answers to its
+name makes no namespace; when it makes none and writes down exactly what the engine hopes to read; when what
+is written down is nothing or nonsense; when the loopback cannot be raised or the tool for it does not come
+back; and when the socket is not there, is not a socket, or has nobody behind it.
 
 ### Limits to know about
 
@@ -192,12 +212,19 @@ answers to its name makes no namespace, and when the loopback cannot be raised.
   where the machine allows them. Where neither holds (some shared build machines), the answer is a refusal,
   and the tests there show only the refusals.
 - **One of two ordinary tools** must be present to raise the loopback.
-- **What is written down comes from the engine's program inside the namespace, before the browser starts.**
-  It is not a measurement taken again later, and a browser that had been taken over could rewrite the file;
-  it is read once, when the browser has started.
+- **The looking is done once, when the browser has started.** It is not done again later. The kernel's
+  names for namespaces are used again after one is gone, so a name says nothing across launches; what is
+  compared is taken within one launch.
+- **A machine whose kernel puts other interfaces into every new namespace** (some do, for tunnels) would
+  get a refusal at every launch. Not met here; shown with an added interface.
+- **IPv6 was not there to be tested**: the machine these tests ran on has none.
+- **Where the tests run.** The machine that runs this repository's tests for every change does not allow a
+  namespace to be made. There the tests that show a browser cannot get out are skipped, visibly, and only
+  the refusals run; so those tests passing there says nothing about isolation. Whether to give that machine
+  the right is the owner's decision; until then the proof is from machines that have it.
 - **A page can still talk to the door as much as it likes.** That is the checkpoint's business: what does
   not bear the mark is refused there.
-- **Linux only**, one browser build, and no measurement of what it costs beyond about two seconds to start.
+- **Linux only**, one browser build, and a start that takes a few tenths of a second longer than without.
 
 ## Stages
 

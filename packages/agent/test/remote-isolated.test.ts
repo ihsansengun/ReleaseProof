@@ -4,8 +4,9 @@
 // Whether a network namespace can be made depends on the machine. Where it can, these tests show the browser
 // cannot get out. Where it cannot, they show that no browser is started, and say so.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import dgram from "node:dgram";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
@@ -19,7 +20,30 @@ import { ISOLATION_REFUSALS, IsolationRefused, launchIsolatedBrowser, namespaceC
 
 const can = namespaceCommand() !== undefined;
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const temporary = (name: string) => mkdtempSync(path.join(tmpdir(), name));
+const made: string[] = [];
+const temporary = (name: string) => {
+  const directory = mkdtempSync(path.join(tmpdir(), name));
+  made.push(directory);
+  return directory;
+};
+after(() => made.forEach((directory) => rmSync(directory, { recursive: true, force: true })));
+/** A socket on the file system that something listens on: what a launcher is to be handed. */
+async function listeningSocket(directory = temporary("rp-door-"), name = "checkpoint.sock") {
+  const server = net.createServer((socket) => socket.destroy());
+  const file = path.join(directory, name);
+  await new Promise<void>((resolve) => server.listen(file, resolve));
+  return { path: file, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
+/** Browsers running on this machine that were started the way the engine starts them. */
+const browsers = () =>
+  readdirSync("/proc").filter((entry) => {
+    if (!/^\d+$/.test(entry)) return false;
+    try {
+      return readFileSync(`/proc/${entry}/cmdline`, "utf8").includes("--remote-debugging-pipe");
+    } catch {
+      return false;
+    }
+  }).length;
 /** Where a tool is, looked for along the path as it was when the tests began (a shell would answer for its own built-ins). */
 const which = (tool: string) => (process.env.PATH ?? "").split(":").map((directory) => path.join(directory, tool)).find((file) => existsSync(file))!;
 /** The processes that belong to isolated browsers started from here, by what they were started with. */
@@ -139,6 +163,58 @@ describe("a browser in a network namespace of its own", { skip: can ? false : "t
     }
   });
 
+  test("either way a namespace can be made here, the browser is in one; and a path with anything in it is only a path", async () => {
+    // A path that a shell would take for more than a path, if it were handed over carelessly.
+    const awkward = temporary("rp-door-");
+    // (No slash can be in a name, so what it would run leaves its mark wherever it runs: here.)
+    const marker = path.join(process.cwd(), "rp-ran");
+    const door = path.join(mkdtempSync(path.join(awkward, "a' b $(touch rp-ran) `touch rp-ran`; touch rp-ran #")), "c.sock");
+    const forThis = await openCheckpoint({ origins: [origin], listen: { path: door } });
+    const real = which("unshare");
+    const only = (wanted: boolean) => {
+      // The real tool, refusing one of the two ways it can be asked.
+      const directory = temporary("rp-only-");
+      writeFileSync(path.join(directory, "unshare"), `#!/bin/sh\ncase " $* " in *" --user "*) user=1;; *) user=0;; esac\n[ "$user" = "${wanted ? 1 : 0}" ] || exit 1\nexec ${real} "$@"\n`);
+      chmodSync(path.join(directory, "unshare"), 0o755);
+      return [directory, ...(process.env.PATH ?? "").split(":")].join(":");
+    };
+    const path0 = process.env.PATH;
+    const tried: string[] = [];
+    try {
+      for (const wanted of [true, false]) {
+        process.env.PATH = only(wanted);
+        const command = namespaceCommand();
+        if (command === undefined) continue;
+        assert.equal(command.includes("--user"), wanted);
+        tried.push(wanted ? "user namespace" : "as the process is");
+        const one = await launchIsolatedBrowser({ checkpointSocket: door, keyPin: forThis.keyPin });
+        try {
+          assert.notEqual(one.namespace, readlinkSync("/proc/self/ns/net"));
+          const context = await one.browser.newContext();
+          const here = await context.newPage();
+          const session = await context.newCDPSession(here);
+          session.on("Fetch.requestPaused", (event) => void session.send("Fetch.continueRequest", { requestId: event.requestId, headers: Object.entries({ ...event.request.headers, [CHECKPOINT_MARK_HEADER]: forThis.mark }).map(([name, value]) => ({ name, value: String(value) })) }).catch(() => {}));
+          await session.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
+          assert.equal((await here.goto(`${origin}/page`))?.status(), 200);
+          const fresh = await canary();
+          for (const at of fresh.at) await here.evaluate(escapes(at));
+          await pause(300);
+          fresh.close();
+          assert.deepEqual(fresh.counted, { datagrams: 0, connections: 0 }, `out of the namespace made ${tried.at(-1)}`);
+        } finally {
+          await one.close();
+        }
+      }
+    } finally {
+      process.env.PATH = path0;
+    }
+    assert.ok(tried.length >= 1);
+    // Where both ways are open, the one that leaves the browser without rights over the machine's network is taken.
+    if (tried.length === 2) assert.ok(namespaceCommand()!.includes("--user"));
+    assert.equal(existsSync(marker), false, "part of a path was run as a command");
+    await forThis.close();
+  });
+
   test("ending it ends everything in its namespace and leaves nothing written", async () => {
     const door = path.join(temporary("rp-door-"), "checkpoint.sock");
     const forThis = await openCheckpoint({ origins: [origin], listen: { path: door } });
@@ -165,16 +241,29 @@ describe("when the browser cannot be isolated, none is started", () => {
       process.env.PATH = path0;
     }
   };
-  const refused = async (reason: readonly string[]) => {
-    const [processes, directories] = [leftovers(), isolatedDirectories()];
-    await assert.rejects(launchIsolatedBrowser({ checkpointSocket: "/nonexistent/checkpoint.sock", keyPin: "A".repeat(43) + "=" }), (error: unknown) => {
+  let door: Awaited<ReturnType<typeof listeningSocket>>;
+  before(async () => void (door = await listeningSocket()));
+  after(() => door.close());
+  const PIN = `${"A".repeat(43)}=`;
+  const refused = async (reason: readonly string[], options: { checkpointSocket?: unknown; keyPin?: unknown } = {}) => {
+    const [processes, directories, running] = [leftovers(), isolatedDirectories(), browsers()];
+    await assert.rejects(launchIsolatedBrowser({ checkpointSocket: door.path, keyPin: PIN, ...options } as Parameters<typeof launchIsolatedBrowser>[0]), (error: unknown) => {
       assert.ok(error instanceof IsolationRefused, String(error));
       assert.ok(reason.includes(error.reason) && (ISOLATION_REFUSALS as readonly string[]).includes(error.reason), `refused as ${error.reason}, not as ${reason.join(" or ")}`);
       return true;
     });
-    await pause(200);
+    await pause(300);
     assert.equal(leftovers(), processes, "a process was left behind");
+    assert.equal(browsers(), running, "a browser was left running");
     assert.equal(isolatedDirectories(), directories, "something written was left behind");
+  };
+  /** Something that answers to the tool's name, makes no namespace, and does this in place of what it was asked to. */
+  const impostor = (body: string) => {
+    const directory = temporary("rp-fake-");
+    // $1.. after "--": node, the inside program, the report's path, the port, the socket, the browser, its arguments.
+    writeFileSync(path.join(directory, "unshare"), `#!/bin/sh\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\n[ "$#" -gt 0 ] && shift\n[ "$#" -eq 0 ] && exit 0\n${body}\n`);
+    chmodSync(path.join(directory, "unshare"), 0o755);
+    return [directory, ...(path0 ?? "").split(":")];
   };
 
   test("the machine does not let a namespace be made", async () => {
@@ -197,10 +286,37 @@ describe("when the browser cannot be isolated, none is started", () => {
     // interfaces, or the engine finds its own namespace written down; or, without the right to touch the
     // machine's own loopback, it cannot go through the motion of raising it. Every one of these is a refusal,
     // and no browser is left running.
-    const fake = temporary("rp-fake-");
-    writeFileSync(path.join(fake, "unshare"), '#!/bin/sh\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\n[ "$#" -gt 0 ] && shift\n[ "$#" -eq 0 ] && exit 0\nexec "$@"\n');
-    chmodSync(path.join(fake, "unshare"), 0o755);
-    await withPath([fake, ...(path0 ?? "").split(":")], async () => refused(["other-interfaces", "not-isolated", "door-not-opened", "loopback-not-raised"]));
+    await withPath(impostor('exec "$@"'), async () => refused(["other-interfaces", "not-isolated", "door-not-opened", "loopback-not-raised"]));
+  });
+
+  test("what is written down is not believed: the browser's own processes are looked at", async () => {
+    // The worst an impostor can do short of making a namespace: it writes down exactly what the engine hopes to
+    // read, and starts the browser where the engine is. The browser's processes are found in the engine's own
+    // namespace, and it is ended.
+    const forged = (written: string) => impostor(`report="$3"; shift 5; printf '%s' '${written}' > "$report"; exec "$@"`);
+    await withPath(forged('{"namespace":"net:[1]","interfaces":["lo"]}'), async () => refused(["not-isolated"]));
+    // The same with the name of the engine's own namespace, with an interface too many, and with a name that is none.
+    await withPath(forged(`{"namespace":"${readlinkSync("/proc/self/ns/net")}","interfaces":["lo"]}`), async () => refused(["not-isolated"]));
+    await withPath(forged('{"namespace":"net:[1]","interfaces":["lo","eth0"]}'), async () => refused(["not-isolated"]));
+    await withPath(forged('{"namespace":"somewhere","interfaces":["lo"]}'), async () => refused(["not-isolated"]));
+    // What is written down is nothing, or not what is expected: a refusal like any other, and the browser is ended.
+    for (const written of ["", "null", "[]", "{", '"text"', "{}"]) await withPath(forged(written), async () => refused(["not-isolated", "browser-not-started"]));
+  });
+
+  test("a tool that does not come back is given up on, in time", { skip: can ? false : "needs a namespace" }, async () => {
+    const slow = temporary("rp-slow-");
+    writeFileSync(path.join(slow, "ip"), "#!/bin/sh\nsleep 120\n");
+    chmodSync(path.join(slow, "ip"), 0o755);
+    for (const tool of ["unshare", "true", "sleep"]) symlinkSync(which(tool), path.join(slow, tool));
+    const began = Date.now();
+    await withPath([slow], async () => refused(["loopback-not-raised"]));
+    assert.ok(Date.now() - began < 20_000, `took ${Date.now() - began} ms`);
+  });
+
+  test("the door leads to a socket that is there, named in full", async () => {
+    const plain = path.join(temporary("rp-file-"), "not-a-socket");
+    writeFileSync(plain, "");
+    for (const checkpointSocket of ["/nonexistent/checkpoint.sock", "", "3128", "checkpoint.sock", plain, `${door.path}\0x`, undefined, 3128]) await refused(["door-not-opened"], { checkpointSocket });
   });
 
   test("inside the namespace the loopback cannot be raised", { skip: can ? false : "needs a namespace" }, async () => {
@@ -211,10 +327,24 @@ describe("when the browser cannot be isolated, none is started", () => {
     await withPath([bare], async () => refused(["loopback-not-raised"]));
   });
 
+  test("a socket that nothing listens on any more is no door", { skip: can ? false : "needs a namespace" }, async () => {
+    const gone = await listeningSocket();
+    await gone.close();
+    writeFileSync(gone.path, "");
+    await refused(["door-not-opened"], { checkpointSocket: gone.path });
+    // One that is a socket and has nobody behind it (whoever listened was killed): found out from inside the
+    // namespace, by going through the door once, before the browser is started.
+    const dead = path.join(temporary("rp-dead-"), "dead.sock");
+    const listener = spawn(process.execPath, ["-e", `require("node:net").createServer().listen(${JSON.stringify(dead)}, () => console.log("up"))`], { stdio: ["ignore", "pipe", "ignore"] });
+    await new Promise<void>((resolve) => listener.stdout.once("data", () => resolve()));
+    listener.kill("SIGKILL");
+    await new Promise<void>((resolve) => listener.once("exit", () => resolve()));
+    assert.ok(existsSync(dead));
+    await refused(["door-not-opened"], { checkpointSocket: dead });
+  });
+
   test("a pin that is not a pin is not handed to a browser", async () => {
-    for (const keyPin of ["", "not a pin", `${"A".repeat(43)}= --no-proxy-server`, `${"A".repeat(43)}=,${"B".repeat(43)}=`]) {
-      await assert.rejects(launchIsolatedBrowser({ checkpointSocket: "/nonexistent/checkpoint.sock", keyPin }), IsolationRefused, JSON.stringify(keyPin));
-    }
+    for (const keyPin of ["", "not a pin", `${PIN} --no-proxy-server`, `${PIN},${"B".repeat(43)}=`, `${PIN}\n`, undefined, 7]) await refused(["browser-not-started"], { keyPin });
   });
 });
 

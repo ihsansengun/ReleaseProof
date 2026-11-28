@@ -821,7 +821,7 @@ test("the checkpoint is used by nothing: not by a run, and not by the check runn
   }
   // The browser that is to stand behind it speaks of it and is handed its socket's path, and does not use it:
   // only that part's tests open one.
-  for (const file of beside.slice(0, 2)) assert.doesNotMatch(await readFile(file, "utf8"), /checkpoint\.ts|openCheckpoint|CHECKPOINT_/, `${path.basename(file)} uses the checkpoint`);
+  for (const file of beside.slice(0, 2)) assert.doesNotMatch(await readFile(file, "utf8"), /\bimport\b[^;]*checkpoint|\brequire\([^)]*checkpoint|["'`][^"'`\n]*checkpoint[^"'`\n]*\.[cm]?[jt]s["'`]|["'`]\.{1,2}\/[^"'`\n]*checkpoint|openCheckpoint|CHECKPOINT_/i, `${path.basename(file)} uses the checkpoint`);
   assert.ok(files > 20);
   // It writes nothing and prints nothing. By its text: the one thing it does to a file is restrict its socket.
   assert.doesNotMatch(text, /console|process\.std|writeFile|appendFile|createWriteStream|\bimport\(/);

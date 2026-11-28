@@ -2,9 +2,10 @@
 // JavaScript, run by node itself. NOT USED BY ANY RUN: see isolated.ts.
 //
 // It raises the loopback interface, makes sure that is the only interface there is, opens the one door (a
-// listener on the loopback that hands every connection to the checkpoint's socket outside), writes down what it
-// found for the engine to read, and only then starts the browser, as its own child, so that it ends with it.
-// Whatever it cannot do, it says in one word and stops: the browser is not started.
+// listener on the loopback that hands every connection to the checkpoint's socket outside), goes through the
+// door once itself, writes down what it found for the engine to read, and only then starts the browser, as its
+// own child. The browser ends when this program does what it can to end it: on a signal, and when the engine
+// that started it is gone. Whatever it cannot do, it says in one word and stops: the browser is not started.
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -30,7 +31,8 @@ const RAISE = 'import fcntl,socket,struct\ns=socket.socket(socket.AF_INET,socket
 const raised = [
   ["ip", ["link", "set", "lo", "up"]],
   ["python3", ["-I", "-c", RAISE]],
-].some(([tool, tooled]) => spawnSync(tool, tooled, { stdio: "ignore" }).status === 0);
+  // A tool that does not come back is a tool that failed.
+].some(([tool, tooled]) => spawnSync(tool, tooled, { stdio: "ignore", timeout: 5_000, killSignal: "SIGKILL" }).status === 0);
 if (!raised) stop("loopback-not-raised");
 let listed;
 try {
@@ -42,14 +44,27 @@ try {
 if (listed.length !== 1 || listed[0] !== "lo") stop("other-interfaces");
 
 const door = net.createServer((inside) => {
-  const outside = net.connect(checkpointSocket);
+  const outside = net.connect({ path: checkpointSocket });
   inside.on("error", () => outside.destroy());
   outside.on("error", () => inside.destroy());
   inside.pipe(outside);
   outside.pipe(inside);
 });
 door.on("error", () => stop("door-not-opened"));
-door.listen(Number(doorPort), "127.0.0.1", () => {
+/** One connection, made and ended. Resolves to whether it stood within three seconds. */
+const reaches = (where) =>
+  new Promise((resolve) => {
+    const socket = net.connect(where);
+    const done = (stood) => (socket.destroy(), clearTimeout(waiting), resolve(stood));
+    const waiting = setTimeout(() => done(false), 3_000);
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+
+door.listen(Number(doorPort), "127.0.0.1", async () => {
+  // Not taken for done because a tool said so: the loopback carries a connection, and the checkpoint is there.
+  if (!(await reaches({ host: "127.0.0.1", port: Number(doorPort) }))) stop("loopback-not-raised");
+  if (!(await reaches({ path: checkpointSocket }))) stop("door-not-opened");
   let namespace;
   try {
     namespace = readlinkSync("/proc/self/ns/net");
@@ -62,4 +77,9 @@ door.listen(Number(doorPort), "127.0.0.1", () => {
   browser.on("error", () => process.exit(71));
   browser.on("exit", (code, signal) => process.exit(signal ? 72 : (code ?? 0)));
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(signal, () => browser.kill("SIGKILL"));
+  // When whoever started this is gone, so is the browser: nothing is left to run by itself in the namespace.
+  const startedBy = process.ppid;
+  setInterval(() => {
+    if (process.ppid !== startedBy) browser.kill("SIGKILL");
+  }, 500).unref();
 });
