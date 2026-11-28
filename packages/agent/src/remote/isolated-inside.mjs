@@ -10,6 +10,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 
+// Who started this, noted before anything else is done: when that changes, the engine is gone.
+const startedBy = process.ppid;
 const [reportPath, doorPort, checkpointSocket, browserPath, ...browserArguments] = process.argv.slice(2);
 const stop = (why) => {
   try {
@@ -71,6 +73,8 @@ door.listen(Number(doorPort), "127.0.0.1", async () => {
   } catch {
     stop("namespace-not-read");
   }
+  // No browser for an engine that is no longer there.
+  if (process.ppid !== startedBy) process.exit(73);
   writeFileSync(reportPath, JSON.stringify({ namespace, interfaces: listed }));
   // The browser, with what it was given to speak to the engine through (descriptors 3 and 4) passed on as they are.
   const browser = spawn(browserPath, browserArguments, { stdio: ["ignore", "inherit", "inherit", 3, 4] });
@@ -78,7 +82,6 @@ door.listen(Number(doorPort), "127.0.0.1", async () => {
   browser.on("exit", (code, signal) => process.exit(signal ? 72 : (code ?? 0)));
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(signal, () => browser.kill("SIGKILL"));
   // When whoever started this is gone, so is the browser: nothing is left to run by itself in the namespace.
-  const startedBy = process.ppid;
   setInterval(() => {
     if (process.ppid !== startedBy) browser.kill("SIGKILL");
   }, 500).unref();

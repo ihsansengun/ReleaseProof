@@ -174,7 +174,8 @@ What runs first inside that namespace is the engine's own small program, which:
 
 Where the machine allows both, the namespace is made **as a user namespace's own administrator** and not as
 the engine's own user: measured, a process started as the machine's administrator in a plain network
-namespace can step back into the machine's own network, and one in a user namespace cannot.
+namespace can step back into the machine's own network, and one in a user namespace cannot (on the kernel
+this was measured on, as the administrator and as an ordinary user).
 
 The browser is told that its proxy is the door, that it resolves no name itself, and which one key to accept.
 
@@ -188,9 +189,13 @@ trust, in two steps:
   in, and refuses unless every one is in the namespace that was written down. What is written down alone
   would be the word of whatever was started; this is the browser itself, looked at.
 
-Every way out of starting a browser is a refusal from a fixed list, with the browser ended and nothing left
-written, whatever went wrong (a tool that does not come back is given up on after five seconds; a browser
-that has not started after thirty is one that did not).
+Every way out of starting a browser is a refusal from a fixed list, with the browser ended and what the
+launcher wrote removed, whatever went wrong and whatever it was handed. Each wait has an end: five seconds for
+each of the two tools that can raise the loopback, three for each of the two times the door is tried, thirty
+for the browser to start and thirty more for it to say what its processes are (ending a browser that has
+stopped answering can take the browser library another thirty). The one thing with no end set here is the
+engine itself being killed: then the browser ends because its line to the engine is cut, and the directory
+the launcher wrote stays.
 
 What the tests show, on a machine that lets a namespace be made: a page that tries WebRTC (three ways),
 WebTransport, and direct connections by address sends nothing that arrives outside, at the machine's loopback
@@ -212,11 +217,22 @@ back; and when the socket is not there, is not a socket, or has nobody behind it
   where the machine allows them. Where neither holds (some shared build machines), the answer is a refusal,
   and the tests there show only the refusals.
 - **One of two ordinary tools** must be present to raise the loopback.
+- **The processes looked at are the ones the browser names**: itself, its network, storage and graphics
+  services, and the pages it has by then. Its helpers that start others, and its crash reporters, are not in
+  that list; they were seen in the namespace, and what they start later is started there. A tool for
+  namespaces that set out to deceive could still start part of a browser elsewhere under a name the browser
+  gives; the tools on the engine's own path are trusted not to.
+- **The socket's path is at most 107 bytes.** A longer one would be cut short without a word and lead to
+  whatever is at the shortened path, so it is refused.
 - **The looking is done once, when the browser has started.** It is not done again later. The kernel's
   names for namespaces are used again after one is gone, so a name says nothing across launches; what is
   compared is taken within one launch.
 - **A machine whose kernel puts other interfaces into every new namespace** (some do, for tunnels) would
-  get a refusal at every launch. Not met here; shown with an added interface.
+  get a refusal at every launch. Not met here; a reviewer showed the refusal with an added interface, and no
+  test in the repository does.
+- **Not held by a test in the repository**, though each was shown by a reviewer: a browser that never
+  speaks or stops answering being given up on; one process of a browser being outside while the rest are
+  in; the browser being ended when the engine is gone.
 - **IPv6 was not there to be tested**: the machine these tests ran on has none.
 - **Where the tests run.** The machine that runs this repository's tests for every change does not allow a
   namespace to be made. There the tests that show a browser cannot get out are skipped, visibly, and only

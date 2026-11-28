@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import dgram from "node:dgram";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
@@ -321,6 +321,31 @@ describe("when the browser cannot be isolated, none is started", () => {
     const plain = path.join(temporary("rp-file-"), "not-a-socket");
     writeFileSync(plain, "");
     for (const checkpointSocket of ["/nonexistent/checkpoint.sock", "", "3128", "checkpoint.sock", plain, `${door.path}\0x`, undefined, 3128]) await refused(["door-not-opened"], { checkpointSocket });
+    // A path longer than a socket's can be is cut short without a word by what opens it, and would lead to
+    // whatever is at the shortened path. A socket really at the long path (reached by a short name) is refused.
+    const deep = path.join(temporary("rp-long-"), "d".repeat(100));
+    mkdirSync(deep);
+    const before = process.cwd();
+    process.chdir(deep);
+    const long = net.createServer();
+    try {
+      await new Promise<void>((resolve) => long.listen("s.sock", resolve));
+    } finally {
+      process.chdir(before);
+    }
+    const longPath = path.join(deep, "s.sock");
+    assert.ok(Buffer.byteLength(longPath) > 107 && existsSync(longPath), "the socket is there, at a path too long to be opened by");
+    await refused(["door-not-opened"], { checkpointSocket: longPath });
+    await new Promise<void>((resolve) => long.close(() => resolve()));
+    // What is handed over is not even something with a pin and a path in it.
+    for (const nothing of [undefined, null, "text", 7]) await assert.rejects(launchIsolatedBrowser(nothing as never), IsolationRefused, String(nothing));
+  });
+
+  test("a tool that says it raised the loopback and did not is not believed", { skip: can ? false : "needs a namespace" }, async () => {
+    const lying = temporary("rp-lying-");
+    writeFileSync(path.join(lying, "ip"), "#!/bin/sh\nexit 0\n");
+    chmodSync(path.join(lying, "ip"), 0o755);
+    await withPath([lying, ...(path0 ?? "").split(":")], async () => refused(["loopback-not-raised"]));
   });
 
   test("inside the namespace the loopback cannot be raised", { skip: can ? false : "needs a namespace" }, async () => {

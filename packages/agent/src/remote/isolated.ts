@@ -77,6 +77,8 @@ export type IsolatedBrowser = {
 const DOOR_PORT = 3128;
 /** How long a browser may take to start. One that takes longer is one that did not start. */
 const START_MS = 30_000;
+/** The longest path a socket on the file system can have here, in bytes. */
+const SOCKET_PATH_BYTES = 107;
 const INSIDE = fileURLToPath(new URL("./isolated-inside.mjs", import.meta.url));
 
 /**
@@ -103,10 +105,12 @@ const namespaceOf = (pid: number | "self") => readlink(`/proc/${pid}/ns/net`).ca
 export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Promise<IsolatedBrowser> {
   if (process.platform !== "linux") throw new IsolationRefused("not-linux");
   // What it was handed is looked at first: the same answer on every machine, whatever that machine allows.
+  if (typeof options !== "object" || options === null) throw new IsolationRefused("browser-not-started");
   if (typeof options.keyPin !== "string" || !/^[A-Za-z0-9+/]{43}=$/.test(options.keyPin)) throw new IsolationRefused("browser-not-started");
   // The door leads to a socket on the file system, named in full, that is there.
   const socket = options.checkpointSocket;
-  if (typeof socket !== "string" || !path.isAbsolute(socket) || socket.includes("\0") || !(await stat(socket).then((found) => found.isSocket(), () => false))) throw new IsolationRefused("door-not-opened");
+  // And no longer than a socket's path can be: a longer one is cut short without a word, and would lead elsewhere.
+  if (typeof socket !== "string" || !path.isAbsolute(socket) || socket.includes("\0") || Buffer.byteLength(socket) > SOCKET_PATH_BYTES || !(await stat(socket).then((found) => found.isSocket(), () => false))) throw new IsolationRefused("door-not-opened");
   const command = namespaceCommand();
   if (command === undefined) throw new IsolationRefused("namespace-refused");
   const own = await namespaceOf("self");
@@ -153,10 +157,19 @@ export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Pr
     if (typeof namespace !== "string" || !/^net:\[\d+\]$/.test(namespace) || namespace === own || !Array.isArray(interfaces) || interfaces.length !== 1 || interfaces[0] !== "lo") throw new IsolationRefused("not-isolated");
     // And not taken on that word alone. The browser is asked for its processes, and the kernel is asked, from
     // here, which namespace each of them is in: every one in the namespace that was written down.
-    const session = await browser.newBrowserCDPSession();
-    const { processInfo } = await session.send("SystemInfo.getProcessInfo");
-    await session.detach().catch(() => {});
-    const where = await Promise.all(processInfo.map((one) => namespaceOf(one.id)));
+    // A browser that does not answer in the time it had to start in has not shown where it is.
+    const asked = browser;
+    const processes = await Promise.race([
+      (async () => {
+        const session = await asked.newBrowserCDPSession();
+        const { processInfo } = await session.send("SystemInfo.getProcessInfo");
+        await session.detach().catch(() => {});
+        return processInfo;
+      })(),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), START_MS).unref()),
+    ]);
+    if (processes === undefined) throw new IsolationRefused("not-isolated");
+    const where = await Promise.all(processes.map((one) => namespaceOf(one.id)));
     if (where.length === 0 || where.some((one) => one !== namespace)) throw new IsolationRefused("not-isolated");
 
     const [started, made] = [browser, directory];
