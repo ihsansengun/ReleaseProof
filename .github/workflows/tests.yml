@@ -27,10 +27,14 @@ jobs:
         with:
           node-version: 22
 
+      # The browser is fetched without `--with-deps`: that option has the browser
+      # library install system packages as the administrator, and the library is
+      # whatever the pull request's lockfile names. The machine already has what
+      # the browser needs.
       - name: Install
         run: |
           npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
 
       - name: Type-check
         working-directory: packages/agent
@@ -54,18 +58,18 @@ jobs:
   # and skips them; so they run here, alone, where a pass means it was shown.
   #
   # TRUST: as above, this executes the pull request's code: no secret, read-only
-  # token, on a machine that is thrown away afterwards. Two steps use the
-  # administrator's rights: the install (the browser library installs system
-  # packages that way, as it does in the job above), and one step that lifts
-  # this machine's rule against ordinary users making namespaces and then gives
-  # up the administrator's rights for what follows. The tests run after that,
-  # as the ordinary user, and make the namespace the way the engine prefers
-  # to: as a user namespace's own administrator, which has no administrator's
+  # token, on a machine that is thrown away afterwards. One step uses the
+  # administrator's rights, and it comes before any of the pull request's code
+  # or anything its lockfile names is installed or run: it lifts this machine's
+  # rule against ordinary users making namespaces and then gives those rights
+  # up for everything that follows. The install and the tests run after that,
+  # as the ordinary user; the tests make the namespace the way the engine does,
+  # as a user namespace's own administrator, which has no administrator's
   # rights over the machine's network.
   # A pull request can change this file, as it can any file: what protects the
   # repository is that this machine holds nothing, not what the file says.
-  # Do not add a secret, a write permission, or a step that runs the tests as
-  # the administrator.
+  # Do not add a secret, a write permission, or a step that uses the
+  # administrator's rights after the one below.
   isolation:
     # A fixed version of the machine: the rule lifted below is that version's.
     runs-on: ubuntu-24.04
@@ -81,16 +85,10 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install
-        run: |
-          npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
-
-      # The last thing done with the administrator's rights. After it, the two
-      # known ways for what the steps below run (the tests, and whatever they
-      # load) to make itself the administrator are closed: asking, and the
-      # container service, which is stopped. It does not undo anything the
-      # install above did with those rights, and it is no answer to a fault in
+      # The only thing done with the administrator's rights, before any code of
+      # the pull request's is installed or run. After it, the two known ways for
+      # what follows to make itself the administrator are closed: asking, and
+      # the container service, which is stopped. It is no answer to a fault in
       # the kernel.
       - name: Let an ordinary user of this machine make a namespace, and give up the administrator's rights
         run: |
@@ -98,6 +96,15 @@ jobs:
           sudo systemctl stop docker.socket docker.service containerd.service || true
           sudo sh -c 'rm -f /etc/sudoers.d/runner /etc/sudoers.d/*runner*; if grep -rqs "^runner" /etc/sudoers /etc/sudoers.d; then echo "the ordinary user may still become the administrator" >&2; exit 1; fi'
           sudo -k
+
+      # Without `--with-deps`, which would ask for the administrator's rights:
+      # there are none to give any more, and the machine has what the browser needs.
+      - name: Install
+        run: |
+          if sudo -n true 2>/dev/null; then echo "the administrator's rights were not given up" >&2; exit 1; fi
+          if docker info >/dev/null 2>&1; then echo "the container service is still there to be asked" >&2; exit 1; fi
+          npm ci --ignore-scripts
+          npx playwright install chromium
 
       # RELEASEPROOF_REQUIRE_ISOLATION: if a namespace still cannot be made, the
       # tests fail and do not skip. A pass here is never a pass by omission.

@@ -277,21 +277,24 @@ thrown away when the job ends.
 
 It has two jobs:
 
-- **`test`** runs the whole suite. The machine does not let an ordinary user make a network namespace, so the
+- **`test`** runs the whole suite. Nothing in it uses the administrator's rights: the browser is fetched
+  without the option that would have the browser library install system packages that way. The ordinary
+  user of that machine can still become the administrator, and can use the container service the suite
+  needs, so this is a habit kept by the file and not a wall. The machine does not let an ordinary user make a network namespace, so the
   tests that show an isolated browser cannot get out are skipped there, with the reason printed, and only the
   refusals run.
 - **`isolation`** runs those tests and nothing else, and exists so that a pass means isolation was shown:
   - it runs on a fixed version of GitHub's machine (`ubuntu-24.04`), since the rule it lifts is that
     version's;
-  - two steps use the administrator's rights. The install does, because the browser library installs
-    system packages that way (as in the `test` job). Then one step lifts the machine's rule against ordinary
-    users making namespaces (`kernel.apparmor_restrict_unprivileged_userns`) and, as its last act, gives the
-    administrator's rights up for the rest of the job: the ordinary user's permission to become the
-    administrator is removed and the container service, which would be another way to it, is stopped;
-  - the tests run after that, as the ordinary user, and the step first checks that neither of those two
-    ways back is open, and stops if one is. This covers the tests and what they load. It does not cover
-    what the install step ran earlier with the administrator's rights (code chosen by the lockfile), which
-    could have left something behind, nor a fault in the kernel. They make the namespace as a user namespace's own administrator, which has no administrator's
+  - one step uses the administrator's rights, and it comes first, before any code of the pull request's
+    or anything its lockfile names is installed or run. It lifts the machine's rule against ordinary users
+    making namespaces (`kernel.apparmor_restrict_unprivileged_userns`) and then gives the administrator's
+    rights up for the rest of the job: the ordinary user's permission to become the administrator is
+    removed and the container service, which would be another way to it, is stopped;
+  - the install and the tests run after that, as the ordinary user. Each of those two steps first checks
+    that neither way back is open, and stops if one is. It is no answer to a fault in the kernel;
+  - the browser is fetched without the option that installs system packages, since that option needs the
+    administrator's rights; the machine already has what the browser needs. They make the namespace as a user namespace's own administrator, which has no administrator's
     rights over the machine's network (the ordinary user's files are still its to read). A test fails if
     they are run as the administrator, or if the namespace would be made the other way;
   - `RELEASEPROOF_REQUIRE_ISOLATION=1` makes "a namespace cannot be made" a failure and not a skip. With it,
