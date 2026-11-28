@@ -145,7 +145,9 @@ not to pass through it at this stage.
     the application breaking it off, is counted as a failure after having been counted as sent on.
     What still ends a request whichever side is slow is the time one connection of the browser's may last
     (ten minutes); a download ended that way, or by the browser itself going away, is not counted as the
-    application's failure.
+    application's failure. A request the browser never finished sending, ended by that same limit, is
+    counted as sent on and as failed, though the browser was the slow side: the count cannot tell the two
+    apart there.
   - *An https application that takes the connection and never greets* is a failure the browser is told of
     (502) after the time allowed.
   - *An answer whose end is told by a `Transfer-Encoding` other than `chunked`* is not handed to the
