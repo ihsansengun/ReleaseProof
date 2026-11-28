@@ -94,7 +94,7 @@ jobs:
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo systemctl stop docker.socket docker.service containerd.service || true
-          sudo sh -c 'rm -f /etc/sudoers.d/runner /etc/sudoers.d/*runner* && ! grep -rqs "^runner" /etc/sudoers /etc/sudoers.d'
+          sudo sh -c 'rm -f /etc/sudoers.d/runner /etc/sudoers.d/*runner*; if grep -rqs "^runner" /etc/sudoers /etc/sudoers.d; then echo "the ordinary user may still become the administrator" >&2; exit 1; fi'
           sudo -k
 
       # RELEASEPROOF_REQUIRE_ISOLATION: if a namespace still cannot be made, the
@@ -104,8 +104,8 @@ jobs:
         env:
           RELEASEPROOF_REQUIRE_ISOLATION: "1"
         run: |
-          test "$(id -u)" != 0
-          ! sudo -n true 2>/dev/null
-          ! docker info >/dev/null 2>&1
+          if [ "$(id -u)" = 0 ]; then echo "running as the administrator" >&2; exit 1; fi
+          if sudo -n true 2>/dev/null; then echo "the administrator's rights were not given up" >&2; exit 1; fi
+          if docker info >/dev/null 2>&1; then echo "the container service is still there to be asked" >&2; exit 1; fi
           npx tsx --test test/remote-isolated.test.ts
 
