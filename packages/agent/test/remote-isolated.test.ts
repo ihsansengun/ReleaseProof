@@ -20,7 +20,11 @@ import { ISOLATION_REFUSALS, IsolationRefused, launchIsolatedBrowser, namespaceC
 
 const can = namespaceCommand() !== undefined;
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const made: string[] = [];
+// Everything written while these tests run goes under one directory of their own, so that what is counted there
+// is theirs and not other work on the machine; it is removed at the end.
+const ownTemporary = mkdtempSync(path.join(tmpdir(), "rpt-"));
+process.env.TMPDIR = ownTemporary;
+const made: string[] = [ownTemporary];
 const temporary = (name: string) => {
   const directory = mkdtempSync(path.join(tmpdir(), name));
   made.push(directory);
@@ -34,30 +38,30 @@ async function listeningSocket(directory = temporary("rp-door-"), name = "checkp
   await new Promise<void>((resolve) => server.listen(file, resolve));
   return { path: file, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }
-/** Browsers running on this machine that were started the way the engine starts them. */
-const browsers = () =>
-  readdirSync("/proc").filter((entry) => {
-    if (!/^\d+$/.test(entry)) return false;
+/** Processes started from this one, however far down, whose command line has this in it. Other work on the machine is not counted. */
+const descendants = (marked: string) => {
+  const parents = new Map<number, number>();
+  const commands = new Map<number, string>();
+  for (const entry of readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
     try {
-      return readFileSync(`/proc/${entry}/cmdline`, "utf8").includes("--remote-debugging-pipe");
-    } catch {
-      return false;
-    }
-  }).length;
+      const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+      parents.set(Number(entry), Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]));
+      commands.set(Number(entry), readFileSync(`/proc/${entry}/cmdline`, "utf8"));
+    } catch {}
+  }
+  const mine = (pid: number): boolean => {
+    for (let at = parents.get(pid), hops = 0; at !== undefined && at > 1 && hops < 64; at = parents.get(at), hops += 1) if (at === process.pid) return true;
+    return false;
+  };
+  return [...commands].filter(([pid, command]) => command.includes(marked) && mine(pid)).length;
+};
+/** Browsers started from here that are running. */
+const browsers = () => descendants("--remote-debugging-pipe");
 /** Where a tool is, looked for along the path as it was when the tests began (a shell would answer for its own built-ins). */
 const which = (tool: string) => (process.env.PATH ?? "").split(":").map((directory) => path.join(directory, tool)).find((file) => existsSync(file))!;
-/** The processes that belong to isolated browsers started from here, by what they were started with. */
-const leftovers = () =>
-  String(
-    readdirSync("/proc").filter((entry) => {
-      if (!/^\d+$/.test(entry)) return false;
-      try {
-        return readFileSync(`/proc/${entry}/cmdline`, "utf8").includes("isolated-inside.mjs");
-      } catch {
-        return false;
-      }
-    }).length,
-  );
+/** The programs that run inside namespaces made from here. */
+const leftovers = () => String(descendants("isolated-inside.mjs"));
 const isolatedDirectories = () => readdirSync(tmpdir()).filter((name) => name.startsWith("rp-isolated-")).length;
 
 /** Something outside the namespace that counts whatever arrives at it without going through the checkpoint. */

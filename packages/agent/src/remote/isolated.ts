@@ -102,12 +102,13 @@ const namespaceOf = (pid: number | "self") => readlink(`/proc/${pid}/ns/net`).ca
  */
 export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Promise<IsolatedBrowser> {
   if (process.platform !== "linux") throw new IsolationRefused("not-linux");
-  const command = namespaceCommand();
-  if (command === undefined) throw new IsolationRefused("namespace-refused");
+  // What it was handed is looked at first: the same answer on every machine, whatever that machine allows.
   if (typeof options.keyPin !== "string" || !/^[A-Za-z0-9+/]{43}=$/.test(options.keyPin)) throw new IsolationRefused("browser-not-started");
   // The door leads to a socket on the file system, named in full, that is there.
   const socket = options.checkpointSocket;
   if (typeof socket !== "string" || !path.isAbsolute(socket) || socket.includes("\0") || !(await stat(socket).then((found) => found.isSocket(), () => false))) throw new IsolationRefused("door-not-opened");
+  const command = namespaceCommand();
+  if (command === undefined) throw new IsolationRefused("namespace-refused");
   const own = await namespaceOf("self");
   if (own === undefined) throw new IsolationRefused("not-isolated");
 

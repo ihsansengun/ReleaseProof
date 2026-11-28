@@ -779,7 +779,10 @@ describe("a browser that trusts the checkpoint's key and nothing else", () => {
     assert.equal(await page.evaluate(`fetch("/order", { method: "POST", body: "n=1" }).then((r) => r.status)`), 200);
     await page.evaluate(`addEventListener("pagehide", () => navigator.sendBeacon("/left", "x"))`);
     await page.close();
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    // The browser sends it when it gets round to it: waited for, up to a limit, and then a moment more for
+    // anything that would have gone on to the application.
+    for (let waited = 0; waited < 10_000 && !outcomes(checkpoint).includes(`refused-unmarked POST ${origin}/left`); waited += 100) await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 300));
     assert.ok(app.seen.some((seen) => seen.method === "POST" && seen.url === "/order"));
     assert.ok(!app.seen.some((seen) => seen.url === "/left"), "what the page sent as it was left reached the application");
     assert.ok(outcomes(checkpoint).includes(`refused-unmarked POST ${origin}/left`));
