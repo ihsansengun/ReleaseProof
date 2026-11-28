@@ -27,7 +27,7 @@
  * processes, only its network. See the design note.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,6 +63,8 @@ export type IsolatedBrowserOptions = {
   checkpointSocket: string;
   /** The checkpoint's `keyPin`: the one key the browser accepts in place of a verified certificate. */
   keyPin: string;
+  /** A shorter time for the browser to start and to answer in, for tests that wait for it. Never longer. */
+  shorter?: { startMs?: number };
 };
 
 export type IsolatedBrowser = {
@@ -77,21 +79,40 @@ export type IsolatedBrowser = {
 const DOOR_PORT = 3128;
 /** How long a browser may take to start. One that takes longer is one that did not start. */
 const START_MS = 30_000;
+/** How long a browser is given to end when asked, before everything in its namespace is ended for it. */
+const END_MS = 5_000;
 /** The longest path a socket on the file system can have here, in bytes. */
 const SOCKET_PATH_BYTES = 107;
 const INSIDE = fileURLToPath(new URL("./isolated-inside.mjs", import.meta.url));
 
 /**
- * How a namespace can be made here. First as a user namespace's own root: what runs inside then has no rights
- * over the machine's own network, and cannot step back into it. Only where that is not allowed, as this process
- * is. Undefined: not at all.
+ * How a namespace is made here: as a user namespace's own administrator, which has no rights over the machine's
+ * own network and cannot step back into it. There is no other way: where the machine does not allow this one,
+ * the answer is undefined and no browser is started. (As the machine's own administrator a namespace can be
+ * made too, and a process in it can step back out; that way is not taken.)
  */
 export function namespaceCommand(): string[] | undefined {
   if (process.platform !== "linux") return undefined;
-  for (const command of [["unshare", "--user", "--map-root-user", "--net"], ["unshare", "--net"]]) {
-    if (spawnSync(command[0]!, [...command.slice(1), "true"], { stdio: "ignore", timeout: 10_000 }).status === 0) return command;
+  const command = ["unshare", "--user", "--map-root-user", "--net"];
+  return spawnSync(command[0]!, [...command.slice(1), "true"], { stdio: "ignore", timeout: 10_000 }).status === 0 ? command : undefined;
+}
+
+/** Ends, at once, every process that is in a namespace. Never the engine's own. */
+async function endEverythingIn(namespace: string, own: string): Promise<void> {
+  if (namespace === own || !/^net:\[\d+\]$/.test(namespace)) return;
+  for (const entry of await readdir("/proc").catch(() => [] as string[])) {
+    if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue;
+    if ((await namespaceOf(Number(entry))) !== namespace) continue;
+    try {
+      process.kill(Number(entry), "SIGKILL");
+    } catch {}
   }
-  return undefined;
+}
+
+/** Asks a browser to end, waits a set time, and then ends whatever is still in its namespace. */
+async function end(browser: Browser | undefined, namespace: string | undefined, own: string): Promise<void> {
+  if (browser !== undefined) await Promise.race([browser.close().catch(() => {}), new Promise((resolve) => setTimeout(resolve, END_MS).unref())]);
+  if (namespace !== undefined) await endEverythingIn(namespace, own);
 }
 
 const quoted = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
@@ -105,10 +126,19 @@ const namespaceOf = (pid: number | "self") => readlink(`/proc/${pid}/ns/net`).ca
 export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Promise<IsolatedBrowser> {
   if (process.platform !== "linux") throw new IsolationRefused("not-linux");
   // What it was handed is looked at first: the same answer on every machine, whatever that machine allows.
-  if (typeof options !== "object" || options === null) throw new IsolationRefused("browser-not-started");
-  if (typeof options.keyPin !== "string" || !/^[A-Za-z0-9+/]{43}=$/.test(options.keyPin)) throw new IsolationRefused("browser-not-started");
+  // Each thing is read once, and a thing that cannot even be read is a refusal like any other.
+  let keyPin: unknown, socket: unknown, startMs: unknown;
+  try {
+    if (typeof options !== "object" || options === null) throw new IsolationRefused("browser-not-started");
+    keyPin = options.keyPin;
+    socket = options.checkpointSocket;
+    startMs = options.shorter?.startMs;
+  } catch {
+    throw new IsolationRefused("browser-not-started");
+  }
+  if (typeof keyPin !== "string" || !/^[A-Za-z0-9+/]{43}=$/.test(keyPin)) throw new IsolationRefused("browser-not-started");
+  const startIn = typeof startMs === "number" && startMs > 0 ? Math.min(startMs, START_MS) : START_MS;
   // The door leads to a socket on the file system, named in full, that is there.
-  const socket = options.checkpointSocket;
   // And no longer than a socket's path can be: a longer one is cut short without a word, and would lead elsewhere.
   if (typeof socket !== "string" || !path.isAbsolute(socket) || socket.includes("\0") || Buffer.byteLength(socket) > SOCKET_PATH_BYTES || !(await stat(socket).then((found) => found.isSocket(), () => false))) throw new IsolationRefused("door-not-opened");
   const command = namespaceCommand();
@@ -118,8 +148,10 @@ export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Pr
 
   let directory: string | undefined;
   let browser: Browser | undefined;
+  // The namespace that was written down, once it has been: what is in it is ended whatever else happens.
+  let made: string | undefined;
   const undo = async () => {
-    await browser?.close().catch(() => {});
+    await end(browser, made, own);
     if (directory !== undefined) await rm(directory, { recursive: true, force: true }).catch(() => {});
   };
   try {
@@ -140,13 +172,15 @@ export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Pr
     try {
       browser = await chromium.launch({
         executablePath: starter,
-        timeout: START_MS,
+        timeout: startIn,
         proxy: { server: `http://127.0.0.1:${DOOR_PORT}`, bypass: "<-loopback>" },
         // The browser resolves no name itself, and accepts the checkpoint's key and no other in place of verification.
-        args: ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", `--ignore-certificate-errors-spki-list=${options.keyPin}`],
+        args: ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", `--ignore-certificate-errors-spki-list=${keyPin}`],
       });
     } catch {
-      const said = (await written())?.refused;
+      const left = await written();
+      if (typeof left?.namespace === "string") made = left.namespace;
+      const said = left?.refused;
       throw new IsolationRefused((ISOLATION_REFUSALS as readonly unknown[]).includes(said) ? (said as IsolationRefusal) : said === "interfaces-not-read" ? "other-interfaces" : "browser-not-started");
     }
     // What was written down inside, before the browser was started: a namespace other than the engine's, with
@@ -154,6 +188,7 @@ export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Pr
     const found = await written();
     if (found === undefined) throw new IsolationRefused("browser-not-started");
     const { namespace, interfaces } = found;
+    if (typeof namespace === "string") made = namespace;
     if (typeof namespace !== "string" || !/^net:\[\d+\]$/.test(namespace) || namespace === own || !Array.isArray(interfaces) || interfaces.length !== 1 || interfaces[0] !== "lo") throw new IsolationRefused("not-isolated");
     // And not taken on that word alone. The browser is asked for its processes, and the kernel is asked, from
     // here, which namespace each of them is in: every one in the namespace that was written down.
@@ -166,19 +201,19 @@ export async function launchIsolatedBrowser(options: IsolatedBrowserOptions): Pr
         await session.detach().catch(() => {});
         return processInfo;
       })(),
-      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), START_MS).unref()),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), startIn).unref()),
     ]);
     if (processes === undefined) throw new IsolationRefused("not-isolated");
     const where = await Promise.all(processes.map((one) => namespaceOf(one.id)));
     if (where.length === 0 || where.some((one) => one !== namespace)) throw new IsolationRefused("not-isolated");
 
-    const [started, made] = [browser, directory];
+    const [started, kept] = [browser, directory];
     return {
       browser: started,
       namespace,
       close: async () => {
-        await started.close().catch(() => {});
-        await rm(made, { recursive: true, force: true }).catch(() => {});
+        await end(started, namespace, own);
+        await rm(kept, { recursive: true, force: true }).catch(() => {});
       },
     };
   } catch (error) {
