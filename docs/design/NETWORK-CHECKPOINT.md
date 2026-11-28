@@ -239,8 +239,8 @@ back; and when the socket is not there, is not a socket, or has nobody behind it
   - *The engine holds the namespace itself, not its name, until that is done.* The kernel gives the name
     of a namespace that is gone to the next one made, within a fraction of a second (measured: 80 to 350
     milliseconds). Ending "everything in the namespace called so" a moment too late would end something
-    unrelated. So from the moment the namespace is written down the engine keeps it open, which keeps its
-    name from being given away; what is ended is what is in the namespace held; and the hold is let go of
+    unrelated. So before it ends anything, from when it reads what was written down, the engine keeps the
+    namespace open, which keeps its name from being given away; what is ended is what is in the namespace held; and the hold is let go of
     only afterwards. A browser is ended once: asking again does nothing. (Found by the review of the first
     version of this fix, which ended by name and could be asked twice.)
   - *What is handed over is read once*, where an error in the reading is a refusal like any other.
@@ -254,7 +254,7 @@ back; and when the socket is not there, is not a socket, or has nobody behind it
   test cannot be a longer one; one process of a browser being outside the namespace while the rest are in.
 - **End a browser through the launcher's own ending**, not through the browser library's. Ended the other
   way, its processes are gone and the launcher's ending then finds nothing to do, which is harmless; but
-  what the launcher wrote stays until its ending is asked for.
+  what the launcher wrote, and its hold on the namespace, stay until its ending is asked for.
 - **Linux only**, one browser build, and a start that takes a few tenths of a second longer than without.
 
 ## Stages
